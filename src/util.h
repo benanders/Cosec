@@ -2,6 +2,10 @@
 #ifndef COSEC_UTIL_H
 #define COSEC_UTIL_H
 
+#include <assert.h>
+
+#define UNREACHABLE() (assert(0))
+
 typedef struct {
     void **data;
     int len, max;
