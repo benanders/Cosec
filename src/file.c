@@ -37,7 +37,7 @@ static int read_ch_raw(File *f) {
     if (c == '\n') {
         f->line++;
         f->col = 1;
-    } else if (c != -1) {
+    } else if (c != EOF) {
         f->col++;
     }
     return c;
@@ -49,7 +49,7 @@ int next_ch(File *f) {
         if (c == '\\') {
             int c2 = read_ch_raw(f);
             if (c2 == '\n') {
-                continue; // Escape newlines when preceded by '\'
+                continue; // Escape newlines preceded by '\'
             } else {
                 undo_ch(f, c2);
             }
@@ -59,7 +59,7 @@ int next_ch(File *f) {
 }
 
 void undo_ch(File *f, int c) {
-    if (c == -1) {
+    if (c == EOF) {
         return;
     }
     assert(f->buf_len < MAX_FILE_PEEK);

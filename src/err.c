@@ -57,3 +57,33 @@ void error(char *fmt, ...) {
     va_end(args);
     exit(1);
 }
+
+static void print_tk(Token *tk) {
+    print_colour(COLOUR_BLUE);
+    printf(" --> ");
+    print_colour(COLOUR_CLEAR);
+    if (tk->f && tk->f->path) {
+        printf("%s", tk->f->path);
+    } else {
+        printf("<unknown>");
+    }
+    if (tk->line > 0) {
+        printf(":%d", tk->line);
+    }
+    if (tk->col > 0) {
+        printf(":%d", tk->col);
+    }
+    printf("\n");
+}
+
+void error_at(Token *tk, char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    print_error_header();
+    vprintf(fmt, args);
+    print_colour(COLOUR_CLEAR);
+    printf("\n");
+    print_tk(tk);
+    va_end(args);
+    exit(1);
+}
