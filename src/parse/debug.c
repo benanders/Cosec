@@ -101,7 +101,7 @@ static void print_expr(Node *n) {
         printf(" ? ");
         print_expr(n->if_body);
         printf(" : ");
-        print_expr(n->if_els);
+        print_expr(n->if_else);
         printf(" )");
         break;
     default:
@@ -178,15 +178,15 @@ static void print_node(Node *n, int indent) {
             print_expr(n->if_cond);
             printf("\n");
             print_nodes(n->if_body, indent + 1);
-            if (n->if_els) {
+            if (n->if_else) {
                 print_indent(indent);
                 printf("else ");
-                if (n->if_els->if_cond) { // else if
-                    n = n->if_els;
+                if (n->if_else->if_cond) { // else if
+                    n = n->if_else;
                     continue;
                 } else {
                     printf("\n");
-                    print_nodes(n->if_els, indent + 1);
+                    print_nodes(n->if_else, indent + 1);
                 }
             }
             break;

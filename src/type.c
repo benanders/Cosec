@@ -72,6 +72,8 @@ int is_void_ptr(Type *t) {
 }
 
 int are_equal(Type *a, Type *b) {
+    if (!a && !b) return 1;
+    if (!a || !b) return 0;
     switch (a->k) {
     case T_PTR: return are_equal(a->ptr, b->ptr);
     case T_ARR: return a->len == b->len && are_equal(a->ptr, b->ptr);

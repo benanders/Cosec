@@ -106,12 +106,13 @@ typedef struct Node {
 
         // Operations
         struct { struct Node *l, *r; };
+        struct { struct Node *arr, *idx; }; // N_IDX
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
 
         // Statements
         struct { char *fn_name; Vec *param_names; struct Node *fn_body; }; // N_FN_DEF
         struct { struct Node *var, *init; }; // N_DECL
-        struct { struct Node *if_cond, *if_body, *if_els; }; // N_IF
+        struct { struct Node *if_cond, *if_body, *if_else; }; // N_IF, N_TERNARY
         struct { struct Node *loop_cond, *loop_body; }; // N_WHILE, N_DO_WHILE
         struct { struct Node *for_init, *for_cond, *for_inc, *for_body; }; // N_FOR
         struct { struct Node *switch_cond, *switch_body; }; // N_SWITCH

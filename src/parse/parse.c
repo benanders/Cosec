@@ -18,7 +18,7 @@ typedef struct Scope {
     int k;
     Lexer *l;
     Map *vars;
-    Node *fn; // for SCOPE_BLOCK
+    Node *fn; // NULL in file scope
 } Scope;
 
 static Node * node(int k, Token *tk) {
@@ -83,15 +83,6 @@ err_static2:
     error_at(n->tk, "static declaration of '%s' follows non-static declaration", n->var_name);
 }
 
-static void adjust_linkage(Scope *s, Token *name, Type *t) {
-    if (t->k == T_FN && t->linkage == L_NONE) {
-        t->linkage = L_EXTERN; // Functions are 'extern' if unspecified
-    }
-    if (t->k == T_FN && s->k != SCOPE_FILE && t->linkage == L_STATIC) {
-        error_at(name, "function declared in block scope cannot have 'static' storage class");
-    }
-}
-
 static void def_symbol(Scope *s, Node *n) {
     ensure_not_redef(s, n);
     map_put(s->vars, n->var_name, n);
@@ -101,7 +92,12 @@ static Node * def_var(Scope *s, Token *name, Type *t) {
     if (t->k == T_VOID) {
         error_at(name, "variable cannot have type 'void'");
     }
-    adjust_linkage(s, name, t);
+    if (t->k == T_FN && s->k != SCOPE_FILE && t->linkage == L_STATIC) {
+        error_at(name, "function declared in block scope cannot have 'static' storage class");
+    }
+    if (t->k == T_FN && t->linkage == L_NONE) {
+        t->linkage = L_EXTERN; // Functions are 'extern' if unspecified
+    }
     Node *n = node(N_VAR, name);
     n->t = t;
     n->var_name = name->s;
@@ -220,9 +216,6 @@ static Node * parse_num(Token *tk) {
 
 // ---- Declarators -----------------------------------------------------------
 
-static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
-static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
-
 static Type * find_typedef(Scope *s, char *name) {
     Node *n = find_var(s, name);
     if (n && n->k == N_TYPEDEF) {
@@ -326,6 +319,9 @@ t_err:
     error_at(tk, "invalid combination of type specifiers");
 }
 
+static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
+static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
+
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
     uint64_t len;
@@ -374,7 +370,7 @@ static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
         return t_fn(ret, vec_new());
     }
     Vec *param_types = vec_new();
-    while (peek_tk(s->l)->k != ')' && peek_tk(s->l)->k != TK_EOF) {
+    while (!peek_tk_is(s->l, ')') && !peek_tk_is(s->l, TK_EOF)) {
         Token *name;
         Type *param = parse_fn_declarator_param(s, &name);
         vec_push(param_types, param);
@@ -455,12 +451,448 @@ static Type * parse_abstract_declarator(Scope *s, Type *base) {
 
 // ---- Expressions -----------------------------------------------------------
 
-static Node * conv_to(Node *n, Type *t) {
+enum { // Operator precedence
+    PREC_MIN,
+    PREC_COMMA,   // ,
+    PREC_ASSIGN,  // =, +=, -=, *=, /=, %=, &=, |=, ^=, >>=, <<=
+    PREC_TERNARY, // ?
+    PREC_LOG_OR,  // ||
+    PREC_LOG_AND, // &&
+    PREC_BIT_OR,  // |
+    PREC_BIT_XOR, // ^
+    PREC_BIT_AND, // &
+    PREC_EQ,      // ==, !=
+    PREC_REL,     // <, >, <=, >=
+    PREC_SHIFT,   // >>, <<
+    PREC_ADD,     // +, -
+    PREC_MUL,     // *, /, %
+    PREC_UNARY,   // ++, -- (prefix), -, + (unary), !, ~, casts, *, &, sizeof
+};
+
+static int BINOP_PREC[TK_LAST] = {
+    ['+'] = PREC_ADD, ['-'] = PREC_ADD,
+    ['*'] = PREC_MUL, ['/'] = PREC_MUL, ['%'] = PREC_MUL,
+    ['&'] = PREC_BIT_AND, ['|'] = PREC_BIT_OR, ['^'] = PREC_BIT_XOR,
+    [TK_SHL] = PREC_SHIFT, [TK_SHR] = PREC_SHIFT,
+    [TK_EQ] = PREC_EQ, [TK_NEQ] = PREC_EQ,
+    ['<'] = PREC_REL, [TK_LE] = PREC_REL, ['>'] = PREC_REL, [TK_GE] = PREC_REL,
+    [TK_LOG_AND] = PREC_LOG_AND, [TK_LOG_OR] = PREC_LOG_OR,
+    ['='] = PREC_ASSIGN,
+    [TK_A_ADD] = PREC_ASSIGN, [TK_A_SUB] = PREC_ASSIGN,
+    [TK_A_MUL] = PREC_ASSIGN, [TK_A_DIV] = PREC_ASSIGN,
+    [TK_A_MOD] = PREC_ASSIGN,
+    [TK_A_BIT_AND] = PREC_ASSIGN,
+    [TK_A_BIT_OR] = PREC_ASSIGN, [TK_A_BIT_XOR] = PREC_ASSIGN,
+    [TK_A_SHL] = PREC_ASSIGN, [TK_A_SHR] = PREC_ASSIGN,
+    [','] = PREC_COMMA, ['?'] = PREC_TERNARY,
+};
+
+static int IS_RASSOC[TK_LAST] = {
+    ['?'] = 1, ['='] = 1,
+    [TK_A_ADD] = 1, [TK_A_SUB] = 1,
+    [TK_A_MUL] = 1, [TK_A_DIV] = 1, [TK_A_MOD] = 1,
+    [TK_A_BIT_AND] = 1, [TK_A_BIT_OR] = 1, [TK_A_BIT_XOR] = 1,
+    [TK_A_SHL] = 1, [TK_A_SHR] = 1,
+};
+
+static Node * parse_subexpr(Scope *s, int min_prec);
+
+static Node * conv_to(Node *l, Type *t) {
+    Node *n = l;
+    if (!are_equal(l->t, t)) {
+        n = node(N_CONV, l->tk);
+        n->t = t;
+        n->l = l;
+    }
+    return n;
+}
+
+static Node * discharge(Node *l) {
+    Node *n;
+    switch (l->t->k) {
+    case T_CHAR: case T_SHORT: // Small types are converted to int
+        n = conv_to(l, t_num(T_INT, 0));
+        break;
+    case T_ARR: // Arrays are converted to pointers
+        n = conv_to(l, t_ptr(l->t->ptr));
+        break;
+    case T_FN: // Functions are converted to pointer to functions
+        n = node(N_ADDR, l->tk);
+        n->t = t_ptr(l->t);
+        n->l = l;
+        break;
+    default: n = l; break;
+    }
+    return n;
+}
+
+static Node * parse_operand(Scope *s) {
+    Node *n;
+    Token *t = next_tk(s->l);
+    switch (t->k) {
+    case TK_NUM:
+        n = parse_num(t);
+        break;
+    case TK_CH:
+        n = node(N_IMM, t);
+        n->t = t_num(T_CHAR, 0);
+        n->imm = t->ch;
+        break;
+    case TK_STR:
+        n = node(N_STR, t);
+        n->t = t_arr(t_num(T_CHAR, 0), t->len);
+        n->str = t->s;
+        break;
+    case TK_IDENT:
+        n = find_var(s, t->s);
+        if (!n) error_at(t, "undeclared identifier '%s'", t->s);
+        break;
+    case '(':
+        n = parse_subexpr(s, PREC_MIN);
+        expect_tk(s->l, ')');
+        break;
+    default: error_at(t, "expected expression");
+    }
+    return n;
+}
+
+static void ensure_arith(Node *n) {
+    if (!is_arith(n->t)) error_at(n->tk, "expected arithmetic type");
+}
+
+static void ensure_int(Node *n) {
+    if (!is_int(n->t)) error_at(n->tk, "expected integer type");
+}
+
+static void ensure_ptr(Node *n) {
+    if (n->t->k != T_PTR) error_at(n->tk, "expected pointer type");
+}
+
+static void ensure_lvalue(Node *n) {
+    if (n->k != N_VAR && n->k != N_DEREF && n->k != N_IDX)
+        error_at(n->tk, "expression is not assignable");
+    if (n->t->k == T_ARR)  error_at(n->tk, "array type is not assignable");
+    if (n->t->k == T_FN)   error_at(n->tk, "function type is not assignable");
+    if (n->t->k == T_VOID) error_at(n->tk, "'void' type is not assignable");
+}
+
+static int is_null_ptr(Node *n) {
+    while (n->k == N_CONV) n = n->l; // Skip over the conversions
+    return n->k == N_IMM && n->imm == 0;
+}
+
+static Node * parse_array_access(Scope *s, Node *l, Token *op) {
+    l = discharge(l);
+    if (l->t->k != T_PTR) {
+        error_at(op, "expected pointer or array type");
+    }
+    Node *idx = parse_subexpr(s, PREC_MIN);
+    ensure_int(idx);
+    idx = conv_to(idx, t_num(T_LLONG, 1));
+    expect_tk(s->l, ']');
+    Node *n = node(N_IDX, op);
+    n->t = l->t->ptr;
+    n->arr = l;
+    n->idx = idx;
+    return n;
+}
+
+static Node * parse_call(Scope *s, Node *l, Token *op) {
+    l = discharge(l);
+    if (l->t->k != T_PTR || l->t->ptr->k != T_FN) {
+        error_at(l->tk, "expected function type");
+    }
+    Type *fn_t = l->t->ptr;
+    Vec *args = vec_new();
+    while (!peek_tk_is(s->l, ')') && !peek_tk_is(s->l, TK_EOF)) {
+        Node *arg = parse_subexpr(s, PREC_COMMA);
+        arg = discharge(arg);
+        if (vec_len(args) >= vec_len(fn_t->params)) {
+            error_at(arg->tk, "too many arguments to function call");
+        }
+        Type *expected = vec_get(fn_t->params, vec_len(args));
+        arg = conv_to(arg, expected);
+        vec_push(args, arg);
+        if (!next_tk_is(s->l, ',')) {
+            break;
+        }
+    }
+    if (vec_len(args) < vec_len(fn_t->params)) {
+        error_at(peek_tk(s->l), "too few arguments to function call");
+    }
+    expect_tk(s->l, ')');
+    Node *n = node(N_CALL, op);
+    n->t = fn_t->ret;
+    n->fn = l;
+    n->args = args;
+    return n;
+}
+
+static Node * parse_post_inc_dec(Node *l, Token *op) {
+    ensure_lvalue(l);
+    l = discharge(l);
+    Node *n = node(op->k == TK_INC ? N_POST_INC : N_POST_DEC, op);
+    n->t = l->t;
+    n->l = l;
+    return n;
+}
+
+static Node * parse_postfix(Scope *s, Node *l) {
+    while (1) {
+        Token *op = next_tk(s->l);
+        switch (op->k) {
+        case '[':      l = parse_array_access(s, l, op); break;
+        case '(':      l = parse_call(s, l, op); break;
+        case '.':      TODO();
+        case TK_ARROW: TODO();
+        case TK_INC: case TK_DEC: l = parse_post_inc_dec(l, op); break;
+        default:
+            undo_tk(s->l, op);
+            return l;
+        }
+    }
+}
+
+static Node * parse_neg(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    ensure_arith(l);
+    l = discharge(l);
+    Node *unop = node(N_NEG, op);
+    unop->t = l->t;
+    unop->l = l;
+    return unop;
+}
+
+static Node * parse_plus(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    return discharge(l); // Type promotion
+}
+
+static Node * parse_bit_not(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    ensure_int(l);
+    l = discharge(l);
+    Node *unop = node(N_BIT_NOT, op);
+    unop->t = l->t;
+    unop->l = l;
+    return unop;
+}
+
+static Node * parse_log_not(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    l = discharge(l);
+    Node *unop = node(N_LOG_NOT, op);
+    unop->t = t_num(T_INT, 0);
+    unop->l = l;
+    return unop;
+}
+
+static Node * parse_pre_inc_dec(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    ensure_lvalue(l);
+    l = discharge(l);
+    Node *unop = node(op->k == TK_INC ? N_PRE_INC : N_PRE_DEC, op);
+    unop->t = l->t;
+    unop->l = l;
+    return unop;
+}
+
+static Node * parse_deref(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    l = discharge(l);
+    ensure_ptr(l);
+    if (l->t->ptr->k == T_FN) return l; // Don't dereference fn ptrs
+    Node *unop = node(N_DEREF, op);
+    unop->t = l->t->ptr;
+    unop->l = l;
+    return unop;
+}
+
+static Node * parse_addr(Scope *s, Token *op) {
+    Node *l = parse_subexpr(s, PREC_UNARY);
+    ensure_lvalue(l);
+    Node *unop = node(N_ADDR, op);
+    unop->t = t_ptr(l->t);
+    unop->l = l;
+    return unop;
+}
+
+static Node * parse_sizeof(Scope *s, Token *op) {
+    Type *t;
+    if (peek_tk_is(s->l, '(') && is_type(s, peek2_tk(s->l))) {
+        next_tk(s->l);
+        t = parse_decl_specs(s, NULL);
+        t = parse_abstract_declarator(s, t);
+        expect_tk(s->l, ')');
+    } else {
+        Node *l = parse_subexpr(s, PREC_UNARY);
+        t = l->t;
+    }
+    Node *n = node(N_IMM, op);
+    n->t = t_num(T_LONG, 1);
+    n->imm = t->size;
+    return n;
+}
+
+static Node * parse_compound_literal(Scope *s) {
     TODO();
 }
 
+static Node * parse_cast(Scope *s) {
+    Type *t = parse_decl_specs(s, NULL);
+    t = parse_abstract_declarator(s, t);
+    expect_tk(s->l, ')');
+    if (next_tk_is(s->l, '{')) {
+        return parse_compound_literal(s);
+    } else {
+        Node *l = parse_subexpr(s, PREC_UNARY);
+        return conv_to(l, t);
+    }
+}
+
+static Node * parse_unop(Scope *s) {
+    Token *op = next_tk(s->l);
+    switch (op->k) {
+    case '-': return parse_neg(s, op);
+    case '+': return parse_plus(s, op);
+    case '~': return parse_bit_not(s, op);
+    case '!': return parse_log_not(s, op);
+    case TK_INC: case TK_DEC: return parse_pre_inc_dec(s, op);
+    case '*': return parse_deref(s, op);
+    case '&': return parse_addr(s, op);
+    case TK_SIZEOF: return parse_sizeof(s, op);
+    case '(':
+        if (is_type(s, peek_tk(s->l))) {
+            return parse_cast(s);
+        } // Fall through otherwise...
+    default:
+        undo_tk(s->l, op);
+        Node *l = parse_operand(s);
+        return parse_postfix(s, l);
+    }
+}
+
+static Type * promote(Type *l, Type *r) { // Implicit arithmetic conversions
+    assert(is_arith(l));
+    assert(is_arith(r));
+    if (l->k < r->k) { // Make 'l' the larger type
+        Type *tmp = l; l = r; r = tmp;
+    }
+    if (is_fp(l)) { // If one is a float, pick the largest float type
+        return l;
+    }
+    assert(is_int(l) && l->size >= 4); // Both integers bigger than 'int'
+    assert(is_int(r) && r->size >= 4);
+    if (l->size > r->size) { // Pick the larger
+        return l;
+    }
+    assert(l->size == r->size); // Both the same size
+    return l->is_unsigned ? l : r; // Pick the unsigned type
+}
+
+static Node * emit_binop(int op, Node *l, Node *r, Token *tk) {
+    l = discharge(l);
+    r = discharge(r);
+    Type *t;
+    if (l->t->k == T_PTR && r->t->k == T_PTR) { // Both pointers
+        if (op != N_SUB && op != N_TERNARY && !(op >= N_EQ && op <= N_LOG_OR)) {
+            error_at(tk, "invalid operands to binary operation");
+        }
+        t = is_void_ptr(l->t) || is_null_ptr(l) ? r->t : l->t;
+    } else if (l->t->k == T_PTR || r->t->k == T_PTR) { // One pointer
+        t = l->t->k == T_PTR ? l->t : r->t;
+    } else { // No pointers
+        assert(is_arith(l->t) && is_arith(r->t));
+        t = promote(l->t, r->t);
+    }
+    Type *ret = t;
+    if (l->t->k == T_PTR && r->t->k == T_PTR && op == N_SUB) {
+        ret = t_num(T_LLONG, 0); // Pointer diff
+    } else if (op >= N_EQ && op <= N_LOG_OR) {
+        ret = t_num(T_INT, 0); // Comparison
+    }
+    Node *n = node(op, tk);
+    n->l = conv_to(l, t);
+    n->r = conv_to(r, t);
+    n->t = ret;
+    return n;
+}
+
+static Node * parse_binop(Scope *s, Token *op, Node *l) {
+    Node *r = parse_subexpr(s, BINOP_PREC[op->k] + IS_RASSOC[op->k]);
+    Node *n;
+    switch (op->k) {
+    case '+':    return emit_binop(N_ADD, l, r, op);
+    case '-':    return emit_binop(N_SUB, l, r, op);
+    case '*':    ensure_arith(l); ensure_arith(r); return emit_binop(N_MUL, l, r, op);
+    case '/':    ensure_arith(l); ensure_arith(r); return emit_binop(N_DIV, l, r, op);
+    case '%':    ensure_int(l); ensure_int(r); return emit_binop(N_MOD, l, r, op);
+    case '&':    ensure_int(l); ensure_int(r); return emit_binop(N_BIT_AND, l, r, op);
+    case '|':    ensure_int(l); ensure_int(r); return emit_binop(N_BIT_OR, l, r, op);
+    case '^':    ensure_int(l); ensure_int(r); return emit_binop(N_BIT_XOR, l, r, op);
+    case TK_SHL: ensure_int(l); ensure_int(r); return emit_binop(N_SHL, l, r, op);
+    case TK_SHR: ensure_int(l); ensure_int(r); return emit_binop(N_SHR, l, r, op);
+
+    case TK_EQ:      return emit_binop(N_EQ, l, r, op);
+    case TK_NEQ:     return emit_binop(N_NEQ, l, r, op);
+    case '<':        return emit_binop(N_LT, l, r, op);
+    case TK_LE:      return emit_binop(N_LE, l, r, op);
+    case '>':        return emit_binop(N_GT, l, r, op);
+    case TK_GE:      return emit_binop(N_GE, l, r, op);
+    case TK_LOG_AND: return emit_binop(N_LOG_AND, l, r, op);
+    case TK_LOG_OR:  return emit_binop(N_LOG_OR, l, r, op);
+
+    case TK_A_ADD:     return emit_binop(N_A_ADD, l, r, op);
+    case TK_A_SUB:     return emit_binop(N_A_SUB, l, r, op);
+    case TK_A_MUL:     ensure_arith(l); ensure_arith(r); return emit_binop(N_A_MUL, l, r, op);
+    case TK_A_DIV:     ensure_arith(l); ensure_arith(r); return emit_binop(N_A_DIV, l, r, op);
+    case TK_A_MOD:     ensure_int(l); ensure_int(r); return emit_binop(N_A_MOD, l, r, op);
+    case TK_A_BIT_AND: ensure_int(l); ensure_int(r); return emit_binop(N_A_BIT_AND, l, r, op);
+    case TK_A_BIT_OR:  ensure_int(l); ensure_int(r); return emit_binop(N_A_BIT_OR, l, r, op);
+    case TK_A_BIT_XOR: ensure_int(l); ensure_int(r); return emit_binop(N_A_BIT_XOR, l, r, op);
+    case TK_A_SHL:     ensure_int(l); ensure_int(r); return emit_binop(N_A_SHL, l, r, op);
+    case TK_A_SHR:     ensure_int(l); ensure_int(r); return emit_binop(N_A_SHR, l, r, op);
+
+    case '=':
+        ensure_lvalue(l);
+        n = node(N_ASSIGN, op);
+        n->t = l->t;
+        n->l = l;
+        n->r = conv_to(r, l->t);
+        return n;
+    case ',':
+        n = emit_binop(N_COMMA, l, r, op);
+        n->t = n->r->t;
+        return n;
+    case '?':
+        expect_tk(s->l, ':');
+        Node *els = parse_subexpr(s, PREC_TERNARY + IS_RASSOC['?']);
+        Node *binop = emit_binop(N_TERNARY, r, els, op);
+        n = node(N_TERNARY, op);
+        n->t = binop->t;
+        n->if_cond = l;
+        n->if_body = n->l;
+        n->if_else = n->r;
+        return n;
+    default: UNREACHABLE();
+    }
+}
+
+static Node * parse_subexpr(Scope *s, int min_prec) {
+    Node *l = parse_unop(s);
+    while (BINOP_PREC[peek_tk(s->l)->k] > min_prec) {
+        Token *op = next_tk(s->l);
+        l = parse_binop(s, op, l);
+    }
+    return l;
+}
+
+static Node * parse_expr(Scope *s) {
+    return parse_subexpr(s, PREC_MIN);
+}
+
 static Node * parse_expr_no_commas(Scope *s) {
-    TODO();
+    return parse_subexpr(s, PREC_COMMA);
 }
 
 static Node * parse_const_expr(Scope *s) {
@@ -470,15 +902,113 @@ static Node * parse_const_expr(Scope *s) {
 
 // ---- Statements ------------------------------------------------------------
 
-static Node * parse_block(Scope *s) {
+static Node * parse_decl(Scope *s);
+static Node * parse_block(Scope *s);
+
+static Node * parse_if(Scope *s) {
     TODO();
+}
+
+static Node * parse_while(Scope *s) {
+    TODO();
+}
+
+static Node * parse_do_while(Scope *s) {
+    TODO();
+}
+
+static Node * parse_for(Scope *s) {
+    TODO();
+}
+
+static Node * parse_switch(Scope *s) {
+    TODO();
+}
+
+static Node * parse_case(Scope *s) {
+    TODO();
+}
+
+static Node * parse_default(Scope *s) {
+    TODO();
+}
+
+static Node * parse_break(Scope *s) {
+    TODO();
+}
+
+static Node * parse_continue(Scope *s) {
+    TODO();
+}
+
+static Node * parse_goto(Scope *s) {
+    TODO();
+}
+
+static Node * parse_ret(Scope *s) {
+    TODO();
+}
+
+static Node * parse_label(Scope *s) {
+    TODO();
+}
+
+static Node * parse_expr_stmt(Scope *s) {
+    Node *n = parse_expr(s);
+    expect_tk(s->l, ';');
+    return n;
+}
+
+static Node * parse_stmt(Scope *s) {
+    Token *t = peek_tk(s->l);
+    switch (t->k) {
+    case ';':         return parse_stmt(s);
+    case '{':         return parse_block(s);
+    case TK_IF:       return parse_if(s);
+    case TK_WHILE:    return parse_while(s);
+    case TK_DO:       return parse_do_while(s);
+    case TK_FOR:      return parse_for(s);
+    case TK_SWITCH:   return parse_switch(s);
+    case TK_CASE:     return parse_case(s);
+    case TK_DEFAULT:  return parse_default(s);
+    case TK_BREAK:    return parse_break(s);
+    case TK_CONTINUE: return parse_continue(s);
+    case TK_GOTO:     return parse_goto(s);
+    case TK_RETURN:   return parse_ret(s);
+    case TK_IDENT:
+        if (peek_tk(s->l)->k == ':') {
+            return parse_label(s);
+        } // Fall through...
+    default: return parse_expr_stmt(s);
+    }
+}
+
+static Node * parse_stmt_or_decl(Scope *s) {
+    if (is_type(s, peek_tk(s->l))) {
+        return parse_decl(s);
+    } else {
+        return parse_stmt(s);
+    }
+}
+
+static Node * parse_block(Scope *s) {
+    expect_tk(s->l, '{');
+    Scope block;
+    enter_scope(&block, s, SCOPE_BLOCK);
+    Node *head = NULL;
+    Node **cur = &head;
+    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+        *cur = parse_stmt_or_decl(s);
+        while (*cur) cur = &(*cur)->next;
+    }
+    expect_tk(s->l, '}');
+    return head;
 }
 
 
 // ---- Declarations ----------------------------------------------------------
 
 static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
-    assert(s->k == SCOPE_FILE);
     if (t->k != T_FN) {
         error_at(name, "expected function type");
     }
@@ -497,23 +1027,30 @@ static Node * parse_initializer_list(Scope *s) {
     TODO();
 }
 
+static Node * parse_decl_init(Scope *s, Type *t) {
+    expect_tk(s->l, '=');
+    if (t->linkage == L_EXTERN || t->k == T_FN) {
+        error_at(peek_tk(s->l), "illegal initializer");
+    }
+    Node *init;
+    if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
+        init = parse_const_expr(s);
+    } else { // Block scope, no linkage, object
+        if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
+            init = parse_initializer_list(s);
+        } else {
+            init = parse_expr_no_commas(s);
+        }
+    }
+    init = conv_to(init, t);
+    return init;
+}
+
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     Node *var = def_var(s, name, t);
     Node *init = NULL;
-    if (next_tk_is(s->l, '=')) {
-        if (t->linkage == L_EXTERN || t->k == T_FN) {
-            error_at(peek_tk(s->l), "illegal initializer");
-        }
-        if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
-            init = parse_const_expr(s);
-        } else { // Block scope, no linkage, object
-            if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
-                init = parse_initializer_list(s);
-            } else {
-                init = parse_expr_no_commas(s);
-            }
-            init = conv_to(init, t);
-        }
+    if (peek_tk_is(s->l, '=')) {
+        init = parse_decl_init(s, t);
     }
     Node *decl = node(N_DECL, name);
     decl->var = var;
@@ -551,6 +1088,9 @@ static Node * parse_decl(Scope *s) {
     Node **cur = &head;
     while (1) {
         *cur = parse_init_decl(s, t_copy(base), sclass);
+        if ((*cur)->k == N_FN_DEF) {
+            return head;
+        }
         while (*cur) cur = &(*cur)->next;
         if (!next_tk_is(s->l, ',')) {
             break;
@@ -566,14 +1106,14 @@ static Node * parse_decl(Scope *s) {
 Node * parse(char *path) {
     File *f = new_file(path);
     Lexer *l = new_lexer(f);
-    Scope top_level = {0};
-    top_level.k = SCOPE_FILE;
-    top_level.l = l;
-    top_level.vars = map_new();
+    Scope file_scope = {0};
+    file_scope.k = SCOPE_FILE;
+    file_scope.l = l;
+    file_scope.vars = map_new();
     Node *head = NULL;
     Node **cur = &head;
     while (!next_tk_is(l, TK_EOF)) {
-        *cur = parse_decl(&top_level);
+        *cur = parse_decl(&file_scope);
         while (*cur) cur = &(*cur)->next;
     }
     return head;
