@@ -86,12 +86,3 @@ int are_equal(Type *a, Type *b) {
     default: return a->k == b->k && a->is_unsigned == b->is_unsigned;
     }
 }
-
-void t_linkage(Type *t, int sclass) {
-    switch (sclass) {
-        case S_NONE:   t->linkage = L_NONE; break;
-        case S_EXTERN: t->linkage = L_EXTERN; break;
-        case S_STATIC: t->linkage = L_STATIC; break;
-        default: UNREACHABLE();
-    }
-}

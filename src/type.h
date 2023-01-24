@@ -7,8 +7,7 @@
 #include "util.h"
 
 enum { // Storage classes
-    S_NONE,
-    S_TYPEDEF,
+    S_TYPEDEF = 1,
     S_EXTERN,
     S_STATIC,
     S_AUTO,
@@ -22,13 +21,11 @@ enum { // Type qualifiers
 };
 
 enum { // Function specifiers
-    F_NONE,
-    F_INLINE,
+    F_INLINE = 1,
 };
 
 enum { // Types
-    T_NONE,
-    T_VOID,
+    T_VOID = 1,
     T_CHAR,
     T_SHORT,
     T_INT,
@@ -82,7 +79,5 @@ int is_fp(Type *t);
 int is_arith(Type *t);
 int is_void_ptr(Type *t);
 int are_equal(Type *a, Type *b);
-
-void t_linkage(Type *t, int sclass);
 
 #endif

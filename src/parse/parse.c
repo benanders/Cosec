@@ -49,28 +49,38 @@ static Node * find_var(Scope *s, char *name) {
 }
 
 static void ensure_not_redef(Scope *s, Node *n) {
-    Node *v = map_get(s->vars, n->var_name);
+    Type *a = n->t;
+    Node *v;
+    if (n->t->linkage == L_EXTERN) { // extern needs type checking across scopes
+        v = find_var(s, n->var_name);
+        if (v && !are_equal(n->t, v->t)) goto err_types;
+    }
+    v = map_get(s->vars, n->var_name);
     if (!v) return;
-    if (n->k != v->k) {
-        error_at(n->tk, "redefinition of '%s' as a different kind of symbol", n->var_name);
-    }
-    if (!are_equal(n->t, v->t)) {
-        error_at(n->tk, "redefinition of '%s' with a different type", n->var_name);
-    }
+    Type *b = v->t;
+    if (n->k != v->k) goto err_symbols;
+    if (!are_equal(a, b)) goto err_types;
     if (s->k == SCOPE_FILE) { // File scope
-        // ALLOWED: [int a; extern int a;] [static int a; extern int a;]
+        // ALLOWED: [int a; extern int a;]
+        // ALLOWED: [static int a; extern int a;]
         // ALLOWED: [extern int a; int a;]
-        if (n->t->linkage != v->t->linkage &&
-            !(n->t->linkage == L_EXTERN ||
-              (v->t->linkage == L_EXTERN && n->t->linkage == L_NONE))) {
-            error_at(n->tk, "redefinition of '%s' with different linkage", n->var_name);
-        }
+        if (a->linkage == L_STATIC && b->linkage == L_NONE)   goto err_static1;
+        if (a->linkage == L_NONE   && b->linkage == L_STATIC) goto err_static2;
+        if (a->linkage == L_EXTERN && b->linkage == L_STATIC) goto err_static2;
     } else { // Block scope
         // ALLOWED: [extern int a; extern int a]
-        if (!(n->t->linkage == L_EXTERN && v->t->linkage == L_EXTERN)) {
-            error_at(n->tk, "redefinition of '%s' with different linkage", n->var_name);
-        }
+        if (!(n->t->linkage == L_EXTERN && v->t->linkage == L_EXTERN)) goto err_redef;
     }
+err_redef:
+    error_at(n->tk, "redefinition of '%s'", n->var_name);
+err_symbols:
+    error_at(n->tk, "redefinition of '%s' as a different kind of symbol", n->var_name);
+err_types:
+    error_at(n->tk, "redefinition of '%s' with a different type", n->var_name);
+err_static1:
+    error_at(n->tk, "non-static declaration of '%s' follows static declaration", n->var_name);
+err_static2:
+    error_at(n->tk, "static declaration of '%s' follows non-static declaration", n->var_name);
 }
 
 static void adjust_linkage(Scope *s, Token *name, Type *t) {
@@ -88,6 +98,9 @@ static void def_symbol(Scope *s, Node *n) {
 }
 
 static Node * def_var(Scope *s, Token *name, Type *t) {
+    if (t->k == T_VOID) {
+        error_at(name, "variable cannot have type 'void'");
+    }
     adjust_linkage(s, name, t);
     Node *n = node(N_VAR, name);
     n->t = t;
@@ -97,6 +110,7 @@ static Node * def_var(Scope *s, Token *name, Type *t) {
 }
 
 static Node * def_typedef(Scope *s, Token *name, Type *t) {
+    assert(t->linkage == L_NONE);
     Node *n = node(N_TYPEDEF, name);
     n->t = t;
     n->var_name = name->s;
@@ -439,6 +453,21 @@ static Type * parse_abstract_declarator(Scope *s, Type *base) {
 }
 
 
+// ---- Expressions -----------------------------------------------------------
+
+static Node * conv_to(Node *n, Type *t) {
+    TODO();
+}
+
+static Node * parse_expr_no_commas(Scope *s) {
+    TODO();
+}
+
+static Node * parse_const_expr(Scope *s) {
+    TODO();
+}
+
+
 // ---- Statements ------------------------------------------------------------
 
 static Node * parse_block(Scope *s) {
@@ -464,18 +493,28 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
     return fn;
 }
 
+static Node * parse_initializer_list(Scope *s) {
+    TODO();
+}
+
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
+    Node *var = def_var(s, name, t);
     Node *init = NULL;
     if (next_tk_is(s->l, '=')) {
-        TODO(); // TODO: also check if static and allow only constant exprs
-//        if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
-//            init = parse_initializer_list(s);
-//        } else {
-//            init = parse_expr_no_commas(s);
-//        }
-//        init = conv_to(init, t);
+        if (t->linkage == L_EXTERN || t->k == T_FN) {
+            error_at(peek_tk(s->l), "illegal initializer");
+        }
+        if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
+            init = parse_const_expr(s);
+        } else { // Block scope, no linkage, object
+            if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
+                init = parse_initializer_list(s);
+            } else {
+                init = parse_expr_no_commas(s);
+            }
+            init = conv_to(init, t);
+        }
     }
-    Node *var = def_var(s, name, t);
     Node *decl = node(N_DECL, name);
     decl->var = var;
     decl->init = init;
@@ -486,15 +525,18 @@ static Node * parse_init_decl(Scope *s, Type *base, int sclass) {
     Token *name = NULL;
     Vec *param_names = vec_new();
     Type *t = parse_named_declarator(s, base, &name, param_names);
-    if (sclass == S_TYPEDEF) { // Typedef
-        return def_typedef(s, name, t);
+    switch (sclass) {
+    case S_TYPEDEF: return def_typedef(s, name, t);
+    case S_EXTERN:  t->linkage = L_EXTERN; break;
+    case S_STATIC:  t->linkage = L_STATIC; break;
+    case S_AUTO: case S_REGISTER:
+        if (s->k == SCOPE_FILE) {
+            error_at(name, "illegal storage class specifier in file scope");
+        }
+        break;
     }
-    t_linkage(t, sclass);
-    if (s->k == SCOPE_FILE && peek_tk_is(s->l, '{')) { // Fn def
+    if (s->k == SCOPE_FILE && peek_tk_is(s->l, '{')) {
         return parse_fn_def(s, t, name, param_names);
-    }
-    if (t->k == T_VOID) {
-        error_at(name, "variable cannot have type 'void'");
     }
     return parse_decl_var(s, t, name);
 }
