@@ -16,7 +16,7 @@ Type * t_copy(Type *t) {
 
 Type * t_num(int type, int is_unsigned) {
     Type *t = t_new();
-    t->t = type;
+    t->k = type;
     t->is_unsigned = is_unsigned;
     switch (type) {
         case T_VOID:  t->size = t->align = 0; break;
@@ -31,7 +31,7 @@ Type * t_num(int type, int is_unsigned) {
 
 Type * t_ptr(Type *base) {
     Type *t = t_new();
-    t->t = T_PTR;
+    t->k = T_PTR;
     t->ptr = base;
     t->size = t->align = 8;
     return t;
@@ -39,29 +39,28 @@ Type * t_ptr(Type *base) {
 
 Type * t_arr(Type *base, uint64_t len) {
     Type *t = t_new();
-    t->t = T_ARR;
+    t->k = T_ARR;
     t->ptr = base;
     t->len = len;
     t->size = t->align = 8;
     return t;
 }
 
-Type * t_fn(Type *ret, Type **args, int nargs) {
+Type * t_fn(Type *ret, Vec *params) {
     Type *t = t_new();
-    t->t = T_FN;
+    t->k = T_FN;
     t->ret = ret;
-    t->args = args;
-    t->nargs = nargs;
+    t->params = params;
     t->size = t->align = 8;
     return t;
 }
 
 int is_int(Type *t) {
-    return t->t >= T_CHAR && t->t <= T_LLONG;
+    return t->k >= T_CHAR && t->k <= T_LLONG;
 }
 
 int is_fp(Type *t) {
-    return t->t >= T_FLOAT && t->t <= T_LDOUBLE;
+    return t->k >= T_FLOAT && t->k <= T_LDOUBLE;
 }
 
 int is_arith(Type *t) {
@@ -69,19 +68,30 @@ int is_arith(Type *t) {
 }
 
 int is_void_ptr(Type *t) {
-    return t->t == T_PTR && t->ptr->t == T_VOID;
+    return t->k == T_PTR && t->ptr->k == T_VOID;
 }
 
 int are_equal(Type *a, Type *b) {
-    switch (a->t) {
+    switch (a->k) {
     case T_PTR: return are_equal(a->ptr, b->ptr);
     case T_ARR: return a->len == b->len && are_equal(a->ptr, b->ptr);
     case T_FN:
-        if (a->nargs != b->nargs) return 0;
-        for (int i = 0; i < a->nargs; i++) {
-            if (!are_equal(a->args[i], b->args[i])) return 0;
+        if (vec_len(a->params) != vec_len(b->params)) return 0;
+        for (int i = 0; i < vec_len(a->params); i++) {
+            if (!are_equal(vec_get(a->params, i), vec_get(b->params, i))) return 0;
         }
         return are_equal(a->ret, b->ret);
-    default: return a->t == b->t && a->is_unsigned == b->is_unsigned;
+    case T_STRUCT: case T_ENUM: case T_UNION:
+        TODO();
+    default: return a->k == b->k && a->is_unsigned == b->is_unsigned;
+    }
+}
+
+void t_linkage(Type *t, int sclass) {
+    switch (sclass) {
+        case S_NONE:   t->linkage = L_NONE; break;
+        case S_EXTERN: t->linkage = L_EXTERN; break;
+        case S_STATIC: t->linkage = L_STATIC; break;
+        default: UNREACHABLE();
     }
 }

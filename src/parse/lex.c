@@ -4,22 +4,9 @@
 #include <string.h>
 
 #include "lex.h"
-#include "err.h"
+#include "../err.h"
 
-#define MAX_SYMBOL_LEN 3
-#define FIRST_TK       TK_EQ
-#define FIRST_SYMBOL   TK_EQ
 #define FIRST_KEYWORD  TK_VOID
-#define FIRST_VALUE    TK_NUM
-
-static char *SYMBOLS[] = {
-    "==", "!=", "<=", ">=",
-    "&&", "||",
-    "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
-    "<<", ">>", "++", "--",
-    "->",
-    NULL,
-};
 
 static char *KEYWORDS[] = {
     "void", "char", "short", "int", "long", "float", "double",
@@ -32,12 +19,7 @@ static char *KEYWORDS[] = {
     NULL,
 };
 
-static char *VALUES[] = {
-    "number", "character", "string", "identifier", "end of file", "space",
-    NULL,
-};
-
-static Token *SPACE_TK = &(Token) { .t = TK_SPACE };
+static Token *SPACE_TK = &(Token) { .k = TK_SPACE };
 
 Lexer * new_lexer(File *f) {
     Lexer *l = calloc(1, sizeof(Lexer));
@@ -46,13 +28,13 @@ Lexer * new_lexer(File *f) {
     return l;
 }
 
-static Token * new_tk(Lexer *l, int t) {
-    Token *tk = calloc(1, sizeof(Token));
-    tk->t = t;
-    tk->f = l->f;
-    tk->line = l->f->line;
-    tk->col = l->f->col;
-    return tk;
+static Token * new_tk(Lexer *l, int k) {
+    Token *t = calloc(1, sizeof(Token));
+    t->k = k;
+    t->f = l->f;
+    t->line = l->f->line;
+    t->col = l->f->col;
+    return t;
 }
 
 
@@ -106,9 +88,8 @@ static int skip_spaces(Lexer *l) {
 
 // ---- Values and Symbols ----------------------------------------------------
 
-
 static Token * lex_ident(Lexer *l) {
-    Token *tk = new_tk(l, TK_IDENT);
+    Token *t = new_tk(l, TK_IDENT);
     Buf *b = buf_new();
     int c = next_ch(l->f);
     while (isalnum(c) || c == '_') {
@@ -119,16 +100,16 @@ static Token * lex_ident(Lexer *l) {
     buf_push(b, '\0');
     for (int i = 0; KEYWORDS[i]; i++) {
         if (strcmp(b->data, KEYWORDS[i]) == 0) {
-            tk->t = FIRST_KEYWORD + i;
+            t->k = FIRST_KEYWORD + i;
             break;
         }
     }
-    tk->s = b->data;
-    return tk;
+    t->s = b->data;
+    return t;
 }
 
 static Token * lex_num(Lexer *l) {
-    Token *tk = new_tk(l, TK_NUM);
+    Token *t = new_tk(l, TK_NUM);
     Buf *b = buf_new();
     int c = next_ch(l->f), last = c;
     while (isalnum(c) || c == '.' || (strchr("eEpP", last) && strchr("+-", c))) {
@@ -138,8 +119,8 @@ static Token * lex_num(Lexer *l) {
     }
     undo_ch(l->f, c);
     buf_push(b, '\0');
-    tk->s = b->data;
-    return tk;
+    t->s = b->data;
+    return t;
 }
 
 static int lex_hex_esc_seq(Lexer *l) {
@@ -195,20 +176,20 @@ static int lex_esc_seq(Lexer *l) {
 }
 
 static Token * lex_ch(Lexer *l) {
-    Token *tk = new_tk(l, TK_CH);
+    Token *t = new_tk(l, TK_CH);
     next_ch(l->f); // Skip '
-    tk->ch = next_ch(l->f);
-    if (tk->ch == '\\') {
-        tk->ch = lex_esc_seq(l);
+    t->ch = next_ch(l->f);
+    if (t->ch == '\\') {
+        t->ch = lex_esc_seq(l);
     }
     if (!next_ch_is(l->f, '\'')) {
-        error_at(tk, "unterminated character literal");
+        error_at(t, "unterminated character literal");
     }
-    return tk;
+    return t;
 }
 
 static Token * lex_str(Lexer *l) {
-    Token *tk = new_tk(l, TK_STR);
+    Token *t = new_tk(l, TK_STR);
     next_ch(l->f); // Skip "
     Buf *b = buf_new();
     int c = next_ch(l->f);
@@ -220,34 +201,57 @@ static Token * lex_str(Lexer *l) {
         c = next_ch(l->f);
     }
     if (c == EOF) {
-        error_at(tk, "unterminated string literal");
+        error_at(t, "unterminated string literal");
     }
-    tk->s = b->data;
-    tk->len = b->len; // NOT null terminated
-    return tk;
+    t->s = b->data;
+    t->len = b->len; // NOT null terminated
+    return t;
 }
 
 static Token * lex_sym(Lexer *l) {
-    Buf *b = buf_new();
     int c = next_ch(l->f);
-    Token *tk = new_tk(l, c);
-    while (c != EOF && b->len < MAX_SYMBOL_LEN) {
-        buf_push(b, (char) c);
-        c = next_ch(l->f);
-    }
-    for (int i = 0; SYMBOLS[i]; i++) {
-        char *sym = SYMBOLS[i];
-        int sym_len = (int) strlen(sym);
-        if (sym_len <= b->len && strncmp(b->data, sym, sym_len) == 0) {
-            tk->t = FIRST_SYMBOL + i;
-            tk->len = sym_len;
-            break;
+    Token *t = new_tk(l, c);
+    switch (c) {
+    case '<':
+        if (next_ch_is(l->f, '=')) { t->k = TK_LE; break; }
+        if (next_ch_is(l->f, '<')) {
+            if (next_ch_is(l->f, '=')) { t->k = TK_A_SHL; break; }
+            t->k = TK_SHL; break;
         }
+        break;
+    case '>':
+        if (next_ch_is(l->f, '=')) { t->k = TK_GE; break; }
+        if (next_ch_is(l->f, '>')) {
+            if (next_ch_is(l->f, '=')) { t->k = TK_A_SHR; break; }
+            t->k = TK_SHR; break;
+        }
+        break;
+    case '=': if (next_ch_is(l->f, '=')) { t->k = TK_EQ; }  break;
+    case '!': if (next_ch_is(l->f, '=')) { t->k = TK_NEQ; } break;
+    case '&':
+        if (next_ch_is(l->f, '&')) { t->k = TK_LOG_AND;   break; }
+        if (next_ch_is(l->f, '=')) { t->k = TK_A_BIT_AND; break; }
+        break;
+    case '|':
+        if (next_ch_is(l->f, '|')) { t->k = TK_LOG_OR;   break; }
+        if (next_ch_is(l->f, '=')) { t->k = TK_A_BIT_OR; break; }
+        break;
+    case '^': if (next_ch_is(l->f, '=')) { t->k = TK_A_BIT_XOR; } break;
+    case '+':
+        if (next_ch_is(l->f, '=')) { t->k = TK_A_ADD; break; }
+        if (next_ch_is(l->f, '+')) { t->k = TK_INC;   break; }
+        break;
+    case '-':
+        if (next_ch_is(l->f, '=')) { t->k = TK_A_SUB; break; }
+        if (next_ch_is(l->f, '-')) { t->k = TK_DEC;   break; }
+        if (next_ch_is(l->f, '>')) { t->k = TK_ARROW; break; }
+        break;
+    case '*': if (next_ch_is(l->f, '=')) { t->k = TK_A_MUL; } break;
+    case '/': if (next_ch_is(l->f, '=')) { t->k = TK_A_DIV; } break;
+    case '%': if (next_ch_is(l->f, '=')) { t->k = TK_A_MOD; } break;
+    default: break;
     }
-    for (int i = b->len - 1; i >= tk->len; i--) {
-        undo_ch(l->f, b->data[i]);
-    }
-    return tk;
+    return t;
 }
 
 static Token * lex_tk(Lexer *l) {
@@ -274,38 +278,46 @@ static Token * lex_tk(Lexer *l) {
 // ---- Tokens ----------------------------------------------------------------
 
 Token * next_tk(Lexer *l) {
+    Token *t;
     if (vec_len(l->buf) > 0) {
-        return vec_pop(l->buf);
+        t = vec_pop(l->buf);
     } else {
-        Token *tk = lex_tk(l);
-        while (tk->t == TK_SPACE) {
-            tk = lex_tk(l);
+        t = lex_tk(l);
+        while (t->k == TK_SPACE) {
+            t = lex_tk(l);
         }
-        return tk;
     }
+    return t;
 }
 
-void undo_tk(Lexer *l, Token *tk) {
-    if (tk->t == TK_EOF) {
+void undo_tk(Lexer *l, Token *t) {
+    if (t->k == TK_EOF) {
         return;
     }
-    vec_push(l->buf, tk);
+    vec_push(l->buf, t);
 }
 
-Token * next_tk_is(Lexer *l, int tk) {
+Token * next_tk_is(Lexer *l, int k) {
     Token *t = next_tk(l);
-    if (t->t == tk) {
+    if (t->k == k) {
         return t;
-    } else {
-        undo_tk(l, t);
-        return NULL;
     }
+    undo_tk(l, t);
+    return NULL;
 }
 
 Token * peek_tk(Lexer *l) {
     Token *t = next_tk(l);
     undo_tk(l, t);
     return t;
+}
+
+Token * peek_tk_is(Lexer *l, int k) {
+    Token *t = peek_tk(l);
+    if (t->k == k) {
+        return t;
+    }
+    return NULL;
 }
 
 Token * peek2_tk(Lexer *l) {
@@ -315,44 +327,52 @@ Token * peek2_tk(Lexer *l) {
     return t2;
 }
 
-Token * expect_tk(Lexer *l, int tk) {
+Token * expect_tk(Lexer *l, int k) {
     Token *t = next_tk(l);
-    if (t->t != tk) {
-        error_at(t, "expected %s, found %s", tk2str(tk), token2str(t));
+    if (t->k != k) {
+        error_at(t, "expected %s, found %s", tk2str(k), token2str(t));
     } else {
         return t;
     }
 }
 
-char * tk2str(int tk) {
+static char *TKS[] = {
+    "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
+    "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->",
+    "void", "char", "short", "int", "long", "float", "double", "signed",
+    "unsigned", "struct", "union", "enum", "typedef", "auto", "static",
+    "extern", "register", "inline", "const", "restrict", "volatile", "sizeof",
+    "if", "else", "while", "do", "for", "switch", "case", "default", "break",
+    "continue", "goto", "return", "number", "character", "string",
+    "identifier", "end of file", "newline", "space",
+};
+
+
+char * tk2str(int t) {
     Buf *b = buf_new();
-    if (tk < FIRST_VALUE) {
+    if (t < FIRST_KEYWORD) {
         buf_push(b, '\'');
     }
-    if (tk < FIRST_TK) {
-        buf_print(b, quote_ch(tk));
-    } else if (tk < FIRST_KEYWORD) {
-        buf_print(b, SYMBOLS[tk - FIRST_SYMBOL]);
-    } else if (tk < FIRST_VALUE) {
-        buf_print(b, KEYWORDS[tk - FIRST_KEYWORD]);
+    if (t < 256) {
+        buf_print(b, quote_ch(t));
     } else {
-        buf_print(b, VALUES[tk - FIRST_VALUE]);
+        buf_print(b, TKS[t - TK_SHL]);
     }
-    if (tk < FIRST_VALUE) {
+    if (t < FIRST_KEYWORD) {
         buf_push(b, '\'');
     }
     buf_push(b, '\0');
     return b->data;
 }
 
-char * token2str(Token *tk) {
+char * token2str(Token *t) {
     Buf *b = buf_new();
-    switch (tk->t) {
-        case TK_NUM:   buf_printf(b, "number '%s'", tk->s); break;
-        case TK_CH:    buf_printf(b, "character '%c'", quote_ch(tk->ch)); break;
-        case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(tk->s, tk->len)); break;
-        case TK_IDENT: buf_printf(b, "identifier '%s'", tk->s); break;
-        default:       return tk2str(tk->t);
+    switch (t->k) {
+        case TK_NUM:   buf_printf(b, "number '%s'", t->s); break;
+        case TK_CH:    buf_printf(b, "character '%c'", quote_ch(t->ch)); break;
+        case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->s, t->len)); break;
+        case TK_IDENT: buf_printf(b, "identifier '%s'", t->s); break;
+        default:       return tk2str(t->k);
     }
     return b->data;
 }

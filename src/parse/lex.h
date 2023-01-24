@@ -3,11 +3,14 @@
 #define COSEC_LEX_H
 
 #include "file.h"
-#include "util.h"
+#include "../util.h"
 
 enum {
     // Symbols
-    TK_EQ = 256, // First 256 characters are for ASCII
+    TK_SHL = 256, // First 256 characters are for ASCII
+    TK_SHR,
+
+    TK_EQ,
     TK_NEQ,
     TK_LE,
     TK_GE,
@@ -26,14 +29,12 @@ enum {
     TK_A_SHL,
     TK_A_SHR,
 
-    TK_SHL, // Must come after TK_A_SHL/TK_A_SHR
-    TK_SHR,
     TK_INC,
     TK_DEC,
 
     TK_ARROW,
 
-    // Keywords
+    // Types
     TK_VOID,
     TK_CHAR,
     TK_SHORT,
@@ -59,6 +60,7 @@ enum {
     TK_RESTRICT,
     TK_VOLATILE,
 
+    // Statements
     TK_SIZEOF,
     TK_IF,
     TK_ELSE,
@@ -85,12 +87,13 @@ enum {
 };
 
 typedef struct {
-    int t;
+    int k;
     File *f;
     int line, col;
-    char *s; // for TK_IDENT, TK_STR, TK_NUM
-    int len; // for TK_STR
-    int ch;  // for TK_CH
+    union {
+        struct { char *s; int len; }; // TK_IDENT, TK_STR, TK_NUM
+        int ch; // TK_CH
+    };
 } Token;
 
 typedef struct {
@@ -101,13 +104,14 @@ typedef struct {
 Lexer * new_lexer(File *f);
 
 Token * next_tk(Lexer *l);
-void    undo_tk(Lexer *l, Token *tk);
-Token * next_tk_is(Lexer *l, int tk);
+void    undo_tk(Lexer *l, Token *t);
+Token * next_tk_is(Lexer *l, int k);
 Token * peek_tk(Lexer *l);
+Token * peek_tk_is(Lexer *l, int k);
 Token * peek2_tk(Lexer *l);
-Token * expect_tk(Lexer *l, int tk);
+Token * expect_tk(Lexer *l, int k);
 
-char * tk2str(int tk);
-char * token2str(Token *tk);
+char * tk2str(int t);
+char * token2str(Token *t);
 
 #endif

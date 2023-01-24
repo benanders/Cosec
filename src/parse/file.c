@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "file.h"
-#include "err.h"
+#include "../err.h"
 
 File * new_file(char *in) {
     File *f = malloc(sizeof(File));

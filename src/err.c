@@ -87,3 +87,21 @@ void error_at(Token *tk, char *fmt, ...) {
     va_end(args);
     exit(1);
 }
+
+static void print_warning_header() {
+    print_colour(COLOUR_YELLOW);
+    print_colour(COLOUR_BOLD);
+    printf("warning: ");
+    print_colour(COLOUR_WHITE);
+}
+
+void warning_at(Token *t, char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    print_warning_header();
+    vprintf(fmt, args);
+    print_colour(COLOUR_CLEAR);
+    printf("\n");
+    print_tk(t);
+    va_end(args);
+}

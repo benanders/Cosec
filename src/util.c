@@ -4,8 +4,11 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #include "util.h"
+
+#define MAP_TOMBSTONE ((void *) (-1))
 
 Vec * vec_new() {
     Vec *v = malloc(sizeof(Vec));
@@ -115,6 +118,102 @@ static void quote_ch_to_buf(Buf *b, int ch) {
         }
         break;
     }
+}
+
+static uint32_t hash(char *p) { // FNV hash
+    uint32_t r = 2166136261;
+    for (; *p; p++) {
+        r ^= *p;
+        r *= 16777619;
+    }
+    return r;
+}
+
+Map * map_new() {
+    Map *m = malloc(sizeof(Map));
+    m->size = 16;
+    m->num = 0;
+    m->used = 0; // Includes 'TOMBSTONE' values
+    m->k = calloc(m->size, sizeof(char *));
+    m->v = calloc(m->size, sizeof(void *));
+    return m;
+}
+
+static void map_rehash(Map *m) {
+    if (m->used < m->size * 0.7) {
+        return;
+    }
+    int new_size = (m->num < m->size * 0.35) ? m->size : m->size * 2;
+    char **k = calloc(new_size, sizeof(char *));
+    void **v = calloc(new_size, sizeof(void *));
+    int mask = new_size - 1;
+    for (int i = 0; i < m->size; i++) {
+        if (!m->k[i] || m->k[i] == MAP_TOMBSTONE) {
+            continue;
+        }
+        uint32_t h = hash(m->k[i]) & mask;
+        while (k[h]) {
+            h = (h + 1) & mask;
+        }
+        k[h] = m->k[i];
+        v[h] = m->v[i];
+    }
+    free(m->k);
+    free(m->v);
+    m->k = k;
+    m->v = v;
+    m->size = new_size;
+    m->used = m->num; // Removed all 'TOMBSTONE' values
+}
+
+static uint32_t map_idx(Map *m, char *k) {
+    int mask = m->size - 1;
+    uint32_t h = hash(k) & mask;
+    while (m->k[h]) {
+        if (m->k[h] != MAP_TOMBSTONE && strcmp(k, m->k[h]) == 0) {
+            break;
+        }
+        h = (h + 1) & mask;
+    }
+    return h;
+}
+
+void map_put(Map *m, char *k, void *v) {
+    map_rehash(m);
+    int mask = m->size - 1;
+    uint32_t h = hash(k) & mask;
+    while (m->k[h]) {
+        if (m->k[h] == MAP_TOMBSTONE || strcmp(k, m->k[h]) == 0) {
+            break;
+        }
+        h = (h + 1) & mask;
+    }
+    if (!m->k[h] || m->k[h] == MAP_TOMBSTONE) {
+        m->v[h] = v; // Doesn't exist
+        m->k[h] = k;
+        m->num++;
+        if (!m->k[h]) {
+            m->used++;
+        }
+    } else {
+        m->v[h] = v; // Already exists
+    }
+}
+
+void * map_get(Map *m, char *k) {
+    uint32_t h = map_idx(m, k);
+    if (m->k[h]) {
+        return m->v[h];
+    } else {
+        return NULL;
+    }
+}
+
+void map_remove(Map *m, char *k) {
+    uint32_t h = map_idx(m, k);
+    m->k[h] = MAP_TOMBSTONE;
+    m->v[h] = NULL;
+    m->num--;
 }
 
 char * quote_ch(int ch) {
