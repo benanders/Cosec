@@ -2,12 +2,12 @@
 #include "debug.h"
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "var",
+    "imm", "fp", "str", "local", "global", "kptr",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
     ",", "?",
-    "-", "~", "!", "++", "--", "++", "--", "*", "&", "conv", "sizeof",
+    "-", "~", "!", "++", "--", "++", "--", "*", "&", "conv",
     "idx", "call", ".", "->",
     "fn def", "typedef", "decl", "if", "while", "do while", "for", "switch",
     "case", "default", "break", "continue", "goto", "label", "return",
@@ -70,9 +70,19 @@ static void print_expr(Node *n) {
         print_type(n->t);
         printf(" \"%s\"", quote_str(n->str, n->len));
         break;
-    case N_VAR:
+    case N_LOCAL: case N_GLOBAL:
         print_type(n->t);
         printf(" %s", n->var_name);
+        break;
+    case N_KPTR:
+        print_type(n->t);
+        assert(n->global->k == N_GLOBAL);
+        printf(" &%s", n->global->var_name);
+        if (n->offset > 0) {
+            printf(" + %llu", n->offset);
+        } else if (n->offset < 0) {
+            printf(" - %llu", -n->offset);
+        }
         break;
 
         // Operations

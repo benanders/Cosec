@@ -10,7 +10,10 @@ enum { // AST nodes
     N_IMM,
     N_FP,
     N_STR,
-    N_VAR,
+    N_LOCAL,
+    N_GLOBAL,
+    N_KPTR,
+    N_KVAL, // Used by the constant expression calculator only
 
     // Arithmetic
     N_ADD,
@@ -62,7 +65,6 @@ enum { // AST nodes
     N_DEREF,
     N_ADDR,
     N_CONV,
-    N_SIZEOF,
 
     // Postfix operations
     N_IDX,
@@ -100,9 +102,10 @@ typedef struct Node {
         uint64_t imm; // N_IMM
         double fp;    // N_FP
         struct { char *str; int len; }; // N_STR
+        struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
 
         // Variables
-        char *var_name; // N_VAR, N_TYPEDEF
+        char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
 
         // Operations
         struct { struct Node *l, *r; };
@@ -115,7 +118,7 @@ typedef struct Node {
         struct { struct Node *if_cond, *if_body, *if_else; }; // N_IF, N_TERNARY
         struct { struct Node *loop_cond, *loop_body; }; // N_WHILE, N_DO_WHILE
         struct { struct Node *for_init, *for_cond, *for_inc, *for_body; }; // N_FOR
-        struct { struct Node *switch_cond, *switch_body; }; // N_SWITCH
+        struct { struct Node *switch_cond, *switch_body; Vec *cases; /* of 'Node *' */ }; // N_SWITCH
         struct { struct Node *case_cond, *case_body; }; // N_CASE, N_DEFAULT
         struct { char *label; struct Node *label_body; }; // N_GOTO, N_LABEL
         struct Node *val; // N_RET

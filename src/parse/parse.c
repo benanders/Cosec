@@ -19,6 +19,7 @@ typedef struct Scope {
     Lexer *l;
     Map *vars;
     Node *fn; // NULL in file scope
+    Vec *cases; // for SCOPE_SWITCH
 } Scope;
 
 static Node * node(int k, Token *tk) {
@@ -35,6 +36,19 @@ static void enter_scope(Scope *inner, Scope *outer, int k) {
     inner->vars = map_new();
     inner->fn = outer->fn;
     inner->outer = outer;
+    if (k == SCOPE_SWITCH) {
+        inner->cases = vec_new();
+    }
+}
+
+static Scope * find_scope(Scope *s, int k) {
+    while (s) {
+        if (s->k == k) {
+            return s;
+        }
+        s = s->outer;
+    }
+    return NULL;
 }
 
 static Node * find_var(Scope *s, char *name) {
@@ -98,7 +112,9 @@ static Node * def_var(Scope *s, Token *name, Type *t) {
     if (t->k == T_FN && t->linkage == L_NONE) {
         t->linkage = L_EXTERN; // Functions are 'extern' if unspecified
     }
-    Node *n = node(N_VAR, name);
+    Node *n = node((s->k == SCOPE_FILE ||
+                    t->linkage == L_STATIC ||
+                    t->linkage == L_EXTERN) ? N_GLOBAL : N_LOCAL, name);
     n->t = t;
     n->var_name = name->s;
     def_symbol(s, n);
@@ -569,7 +585,7 @@ static void ensure_ptr(Node *n) {
 }
 
 static void ensure_lvalue(Node *n) {
-    if (n->k != N_VAR && n->k != N_DEREF && n->k != N_IDX)
+    if (n->k != N_LOCAL && n->k != N_GLOBAL && n->k != N_DEREF && n->k != N_IDX)
         error_at(n->tk, "expression is not assignable");
     if (n->t->k == T_ARR)  error_at(n->tk, "array type is not assignable");
     if (n->t->k == T_FN)   error_at(n->tk, "function type is not assignable");
@@ -663,7 +679,7 @@ static Node * parse_neg(Scope *s, Token *op) {
     return unop;
 }
 
-static Node * parse_plus(Scope *s, Token *op) {
+static Node * parse_plus(Scope *s) {
     Node *l = parse_subexpr(s, PREC_UNARY);
     return discharge(l); // Type promotion
 }
@@ -754,7 +770,7 @@ static Node * parse_unop(Scope *s) {
     Token *op = next_tk(s->l);
     switch (op->k) {
     case '-': return parse_neg(s, op);
-    case '+': return parse_plus(s, op);
+    case '+': return parse_plus(s);
     case '~': return parse_bit_not(s, op);
     case '!': return parse_log_not(s, op);
     case TK_INC: case TK_DEC: return parse_pre_inc_dec(s, op);
@@ -895,8 +911,242 @@ static Node * parse_expr_no_commas(Scope *s) {
     return parse_subexpr(s, PREC_COMMA);
 }
 
-static Node * parse_const_expr(Scope *s) {
-    TODO();
+
+// ---- Constant Expressions --------------------------------------------------
+
+#define CALC_UNOP_INT(op)          \
+    l = calc_const_expr_raw(e->l); \
+    if (l->k == N_IMM) {           \
+        n = node(N_IMM, e->tk);    \
+        n->t = e->t;               \
+        n->imm = op l->imm;        \
+    } else {                       \
+        goto err;                  \
+    }                              \
+    break;
+
+#define CALC_UNOP_ARITH(op)        \
+    l = calc_const_expr_raw(e->l); \
+    if (l->k == N_IMM) {           \
+        n = node(N_IMM, e->tk);    \
+        n->t = e->t;               \
+        n->imm = op l->imm;        \
+    } else if (l->k == N_FP) {     \
+        n = node(N_FP, e->tk);     \
+        n->t = e->t;               \
+        n->fp = op l->fp;          \
+    } else {                       \
+        goto err;                  \
+    }                              \
+    break;
+
+#define CALC_BINOP_INT(op)                                        \
+    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
+    if (l->k == N_IMM && r->k == N_IMM) {                         \
+        n = node(N_IMM, e->tk);                                   \
+        n->t = e->t;                                              \
+        n->imm = l->imm op r->imm;                                \
+    } else {                                                      \
+        goto err;                                                 \
+    }                                                             \
+    break;
+
+#define CALC_BINOP_ARITH(op)                                      \
+    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
+    if (l->k == N_IMM && r->k == N_IMM) {                         \
+        n = node(N_IMM, e->tk);                                   \
+        n->t = e->t;                                              \
+        n->imm = l->imm op r->imm;                                \
+    } else if (l->k == N_FP && r->k == N_FP) {                    \
+        n = node(N_FP, e->tk);                                    \
+        n->t = e->t;                                              \
+        n->fp = l->fp op r->fp;                                   \
+    } else {                                                      \
+        goto err;                                                 \
+    }                                                             \
+    break;
+
+#define CALC_BINOP_ARITH_PTR(op)                                  \
+    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
+    if (l->k == N_IMM && r->k == N_IMM) {                         \
+        n = node(N_IMM, e->tk);                                   \
+        n->t = e->t;                                              \
+        n->imm = l->imm op r->imm;                                \
+    } else if (l->k == N_FP && r->k == N_FP) {                    \
+        n = node(N_FP, e->tk);                                    \
+        n->t = e->t;                                              \
+        n->fp = l->fp op r->fp;                                   \
+    } else if (l->k == N_KPTR && r->k == N_IMM) {                 \
+        n = node(N_KPTR, e->tk);                                  \
+        n->t = e->t;                                              \
+        n->global = l->global;                                    \
+        n->offset = l->offset op (r->imm * n->t->ptr->size);      \
+    } else if (l->k == N_IMM && r->k == N_KPTR) {                 \
+        n = node(N_KPTR, e->tk);                                  \
+        n->t = e->t;                                              \
+        n->global = r->global;                                    \
+        n->offset = r->offset op (l->imm * n->t->ptr->size);      \
+    } else {                                                      \
+        goto err;                                                 \
+    }                                                             \
+    break;
+
+#define CALC_BINOP_EQ(op)                                              \
+    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r);      \
+    if (l->k == N_IMM && r->k == N_IMM) {                              \
+        n = node(N_IMM, e->tk);                                        \
+        n->t = e->t;                                                   \
+        n->imm = op (l->imm == r->imm);                                \
+    } else if (l->k == N_FP && r->k == N_FP) {                         \
+        n = node(N_FP, e->tk);                                         \
+        n->t = e->t;                                                   \
+        n->fp = op (l->fp == r->fp);                                   \
+    } else if (l->k == N_KPTR && r->k == N_KPTR) {                     \
+        n = node(N_IMM, e->tk);                                        \
+        n->t = e->t;                                                   \
+        n->fp = op (l->global == r->global && l->offset == r->offset); \
+    } else if ((l->k == N_KPTR && r->k == N_IMM && r->imm == 0) ||     \
+               (r->k == N_KPTR && l->k == N_IMM && l->imm == 0)) {     \
+        n = node(N_IMM, e->tk);                                        \
+        n->t = e->t;                                                   \
+        n->imm = op 0;                                                 \
+    } else {                                                           \
+        goto err;                                                      \
+    }                                                                  \
+    break;
+
+#define CALC_BINOP_REL(op)                                        \
+    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
+    if (l->k == N_IMM && r->k == N_IMM) {                         \
+        n = node(N_IMM, e->tk);                                   \
+        n->t = e->t;                                              \
+        n->imm = l->imm op r->imm;                                \
+    } else if (l->k == N_FP && r->k == N_FP) {                    \
+        n = node(N_IMM, e->tk);                                   \
+        n->t = e->t;                                              \
+        n->imm = l->fp op r->fp;                                  \
+    } else {                                                      \
+        goto err;                                                 \
+    }                                                             \
+    break;
+
+static Node * calc_const_expr_raw(Node *e) {
+    Node *n, *cond, *l, *r;
+    switch (e->k) {
+        // Constants
+    case N_IMM: case N_FP: case N_STR: case N_KPTR: n = e; break;
+    case N_GLOBAL:
+        n = node(N_KVAL, e->tk);
+        n->t = e->t;
+        n->global = e;
+        break;
+
+        // Binary operations
+    case N_ADD: CALC_BINOP_ARITH_PTR(+)
+    case N_SUB: CALC_BINOP_ARITH_PTR(-)
+    case N_MUL: CALC_BINOP_ARITH(*)
+    case N_DIV: CALC_BINOP_ARITH(/)
+    case N_MOD: CALC_BINOP_INT(%)
+    case N_SHL: CALC_BINOP_INT(<<)
+    case N_SHR: CALC_BINOP_INT(>>)
+    case N_BIT_AND: CALC_BINOP_INT(&)
+    case N_BIT_OR:  CALC_BINOP_INT(|)
+    case N_BIT_XOR: CALC_BINOP_INT(^)
+    case N_EQ:  CALC_BINOP_EQ()
+    case N_NEQ: CALC_BINOP_EQ(!)
+    case N_LT:  CALC_BINOP_REL(<)
+    case N_LE:  CALC_BINOP_REL(<=)
+    case N_GT:  CALC_BINOP_REL(>)
+    case N_GE:  CALC_BINOP_REL(>=)
+    case N_LOG_AND: CALC_BINOP_INT(&&)
+    case N_LOG_OR:  CALC_BINOP_INT(||)
+    case N_COMMA:
+        l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r);
+        n = r;
+        break;
+
+        // Ternary operation
+    case N_TERNARY:
+        cond = calc_const_expr_raw(e->if_cond);
+        l = calc_const_expr_raw(e->if_body);
+        r = calc_const_expr_raw(e->if_else);
+        if (cond->k != N_IMM) goto err;
+        n = cond->imm ? l : r;
+        break;
+
+        // Unary operations
+    case N_NEG:     CALC_UNOP_ARITH(-)
+    case N_BIT_NOT: CALC_UNOP_INT(~)
+    case N_LOG_NOT: CALC_UNOP_INT(!)
+    case N_ADDR:
+        l = calc_const_expr_raw(e->l);
+        if (l->k != N_KVAL) goto err;
+        n = node(N_KPTR, e->tk);
+        n->t = e->t;
+        n->global = l->global;
+        break;
+    case N_DEREF:
+        l = calc_const_expr_raw(e->l);
+        if (l->k != N_KPTR) goto err;
+        n = node(N_KVAL, e->tk);
+        n->t = e->t;
+        n->global = l->global;
+        n->offset = l->offset;
+        break;
+    case N_CONV:
+        l = calc_const_expr_raw(e->l);
+        n = node(l->k, e->tk);
+        *n = *l;
+        n->t = e->t;
+        if (is_fp(n->t) && l->k == N_IMM) { // int -> float
+            n->k = N_FP;
+            n->fp = (double) l->imm;
+        } else if (is_int(n->t) && l->k == N_FP) { // float -> int
+            n->k = N_IMM;
+            n->imm = (int64_t) l->fp;
+        } else if (is_int(n->t) && l->k == N_IMM) { // int -> int
+            n->k = N_IMM;
+            int b = n->t->size * 8; // Bits
+            n->imm = l->imm & (((int64_t) 1 << b) - 1); // Truncate to 'dst'
+            if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (b - 1)))) {
+                n->imm |= ~(((int64_t) 1 << b) - 1); // Sext if sign bit set
+            }
+        }
+        break;
+
+        // Postfix operations
+    case N_IDX:
+        l = calc_const_expr_raw(e->arr), r = calc_const_expr_raw(e->idx);
+        if (r->k != N_IMM) goto err;
+        switch (l->k) {
+        case N_STR:
+            n = node(N_IMM, e->tk);
+            n->t = l->t->ptr;
+            n->imm = (uint64_t) l->str[r->imm];
+            break;
+        case N_KVAL: case N_KPTR:
+            n = node(N_KVAL, e->tk);
+            n->t = l->t->ptr;
+            n->global = l->global;
+            n->offset = (int64_t) (l->offset + r->imm * n->t->size);
+            break;
+        default: goto err;
+        }
+    case N_DOT:   TODO();
+    case N_ARROW: TODO();
+    default:      goto err;
+    }
+    return n;
+err:
+    error_at(e->tk, "expected constant expression");
+}
+
+static Node * calc_const_expr(Node *e) {
+    Node *n = calc_const_expr_raw(e);
+    if (n->k == N_KVAL) {
+        error_at(e->tk, "expected constant expression"); // TODO: allow strings
+    }
+    return n;
 }
 
 
@@ -904,53 +1154,204 @@ static Node * parse_const_expr(Scope *s) {
 
 static Node * parse_decl(Scope *s);
 static Node * parse_block(Scope *s);
+static Node * parse_stmt(Scope *s);
 
 static Node * parse_if(Scope *s) {
-    TODO();
+    Token *if_tk = expect_tk(s->l, TK_IF);
+    expect_tk(s->l, '(');
+    Node *cond = parse_expr(s);
+    expect_tk(s->l, ')');
+    Node *body = parse_stmt(s);
+    Node *els = NULL;
+    if (peek_tk_is(s->l, TK_ELSE)) {
+        Token *else_tk = next_tk(s->l);
+        if (peek_tk_is(s->l, TK_IF)) { // else if
+            els = parse_stmt(s);
+        } else { // else
+            Node *else_body = parse_stmt(s);
+            els = node(N_IF, else_tk);
+            els->if_cond = NULL;
+            els->if_body = else_body;
+            els->if_else = NULL;
+        }
+    }
+    Node *n = node(N_IF, if_tk);
+    n->if_cond = cond;
+    n->if_body = body;
+    n->if_else = els;
+    return n;
 }
 
 static Node * parse_while(Scope *s) {
-    TODO();
+    Token *while_tk = expect_tk(s->l, TK_WHILE);
+    expect_tk(s->l, '(');
+    Node *cond = parse_expr(s);
+    expect_tk(s->l, ')');
+    Scope loop;
+    enter_scope(&loop, s, SCOPE_LOOP);
+    Node *body = parse_stmt(&loop);
+    Node *n = node(N_WHILE, while_tk);
+    n->loop_cond = cond;
+    n->loop_body = body;
+    return n;
 }
 
 static Node * parse_do_while(Scope *s) {
-    TODO();
+    Token *do_tk = expect_tk(s->l, TK_DO);
+    Scope loop;
+    enter_scope(&loop, s, SCOPE_LOOP);
+    Node *body = parse_stmt(&loop);
+    expect_tk(s->l, TK_WHILE);
+    expect_tk(s->l, '(');
+    Node *cond = parse_expr(s);
+    expect_tk(s->l, ')');
+    expect_tk(s->l, ';');
+    Node *n = node(N_DO_WHILE, do_tk);
+    n->loop_cond = cond;
+    n->loop_body = body;
+    return n;
 }
 
 static Node * parse_for(Scope *s) {
-    TODO();
+    Token *for_tk = expect_tk(s->l, TK_FOR);
+    expect_tk(s->l, '(');
+    Scope loop;
+    enter_scope(&loop, s, SCOPE_LOOP);
+
+    Node *init = NULL;
+    if (is_type(&loop, peek_tk(s->l))) {
+        init = parse_decl(&loop);
+    } else if (!peek_tk_is(s->l, ';')) {
+        init = parse_expr(&loop);
+        expect_tk(s->l, ';');
+    }
+
+    Node *cond = NULL;
+    if (!peek_tk_is(s->l, ';')) {
+        cond = parse_expr(&loop);
+    }
+    expect_tk(s->l, ';');
+
+    Node *inc = NULL;
+    if (!peek_tk_is(s->l, ')')) {
+        inc = parse_expr(&loop);
+    }
+    expect_tk(s->l, ')');
+
+    Node *body = parse_stmt(&loop);
+    Node *n = node(N_FOR, for_tk);
+    n->for_init = init;
+    n->for_cond = cond;
+    n->for_inc = inc;
+    n->for_body = body;
+    return n;
 }
 
 static Node * parse_switch(Scope *s) {
-    TODO();
+    Token *switch_tk = expect_tk(s->l, TK_SWITCH);
+    expect_tk(s->l, '(');
+    Node *cond = parse_expr(s);
+    expect_tk(s->l, ')');
+
+    Scope switch_s;
+    enter_scope(&switch_s, s, SCOPE_SWITCH);
+    Node *body = parse_stmt(s);
+    Node *n = node(N_SWITCH, switch_tk);
+    n->switch_cond = cond;
+    n->switch_body = body;
+    n->cases = switch_s.cases;
+    return n;
 }
 
 static Node * parse_case(Scope *s) {
-    TODO();
+    Token *case_tk = expect_tk(s->l, TK_CASE);
+    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
+    if (!switch_s) {
+        error_at(case_tk, "'case' not allowed here");
+    }
+    Node *cond = parse_expr(s);
+    expect_tk(s->l, ':');
+    Node *body = parse_stmt(s);
+    Node *n = node(N_CASE, case_tk);
+    n->case_cond = cond;
+    n->case_body = body;
+    vec_push(switch_s->cases, n);
+    return n;
 }
 
 static Node * parse_default(Scope *s) {
-    TODO();
+    Token *default_tk = expect_tk(s->l, TK_DEFAULT);
+    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
+    if (!switch_s) {
+        error_at(default_tk, "'default' not allowed here");
+    }
+    for (int i = 0; i < vec_len(switch_s->cases); i++) {
+        Node *cas = vec_get(switch_s->cases, i);
+        if (cas->k == N_DEFAULT) {
+            error_at(default_tk, "cannot have more than one 'default' in a switch");
+        }
+    }
+    expect_tk(s->l, ':');
+    Node *body = parse_stmt(s);
+    Node *n = node(N_DEFAULT, default_tk);
+    n->case_body = body;
+    vec_push(switch_s->cases, n);
+    return n;
 }
 
 static Node * parse_break(Scope *s) {
-    TODO();
+    Token *break_tk = expect_tk(s->l, TK_BREAK);
+    if (!find_scope(s, SCOPE_LOOP) && !find_scope(s, SCOPE_SWITCH)) {
+        error_at(break_tk, "'break' not allowed here");
+    }
+    expect_tk(s->l, ';');
+    Node *n = node(N_BREAK, break_tk);
+    return n;
 }
 
 static Node * parse_continue(Scope *s) {
-    TODO();
+    Token *continue_tk = expect_tk(s->l, TK_CONTINUE);
+    if (!find_scope(s, SCOPE_LOOP)) {
+        error_at(continue_tk, "'break' not allowed here");
+    }
+    expect_tk(s->l, ';');
+    Node *n = node(N_CONTINUE, continue_tk);
+    return n;
 }
 
 static Node * parse_goto(Scope *s) {
-    TODO();
-}
-
-static Node * parse_ret(Scope *s) {
-    TODO();
+    Token *goto_tk = expect_tk(s->l, TK_GOTO);
+    Token *label = expect_tk(s->l, TK_IDENT);
+    expect_tk(s->l, ';');
+    Node *n = node(N_GOTO, goto_tk);
+    n->label = label->s;
+    return n;
 }
 
 static Node * parse_label(Scope *s) {
-    TODO();
+    Token *label = expect_tk(s->l, TK_IDENT);
+    expect_tk(s->l, ':');
+    Node *body = parse_stmt(s);
+    Node *n = node(N_LABEL, label);
+    n->label = label->s;
+    n->label_body = body;
+    return n;
+}
+
+static Node * parse_ret(Scope *s) {
+    Token *ret_tk = expect_tk(s->l, TK_RETURN);
+    Node *val = NULL;
+    if (!peek_tk_is(s->l, ';')) {
+        if (s->fn->t->ret->k == T_VOID) {
+            error_at(peek_tk(s->l), "cannot return value from void function");
+        }
+        val = parse_expr(s);
+        val = conv_to(val, s->fn->t->ret);
+    }
+    expect_tk(s->l, ';');
+    Node *n = node(N_RET, ret_tk);
+    n->val = val;
+    return n;
 }
 
 static Node * parse_expr_stmt(Scope *s) {
@@ -962,7 +1363,7 @@ static Node * parse_expr_stmt(Scope *s) {
 static Node * parse_stmt(Scope *s) {
     Token *t = peek_tk(s->l);
     switch (t->k) {
-    case ';':         return parse_stmt(s);
+    case ';':         next_tk(s->l); return NULL;
     case '{':         return parse_block(s);
     case TK_IF:       return parse_if(s);
     case TK_WHILE:    return parse_while(s);
@@ -976,7 +1377,7 @@ static Node * parse_stmt(Scope *s) {
     case TK_GOTO:     return parse_goto(s);
     case TK_RETURN:   return parse_ret(s);
     case TK_IDENT:
-        if (peek_tk(s->l)->k == ':') {
+        if (peek2_tk(s->l)->k == ':') {
             return parse_label(s);
         } // Fall through...
     default: return parse_expr_stmt(s);
@@ -1033,16 +1434,15 @@ static Node * parse_decl_init(Scope *s, Type *t) {
         error_at(peek_tk(s->l), "illegal initializer");
     }
     Node *init;
-    if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
-        init = parse_const_expr(s);
-    } else { // Block scope, no linkage, object
-        if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
-            init = parse_initializer_list(s);
-        } else {
-            init = parse_expr_no_commas(s);
-        }
+    if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
+        init = parse_initializer_list(s);
+    } else {
+        init = parse_expr_no_commas(s);
     }
     init = conv_to(init, t);
+    if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
+        init = calc_const_expr(init);
+    }
     return init;
 }
 
