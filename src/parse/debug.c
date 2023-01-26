@@ -1,8 +1,11 @@
 
+#include <ctype.h>
+#include <limits.h>
+
 #include "debug.h"
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "local", "global", "kptr",
+    "imm", "fp", "str", "array", "init", "local", "global", "kptr", NULL,
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -33,13 +36,13 @@ static void print_type(Type *t) {
         printf("*");
         break;
     case T_ARR:
-        print_type(t->ptr);
+        print_type(t->elem);
         printf("[%llu]", t->len);
         break;
     case T_FN:
         print_type(t->ret);
         printf("(");
-        for (int i = 0; i < vec_len(t->params); i++) {
+        for (size_t i = 0; i < vec_len(t->params); i++) {
             Type *arg = vec_get(t->params, i);
             print_type(arg);
             if (i < vec_len(t->params) - 1) {
@@ -56,7 +59,7 @@ static void print_expr(Node *n) {
         // Operands
     case N_IMM:
         print_type(n->t);
-        if (n->t->k == T_CHAR && n->imm < 256) {
+        if (n->t->k == T_CHAR && n->imm < CHAR_MAX && !iscntrl((char) n->imm)) {
             printf(" '%c'", (char) n->imm);
         } else {
             printf(" %llu", n->imm);
@@ -69,6 +72,17 @@ static void print_expr(Node *n) {
     case N_STR:
         print_type(n->t);
         printf(" \"%s\"", quote_str(n->str, n->len));
+        break;
+    case N_ARR:
+        print_type(n->t);
+        printf(" { ");
+        for (size_t i = 0; i < vec_len(n->inits); i++) {
+            Node *elem = vec_get(n->inits, i);
+            printf("[%llu] = ", elem->init_offset);
+            print_expr(elem->init_val);
+            printf(", ");
+        }
+        printf("}");
         break;
     case N_LOCAL: case N_GLOBAL:
         print_type(n->t);
@@ -97,7 +111,7 @@ static void print_expr(Node *n) {
         printf(" ( call ");
         print_expr(n->fn);
         printf(" ");
-        for (int i = 0; i < vec_len(n->args); i++) {
+        for (size_t i = 0; i < vec_len(n->args); i++) {
             Node *arg = vec_get(n->args, i);
             print_expr(arg);
             printf(", ");
@@ -137,7 +151,7 @@ static void print_fn_def(Node *n) {
         printf(" %s", n->fn_name);
     }
     printf(" (");
-    for (int i = 0; i < vec_len(n->param_names); i++) {
+    for (size_t i = 0; i < vec_len(n->param_names); i++) {
         char *name = vec_get(n->param_names, i);
         if (name) {
             printf("%s", name);
@@ -267,8 +281,8 @@ static void print_node(Node *n, int indent) {
     case N_RET:
         print_indent(indent);
         printf("return ");
-        if (n->val) {
-            print_expr(n->val);
+        if (n->ret_val) {
+            print_expr(n->ret_val);
         }
         printf("\n");
         break;

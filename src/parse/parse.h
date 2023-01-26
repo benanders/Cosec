@@ -10,9 +10,11 @@ enum { // AST nodes
     N_IMM,
     N_FP,
     N_STR,
+    N_ARR,
+    N_INIT,
     N_LOCAL,
     N_GLOBAL,
-    N_KPTR,
+    N_KPTR, // Constant pointer to a 'static' variable
     N_KVAL, // Used by the constant expression calculator only
 
     // Arithmetic
@@ -101,7 +103,9 @@ typedef struct Node {
         // Constants
         uint64_t imm; // N_IMM
         double fp;    // N_FP
-        struct { char *str; int len; }; // N_STR
+        struct { char *str; size_t len; }; // N_STR
+        Vec *inits; /* of 'Node *' with k = N_INIT */ // N_ARR
+        struct { uint64_t init_offset; struct Node *init_val; }; // N_INIT
         struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
 
         // Variables
@@ -121,7 +125,7 @@ typedef struct Node {
         struct { struct Node *switch_cond, *switch_body; Vec *cases; /* of 'Node *' */ }; // N_SWITCH
         struct { struct Node *case_cond, *case_body; }; // N_CASE, N_DEFAULT
         struct { char *label; struct Node *label_body; }; // N_GOTO, N_LABEL
-        struct Node *val; // N_RET
+        struct Node *ret_val; // N_RET
     };
 } Node;
 

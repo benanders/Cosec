@@ -91,7 +91,7 @@ typedef struct {
     File *f;
     int line, col;
     union {
-        struct { char *s; int len; }; // TK_IDENT, TK_STR, TK_NUM
+        struct { char *s; size_t len; }; // TK_IDENT, TK_STR, TK_NUM
         int ch; // TK_CH
     };
 } Token;
@@ -109,6 +109,7 @@ Token * next_tk_is(Lexer *l, int k);
 Token * peek_tk(Lexer *l);
 Token * peek_tk_is(Lexer *l, int k);
 Token * peek2_tk(Lexer *l);
+Token * peek2_tk_is(Lexer *l, int k);
 Token * expect_tk(Lexer *l, int k);
 
 char * tk2str(int t);

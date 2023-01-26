@@ -18,7 +18,7 @@ Vec * vec_new() {
     return v;
 }
 
-static void vec_resize(Vec *v, int by) {
+static void vec_resize(Vec *v, size_t by) {
     if (v->len + by >= v->max) {
         while (v->max <= v->len + by) {
             v->max *= 2;
@@ -28,28 +28,27 @@ static void vec_resize(Vec *v, int by) {
 }
 
 void vec_push(Vec *v, void *elem) {
+    if (!v) return;
     vec_resize(v, 1);
     v->data[v->len++] = elem;
 }
 
 void * vec_pop(Vec *v) {
-    if (v->len > 0) {
+    if (v && v->len > 0) {
         return v->data[--v->len];
     } else {
         return NULL;
     }
 }
 
-int vec_len(Vec *v) {
+size_t vec_len(Vec *v) {
+    if (!v) return 0;
     return v->len;
 }
 
-void * vec_get(Vec *v, int i) {
+void * vec_get(Vec *v, size_t i) {
+    if (!v) return NULL;
     return v->data[i];
-}
-
-void vec_empty(Vec *v) {
-    v->len = 0;
 }
 
 Buf * buf_new() {
@@ -60,7 +59,7 @@ Buf * buf_new() {
     return b;
 }
 
-void buf_resize(Buf *b, int by) {
+void buf_resize(Buf *b, size_t by) {
     if (b->len + by >= b->max) {
         while (b->max <= b->len + by) {
             b->max *= 2;
@@ -75,7 +74,7 @@ void buf_push(Buf *b, char c) {
 }
 
 void buf_print(Buf *b, char *s) {
-    int len = (int) strlen(s);
+    size_t len = strlen(s);
     buf_resize(b, len);
     strncpy(&b->data[b->len], s, len);
     b->len += len;
@@ -84,38 +83,15 @@ void buf_print(Buf *b, char *s) {
 void buf_printf(Buf *b, char *fmt, ...) {
     va_list args;
     while (1) {
-        int avail = b->max - b->len;
+        size_t avail = b->max - b->len;
         va_start(args, fmt);
-        int written = vsnprintf(b->data + b->len, avail, fmt, args);
+        size_t written = vsnprintf(b->data + b->len, avail, fmt, args);
         va_end(args);
         if (avail <= written) {
             buf_resize(b, written);
             continue;
         }
         b->len += written;
-        break;
-    }
-}
-
-static void quote_ch_to_buf(Buf *b, int ch) {
-    switch (ch) {
-    case '\\': buf_print(b, "\\\\"); break;
-    case '\"': buf_print(b, "\\\""); break;
-    case '\'': buf_print(b, "\\'"); break;
-    case '\a': buf_print(b, "\\a"); break;
-    case '\b': buf_print(b, "\\b"); break;
-    case '\f': buf_print(b, "\\f"); break;
-    case '\n': buf_print(b, "\\n"); break;
-    case '\r': buf_print(b, "\\r"); break;
-    case '\t': buf_print(b, "\\t"); break;
-    case '\v': buf_print(b, "\\v"); break;
-    case 0:    buf_print(b, "\\0"); break;
-    default:
-        if (iscntrl(ch)) {
-            buf_printf(b, "\\%03o", ch);
-        } else {
-            buf_push(b, (char) ch);
-        }
         break;
     }
 }
@@ -140,14 +116,14 @@ Map * map_new() {
 }
 
 static void map_rehash(Map *m) {
-    if (m->used < m->size * 0.7) {
+    if (m->used < (uint64_t) (m->size * 0.7)) {
         return;
     }
-    int new_size = (m->num < m->size * 0.35) ? m->size : m->size * 2;
+    size_t new_size = (m->num < m->size * 0.35) ? m->size : m->size * 2;
     char **k = calloc(new_size, sizeof(char *));
     void **v = calloc(new_size, sizeof(void *));
-    int mask = new_size - 1;
-    for (int i = 0; i < m->size; i++) {
+    size_t mask = new_size - 1;
+    for (size_t i = 0; i < m->size; i++) {
         if (!m->k[i] || m->k[i] == MAP_TOMBSTONE) {
             continue;
         }
@@ -167,7 +143,7 @@ static void map_rehash(Map *m) {
 }
 
 static uint32_t map_idx(Map *m, char *k) {
-    int mask = m->size - 1;
+    size_t mask = m->size - 1;
     uint32_t h = hash(k) & mask;
     while (m->k[h]) {
         if (m->k[h] != MAP_TOMBSTONE && strcmp(k, m->k[h]) == 0) {
@@ -180,7 +156,7 @@ static uint32_t map_idx(Map *m, char *k) {
 
 void map_put(Map *m, char *k, void *v) {
     map_rehash(m);
-    int mask = m->size - 1;
+    size_t mask = m->size - 1;
     uint32_t h = hash(k) & mask;
     while (m->k[h]) {
         if (m->k[h] == MAP_TOMBSTONE || strcmp(k, m->k[h]) == 0) {
@@ -216,15 +192,38 @@ void map_remove(Map *m, char *k) {
     m->num--;
 }
 
-char * quote_ch(int ch) {
+static void quote_ch_to_buf(Buf *b, char ch) {
+    switch (ch) {
+    case '\\': buf_print(b, "\\\\"); break;
+    case '\"': buf_print(b, "\\\""); break;
+    case '\'': buf_print(b, "\\'"); break;
+    case '\a': buf_print(b, "\\a"); break;
+    case '\b': buf_print(b, "\\b"); break;
+    case '\f': buf_print(b, "\\f"); break;
+    case '\n': buf_print(b, "\\n"); break;
+    case '\r': buf_print(b, "\\r"); break;
+    case '\t': buf_print(b, "\\t"); break;
+    case '\v': buf_print(b, "\\v"); break;
+    case 0:    buf_print(b, "\\0"); break;
+    default:
+        if (iscntrl(ch)) {
+            buf_printf(b, "\\%03o", ch);
+        } else {
+            buf_push(b, ch);
+        }
+        break;
+    }
+}
+
+char * quote_ch(char ch) {
     Buf *b = buf_new();
     quote_ch_to_buf(b, ch);
     return b->data;
 }
 
-char * quote_str(char *s, int len) {
+char * quote_str(char *s, size_t len) {
     Buf *b = buf_new();
-    for (int i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) {
         quote_ch_to_buf(b, *(s++));
     }
     buf_push(b, '\0');

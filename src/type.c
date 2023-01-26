@@ -40,9 +40,10 @@ Type * t_ptr(Type *base) {
 Type * t_arr(Type *base, uint64_t len) {
     Type *t = t_new();
     t->k = T_ARR;
-    t->ptr = base;
+    t->elem = base;
     t->len = len;
-    t->size = t->align = 8;
+    t->size = t->elem->size * len;
+    t->align = 8;
     return t;
 }
 
@@ -71,6 +72,10 @@ int is_void_ptr(Type *t) {
     return t->k == T_PTR && t->ptr->k == T_VOID;
 }
 
+int is_char_arr(Type *t) {
+    return t->k == T_ARR && t->elem->k == T_CHAR;
+}
+
 int are_equal(Type *a, Type *b) {
     if (!a && !b) return 1;
     if (!a || !b) return 0;
@@ -79,7 +84,7 @@ int are_equal(Type *a, Type *b) {
     case T_ARR: return a->len == b->len && are_equal(a->ptr, b->ptr);
     case T_FN:
         if (vec_len(a->params) != vec_len(b->params)) return 0;
-        for (int i = 0; i < vec_len(a->params); i++) {
+        for (size_t i = 0; i < vec_len(a->params); i++) {
             if (!are_equal(vec_get(a->params, i), vec_get(b->params, i))) return 0;
         }
         return are_equal(a->ret, b->ret);

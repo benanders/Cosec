@@ -6,6 +6,8 @@
 
 #include "util.h"
 
+#define NO_ARR_LEN ((uint64_t) -1)
+
 enum { // Storage classes
     S_TYPEDEF = 1,
     S_EXTERN,
@@ -56,12 +58,13 @@ typedef struct {
 
 typedef struct Type {
     int k;
-    int size, align;
+    uint64_t size;
+    int align;
     int linkage;
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
         struct Type *ptr; // T_PTR
-        struct { struct Type *arr; uint64_t len; }; // T_ARR
+        struct { struct Type *elem; uint64_t len; }; // T_ARR
         struct { struct Type *ret; Vec *params; /* of 'Type *' */ }; // T_FN
         Vec *fields; // T_STRUCT, T_UNION
     };
@@ -78,6 +81,7 @@ int is_int(Type *t);
 int is_fp(Type *t);
 int is_arith(Type *t);
 int is_void_ptr(Type *t);
+int is_char_arr(Type *t);
 int are_equal(Type *a, Type *b);
 
 #endif

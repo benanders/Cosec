@@ -17,8 +17,8 @@ typedef struct Scope {
     struct Scope *outer;
     int k;
     Lexer *l;
-    Map *vars;
-    Node *fn; // NULL in file scope
+    Map *vars;  // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
+    Node *fn;   // NULL in file scope
     Vec *cases; // for SCOPE_SWITCH
 } Scope;
 
@@ -42,28 +42,20 @@ static void enter_scope(Scope *inner, Scope *outer, int k) {
 }
 
 static Scope * find_scope(Scope *s, int k) {
-    while (s) {
-        if (s->k == k) {
-            return s;
-        }
-        s = s->outer;
-    }
-    return NULL;
+    while (s && s->k != k) s = s->outer;
+    return s;
 }
 
 static Node * find_var(Scope *s, char *name) {
     while (s) {
         Node *var = map_get(s->vars, name);
-        if (var) {
-            return var;
-        }
+        if (var) return var;
         s = s->outer;
     }
     return NULL;
 }
 
 static void ensure_not_redef(Scope *s, Node *n) {
-    Type *a = n->t;
     Node *v;
     if (n->t->linkage == L_EXTERN) { // extern needs type checking across scopes
         v = find_var(s, n->var_name);
@@ -71,16 +63,15 @@ static void ensure_not_redef(Scope *s, Node *n) {
     }
     v = map_get(s->vars, n->var_name);
     if (!v) return;
-    Type *b = v->t;
     if (n->k != v->k) goto err_symbols;
-    if (!are_equal(a, b)) goto err_types;
+    if (!are_equal(n->t, v->t)) goto err_types;
     if (s->k == SCOPE_FILE) { // File scope
         // ALLOWED: [int a; extern int a;]
         // ALLOWED: [static int a; extern int a;]
         // ALLOWED: [extern int a; int a;]
-        if (a->linkage == L_STATIC && b->linkage == L_NONE)   goto err_static1;
-        if (a->linkage == L_NONE   && b->linkage == L_STATIC) goto err_static2;
-        if (a->linkage == L_EXTERN && b->linkage == L_STATIC) goto err_static2;
+        if (n->t->linkage == L_STATIC && v->t->linkage == L_NONE)   goto err_static1;
+        if (n->t->linkage == L_NONE   && v->t->linkage == L_STATIC) goto err_static2;
+        if (n->t->linkage == L_EXTERN && v->t->linkage == L_STATIC) goto err_static2;
     } else { // Block scope
         // ALLOWED: [extern int a; extern int a]
         if (!(n->t->linkage == L_EXTERN && v->t->linkage == L_EXTERN)) goto err_redef;
@@ -338,19 +329,20 @@ t_err:
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
 
+static Node * parse_expr(Scope *s);
+static int64_t calc_int_expr(Node *e);
+
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
-    uint64_t len;
-    if (next_tk_is(s->l, ']')) {
-        len = -1;
-    } else {
-        Token *num = expect_tk(s->l, TK_NUM);
-        len = parse_int(num)->imm;
+    uint64_t len = NO_ARR_LEN;
+    if (!next_tk_is(s->l, ']')) {
+        Node *num = parse_expr(s);
+        len = calc_int_expr(num);
         expect_tk(s->l, ']');
     }
     Token *err = peek_tk(s->l);
     Type *t = parse_declarator_tail(s, base, NULL);
-    if (t->k == T_ARR) {
+    if (t->k == T_FN) {
         error_at(err, "cannot have an array of functions");
     }
     return t_arr(t, len);
@@ -364,7 +356,7 @@ static Type * parse_fn_declarator_param(Scope *s, Token **name) {
     }
     Type *t = parse_declarator(s, base, name, NULL);
     if (t->k == T_ARR) { // Array of T is adjusted to pointer to T
-        t = t_ptr(t->arr);
+        t = t_ptr(t->elem);
     } else if (t->k == T_FN) { // Function is adjusted to pointer to function
         t = t_ptr(t);
     }
@@ -381,7 +373,7 @@ static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
         error_at(peek_tk(s->l), "function cannot return an array");
     }
     expect_tk(s->l, '(');
-    if (peek_tk(s->l)->k == TK_VOID && peek2_tk(s->l)->k == ')') {
+    if (peek_tk_is(s->l, TK_VOID) && peek2_tk_is(s->l, ')')) {
         next_tk(s->l); next_tk(s->l); // 'void' ')'
         return t_fn(ret, vec_new());
     }
@@ -530,7 +522,7 @@ static Node * discharge(Node *l) {
         n = conv_to(l, t_num(T_INT, 0));
         break;
     case T_ARR: // Arrays are converted to pointers
-        n = conv_to(l, t_ptr(l->t->ptr));
+        n = conv_to(l, t_ptr(l->t->elem));
         break;
     case T_FN: // Functions are converted to pointer to functions
         n = node(N_ADDR, l->tk);
@@ -558,6 +550,7 @@ static Node * parse_operand(Scope *s) {
         n = node(N_STR, t);
         n->t = t_arr(t_num(T_CHAR, 0), t->len);
         n->str = t->s;
+        n->len = t->len;
         break;
     case TK_IDENT:
         n = find_var(s, t->s);
@@ -607,7 +600,7 @@ static Node * parse_array_access(Scope *s, Node *l, Token *op) {
     idx = conv_to(idx, t_num(T_LLONG, 1));
     expect_tk(s->l, ']');
     Node *n = node(N_IDX, op);
-    n->t = l->t->ptr;
+    n->t = l->t->elem;
     n->arr = l;
     n->idx = idx;
     return n;
@@ -1034,7 +1027,8 @@ static Node * calc_const_expr_raw(Node *e) {
     Node *n, *cond, *l, *r;
     switch (e->k) {
         // Constants
-    case N_IMM: case N_FP: case N_STR: case N_KPTR: n = e; break;
+    case N_IMM: case N_FP: case N_KPTR: n = e; break;
+    case N_ARR: TODO(); // TODO: make new N_ARR with calc_const_expr on each init var
     case N_GLOBAL:
         n = node(N_KVAL, e->tk);
         n->t = e->t;
@@ -1106,7 +1100,7 @@ static Node * calc_const_expr_raw(Node *e) {
             n->imm = (int64_t) l->fp;
         } else if (is_int(n->t) && l->k == N_IMM) { // int -> int
             n->k = N_IMM;
-            int b = n->t->size * 8; // Bits
+            size_t b = n->t->size * 8; // Bits
             n->imm = l->imm & (((int64_t) 1 << b) - 1); // Truncate to 'dst'
             if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (b - 1)))) {
                 n->imm |= ~(((int64_t) 1 << b) - 1); // Sext if sign bit set
@@ -1124,6 +1118,8 @@ static Node * calc_const_expr_raw(Node *e) {
             n->t = l->t->ptr;
             n->imm = (uint64_t) l->str[r->imm];
             break;
+        case N_ARR:
+            TODO(); // TODO: for size_t i in l->inits; find offset == r->imm * l->t->elem->size or 0
         case N_KVAL: case N_KPTR:
             n = node(N_KVAL, e->tk);
             n->t = l->t->ptr;
@@ -1132,6 +1128,7 @@ static Node * calc_const_expr_raw(Node *e) {
             break;
         default: goto err;
         }
+        break;
     case N_DOT:   TODO();
     case N_ARROW: TODO();
     default:      goto err;
@@ -1144,9 +1141,17 @@ err:
 static Node * calc_const_expr(Node *e) {
     Node *n = calc_const_expr_raw(e);
     if (n->k == N_KVAL) {
-        error_at(e->tk, "expected constant expression"); // TODO: allow strings
+        error_at(e->tk, "expected constant expression");
     }
     return n;
+}
+
+static int64_t calc_int_expr(Node *e) {
+    Node *n = calc_const_expr_raw(e);
+    if (n->k != N_IMM) {
+        error_at(e->tk, "expected constant integer expression");
+    }
+    return (int64_t) n->imm;
 }
 
 
@@ -1285,7 +1290,7 @@ static Node * parse_default(Scope *s) {
     if (!switch_s) {
         error_at(default_tk, "'default' not allowed here");
     }
-    for (int i = 0; i < vec_len(switch_s->cases); i++) {
+    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
         Node *cas = vec_get(switch_s->cases, i);
         if (cas->k == N_DEFAULT) {
             error_at(default_tk, "cannot have more than one 'default' in a switch");
@@ -1350,7 +1355,7 @@ static Node * parse_ret(Scope *s) {
     }
     expect_tk(s->l, ';');
     Node *n = node(N_RET, ret_tk);
-    n->val = val;
+    n->ret_val = val;
     return n;
 }
 
@@ -1377,7 +1382,7 @@ static Node * parse_stmt(Scope *s) {
     case TK_GOTO:     return parse_goto(s);
     case TK_RETURN:   return parse_ret(s);
     case TK_IDENT:
-        if (peek2_tk(s->l)->k == ':') {
+        if (peek2_tk_is(s->l, ':')) {
             return parse_label(s);
         } // Fall through...
     default: return parse_expr_stmt(s);
@@ -1424,8 +1429,125 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
     return fn;
 }
 
-static Node * parse_initializer_list(Scope *s) {
+static void parse_string_init(Scope *s, Vec *inits, Type *t, uint64_t offset) {
+    Token *str = next_tk_is(s->l, TK_STR);
+    if (!str && peek_tk_is(s->l, '{') && peek2_tk_is(s->l, TK_STR)) {
+        next_tk(s->l);
+        str = next_tk(s->l);
+        expect_tk(s->l, '}');
+    }
+    if (!str) {
+        return; // Parse as normal array
+    }
+    if (t->len == NO_ARR_LEN) {
+        t->len = str->len;
+        t->size = t->len * t->elem->size;
+    }
+    if (t->len < str->len) {
+        warning_at(str, "initializer string is too long");
+    }
+    for (size_t i = 0; i < t->len || i < str->len; i++) {
+        Node *ch = node(N_IMM, str);
+        ch->t = t->elem;
+        ch->imm = i < str->len ? (uint64_t) str->s[i] : 0;
+        Node *n = node(N_INIT, str);
+        n->init_offset = offset + i * t->elem->size;
+        n->init_val = ch;
+        vec_push(inits, n);
+    }
+}
+
+static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated);
+
+static void parse_init_elem(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
+    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION) {
+        parse_init_list_raw(s, inits, t, offset, designated);
+    } else if (next_tk_is(s->l, '{')) {
+        parse_init_elem(s, inits, t, offset, 1);
+        expect_tk(s->l, '}');
+    } else {
+        Node *e = parse_expr_no_commas(s);
+        e = conv_to(e, t);
+        if (!peek_tk_is(s->l, '}')) {
+            expect_tk(s->l, ',');
+        }
+        Node *n = node(N_INIT, e->tk);
+        n->init_offset = offset;
+        n->init_val = e;
+        vec_push(inits, n);
+    }
+}
+
+static int64_t parse_array_designator(Scope *s, Type *t) {
+    expect_tk(s->l, '[');
+    Node *e = parse_expr(s);
+    int64_t desg = calc_int_expr(e);
+    if (desg < 0 || (uint64_t) desg >= t->len) {
+        error_at(e->tk, "array designator index '%llu' exceeds array bounds", desg);
+    }
+    expect_tk(s->l, ']');
+    expect_tk(s->l, '=');
+    return desg;
+}
+
+static void parse_array_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
+    assert(t->k == T_ARR);
+    int has_brace = next_tk_is(s->l, '{') != NULL;
+    uint64_t idx = 0;
+    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+        if (!has_brace && t->len != NO_ARR_LEN && idx >= t->len) {
+            break;
+        }
+        if (peek_tk_is(s->l, '[') && !has_brace && !designated) {
+            break; // e.g., int a[3][3] = {3 /* RETURN HERE */, [2] = 1}
+        }
+        if (peek_tk_is(s->l, '[')) {
+            idx = parse_array_designator(s, t);
+            designated = 1;
+        }
+        int excess = t->len != NO_ARR_LEN && idx >= t->len;
+        if (excess) {
+            warning_at(peek_tk(s->l), "excessive elements in array initializer");
+        }
+        uint64_t elem_offset = offset + idx * t->elem->size;
+        parse_init_elem(s, excess ? NULL : inits, t->elem, elem_offset, designated);
+        idx++;
+        designated = 0;
+    }
+    if (has_brace) {
+        expect_tk(s->l, '}');
+    }
+    if (t->len == NO_ARR_LEN) {
+        t->len = idx;
+        t->size = t->len * t->elem->size;
+    }
+}
+
+static Node * parse_struct_union_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
     TODO();
+}
+
+static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
+    if (is_char_arr(t)) {
+        parse_string_init(s, inits, t, offset);
+        return;
+    } // Fall through if no string literal...
+    if (t->k == T_ARR) {
+        parse_array_init(s, inits, t, offset, designated);
+    } else if (t->k == T_STRUCT || t->k == T_UNION) {
+        parse_struct_union_init(s, inits, t, offset, designated);
+    } else { // Everything else, e.g., int a = {3}
+        Type *arr_t = t_arr(t, 1);
+        parse_array_init(s, inits, arr_t, offset, designated);
+    }
+}
+
+static Node * parse_init_list(Scope *s, Type *t) {
+    Node *n = node(N_ARR, peek_tk(s->l));
+    n->t = t;
+    n->inits = vec_new();
+    parse_init_list_raw(s, n->inits, t, 0, 0);
+    return n;
 }
 
 static Node * parse_decl_init(Scope *s, Type *t) {
@@ -1434,8 +1556,8 @@ static Node * parse_decl_init(Scope *s, Type *t) {
         error_at(peek_tk(s->l), "illegal initializer");
     }
     Node *init;
-    if (peek_tk_is(s->l, '{') || peek_tk_is(s->l, TK_STR)) {
-        init = parse_initializer_list(s);
+    if (peek_tk_is(s->l, '{') || is_char_arr(t)) {
+        init = parse_init_list(s, t);
     } else {
         init = parse_expr_no_commas(s);
     }
@@ -1499,9 +1621,6 @@ static Node * parse_decl(Scope *s) {
     expect_tk(s->l, ';');
     return head;
 }
-
-
-// ---- Top Level -------------------------------------------------------------
 
 Node * parse(char *path) {
     File *f = new_file(path);

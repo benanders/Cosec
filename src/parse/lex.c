@@ -209,8 +209,9 @@ static Token * lex_str(Lexer *l) {
 }
 
 static Token * lex_sym(Lexer *l) {
+    Token *t = new_tk(l, -1);
     int c = next_ch(l->f);
-    Token *t = new_tk(l, c);
+    t->k = c;
     switch (c) {
     case '<':
         if (next_ch_is(l->f, '=')) { t->k = TK_LE; break; }
@@ -314,10 +315,7 @@ Token * peek_tk(Lexer *l) {
 
 Token * peek_tk_is(Lexer *l, int k) {
     Token *t = peek_tk(l);
-    if (t->k == k) {
-        return t;
-    }
-    return NULL;
+    return t->k == k ? t : NULL;
 }
 
 Token * peek2_tk(Lexer *l) {
@@ -325,6 +323,11 @@ Token * peek2_tk(Lexer *l) {
     Token *t2 = peek_tk(l);
     undo_tk(l, t);
     return t2;
+}
+
+Token * peek2_tk_is(Lexer *l, int k) {
+    Token *t = peek2_tk(l);
+    return t->k == k ? t : NULL;
 }
 
 Token * expect_tk(Lexer *l, int k) {
@@ -354,7 +357,7 @@ char * tk2str(int t) {
         buf_push(b, '\'');
     }
     if (t < 256) {
-        buf_print(b, quote_ch(t));
+        buf_print(b, quote_ch((char) t));
     } else {
         buf_print(b, TKS[t - TK_SHL]);
     }
@@ -369,7 +372,7 @@ char * token2str(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
         case TK_NUM:   buf_printf(b, "number '%s'", t->s); break;
-        case TK_CH:    buf_printf(b, "character '%c'", quote_ch(t->ch)); break;
+        case TK_CH:    buf_printf(b, "character '%c'", quote_ch((char) t->ch)); break;
         case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->s, t->len)); break;
         case TK_IDENT: buf_printf(b, "identifier '%s'", t->s); break;
         default:       return tk2str(t->k);
