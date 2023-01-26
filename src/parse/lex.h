@@ -105,7 +105,7 @@ Lexer * new_lexer(File *f);
 
 Token * next_tk(Lexer *l);
 void    undo_tk(Lexer *l, Token *t);
-Token * next_tk_is(Lexer *l, int k);
+Token * next_tk_opt(Lexer *l, int k);
 Token * peek_tk(Lexer *l);
 Token * peek_tk_is(Lexer *l, int k);
 Token * peek2_tk(Lexer *l);

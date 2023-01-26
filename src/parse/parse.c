@@ -335,7 +335,7 @@ static int64_t calc_int_expr(Node *e);
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
     uint64_t len = NO_ARR_LEN;
-    if (!next_tk_is(s->l, ']')) {
+    if (!next_tk_opt(s->l, ']')) {
         Node *num = parse_expr(s);
         len = calc_int_expr(num);
         expect_tk(s->l, ']');
@@ -385,7 +385,7 @@ static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
         if (param_names) {
             vec_push(param_names, name); // Name may be NULL
         }
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_opt(s->l, ',')) {
             break;
         }
     }
@@ -404,17 +404,17 @@ static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names) {
 }
 
 static void skip_type_quals(Scope *s) {
-    while (next_tk_is(s->l, TK_CONST) ||
-           next_tk_is(s->l, TK_RESTRICT) ||
-           next_tk_is(s->l, TK_VOLATILE));
+    while (next_tk_opt(s->l, TK_CONST) ||
+           next_tk_opt(s->l, TK_RESTRICT) ||
+           next_tk_opt(s->l, TK_VOLATILE));
 }
 
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names) {
-    if (next_tk_is(s->l, '*')) {
+    if (next_tk_opt(s->l, '*')) {
         skip_type_quals(s);
         return parse_declarator(s, t_ptr(base), name, param_names);
     }
-    if (next_tk_is(s->l, '(')) { // Either sub-declarator or fn parameters
+    if (next_tk_opt(s->l, '(')) { // Either sub-declarator or fn parameters
         if (is_type(s, peek_tk(s->l)) || peek_tk_is(s->l, ')')) { // Function
             // An empty '()' is a function pointer, not a no-op sub-declarator
             return parse_fn_declarator(s, base, param_names);
@@ -622,7 +622,7 @@ static Node * parse_call(Scope *s, Node *l, Token *op) {
         Type *expected = vec_get(fn_t->params, vec_len(args));
         arg = conv_to(arg, expected);
         vec_push(args, arg);
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_opt(s->l, ',')) {
             break;
         }
     }
@@ -751,7 +751,7 @@ static Node * parse_cast(Scope *s) {
     Type *t = parse_decl_specs(s, NULL);
     t = parse_abstract_declarator(s, t);
     expect_tk(s->l, ')');
-    if (next_tk_is(s->l, '{')) {
+    if (next_tk_opt(s->l, '{')) {
         return parse_compound_literal(s);
     } else {
         Node *l = parse_subexpr(s, PREC_UNARY);
@@ -1430,7 +1430,8 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
 }
 
 static void parse_string_init(Scope *s, Vec *inits, Type *t, uint64_t offset) {
-    Token *str = next_tk_is(s->l, TK_STR);
+    assert(is_char_arr(t));
+    Token *str = next_tk_opt(s->l, TK_STR);
     if (!str && peek_tk_is(s->l, '{') && peek2_tk_is(s->l, TK_STR)) {
         next_tk(s->l);
         str = next_tk(s->l);
@@ -1451,7 +1452,7 @@ static void parse_string_init(Scope *s, Vec *inits, Type *t, uint64_t offset) {
         ch->t = t->elem;
         ch->imm = i < str->len ? (uint64_t) str->s[i] : 0;
         Node *n = node(N_INIT, str);
-        n->init_offset = offset + i * t->elem->size;
+        n->init_offset = offset + i;
         n->init_val = ch;
         vec_push(inits, n);
     }
@@ -1462,19 +1463,20 @@ static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, uint64_t offset, 
 static void parse_init_elem(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
     if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION) {
         parse_init_list_raw(s, inits, t, offset, designated);
-    } else if (next_tk_is(s->l, '{')) {
+    } else if (next_tk_opt(s->l, '{')) {
         parse_init_elem(s, inits, t, offset, 1);
+        next_tk_opt(s->l, ',');
         expect_tk(s->l, '}');
     } else {
         Node *e = parse_expr_no_commas(s);
         e = conv_to(e, t);
-        if (!peek_tk_is(s->l, '}')) {
-            expect_tk(s->l, ',');
-        }
         Node *n = node(N_INIT, e->tk);
         n->init_offset = offset;
         n->init_val = e;
         vec_push(inits, n);
+    }
+    if (!peek_tk_is(s->l, '}')) {
+        expect_tk(s->l, ',');
     }
 }
 
@@ -1492,7 +1494,7 @@ static int64_t parse_array_designator(Scope *s, Type *t) {
 
 static void parse_array_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
     assert(t->k == T_ARR);
-    int has_brace = next_tk_is(s->l, '{') != NULL;
+    int has_brace = next_tk_opt(s->l, '{') != NULL;
     uint64_t idx = 0;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
         if (!has_brace && t->len != NO_ARR_LEN && idx >= t->len) {
@@ -1509,8 +1511,9 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int
         if (excess) {
             warning_at(peek_tk(s->l), "excessive elements in array initializer");
         }
-        uint64_t elem_offset = offset + idx * t->elem->size;
-        parse_init_elem(s, excess ? NULL : inits, t->elem, elem_offset, designated);
+        uint64_t idx_multiplier = t->elem->k == T_ARR ? t->elem->len : 1;
+        uint64_t elem_idx = offset + idx * idx_multiplier;
+        parse_init_elem(s, excess ? NULL : inits, t->elem, elem_idx, designated);
         idx++;
         designated = 0;
     }
@@ -1603,7 +1606,7 @@ static Node * parse_init_decl(Scope *s, Type *base, int sclass) {
 static Node * parse_decl(Scope *s) {
     int sclass;
     Type *base = parse_decl_specs(s, &sclass);
-    if (next_tk_is(s->l, ';')) {
+    if (next_tk_opt(s->l, ';')) {
         return NULL;
     }
     Node *head = NULL;
@@ -1614,7 +1617,7 @@ static Node * parse_decl(Scope *s) {
             return head;
         }
         while (*cur) cur = &(*cur)->next;
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_opt(s->l, ',')) {
             break;
         }
     }
@@ -1631,7 +1634,7 @@ Node * parse(char *path) {
     file_scope.vars = map_new();
     Node *head = NULL;
     Node **cur = &head;
-    while (!next_tk_is(l, TK_EOF)) {
+    while (!next_tk_opt(l, TK_EOF)) {
         *cur = parse_decl(&file_scope);
         while (*cur) cur = &(*cur)->next;
     }

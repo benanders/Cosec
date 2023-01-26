@@ -298,7 +298,7 @@ void undo_tk(Lexer *l, Token *t) {
     vec_push(l->buf, t);
 }
 
-Token * next_tk_is(Lexer *l, int k) {
+Token * next_tk_opt(Lexer *l, int k) {
     Token *t = next_tk(l);
     if (t->k == k) {
         return t;

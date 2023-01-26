@@ -54,6 +54,7 @@ enum { // Linkage
 typedef struct {
     struct Type *t;
     char *name;
+    size_t offset;
 } Field;
 
 typedef struct Type {
