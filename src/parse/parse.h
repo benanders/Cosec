@@ -72,7 +72,6 @@ enum { // AST nodes
     N_IDX,
     N_CALL,
     N_DOT,
-    N_ARROW,
 
     // Statements
     N_FN_DEF,
@@ -115,7 +114,7 @@ typedef struct Node {
         struct { struct Node *l, *r; };
         struct { struct Node *arr, *idx; }; // N_IDX
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
-        struct { struct Node *strct; char *field_name; }; // N_DOT, N_ARROW
+        struct { struct Node *strct; char *field_name; }; // N_DOT
 
         // Statements
         struct { char *fn_name; Vec *param_names; struct Node *fn_body; }; // N_FN_DEF

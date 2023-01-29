@@ -57,6 +57,15 @@ static Node * find_var(Scope *s, char *name) {
     return NULL;
 }
 
+static Type * find_tag(Scope *s, char *tag) {
+    while (s) {
+        Type *t = map_get(s->tags, tag);
+        if (t) return t;
+        s = s->outer;
+    }
+    return NULL;
+}
+
 static void ensure_not_redef(Scope *s, Node *n) {
     Node *v;
     if (n->t->linkage == L_EXTERN) { // extern needs type checking across scopes
@@ -264,11 +273,7 @@ static size_t pad(size_t offset, size_t align) {
     return offset % align == 0 ? offset : offset + align - (offset % align);
 }
 
-static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
-    if (peek_tk_is(s->l, TK_IDENT)) {
-        Token *tag = next_tk(s->l);
-        def_tag(s, tag, t);
-    }
+static void parse_fields(Scope *s, Type *t, int is_struct) {
     expect_tk(s->l, '{');
     size_t align = 0;
     size_t offset = 0;
@@ -310,6 +315,26 @@ static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
     t->align = align;
     t->size = pad(offset, align);
 }
+
+static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
+    if (!peek_tk_is(s->l, TK_IDENT)) { // Anonymous struct
+        parse_fields(s, t, is_struct);
+        return;
+    }
+    Token *tag = next_tk(s->l);
+    Type *tt = find_tag(s, tag->s);
+    if (!tt) {
+        def_tag(s, tag, t);
+    }
+    if (peek_tk_is(s->l, '{') && tt && vec_len(tt->fields) > 0) {
+        error_at(tag, "redefinition of %s '%s'",
+                 is_struct ? "struct" : "union", tag->s);
+    } else if (peek_tk_is(s->l, '{')) {
+        parse_fields(s, t, is_struct);
+    } else if (tt) {
+        t->fields = tt->fields;
+    }
+};
 
 static Type * parse_union_def(Scope *s) {
     Type *t = t_union();
@@ -717,11 +742,19 @@ static Node * parse_struct_field_access(Scope *s, Node *l, Token *op) {
         error_at(name, "no field named '%s' in %s", name->s,
                  l->t->k == T_STRUCT ? "struct" : "union");
     }
-    Node *n = node(op->k == '.' ? N_DOT : N_ARROW, op);
+    Node *n = node(N_DOT, op);
     n->t = f->t;
     n->strct = l;
     n->field_name = name->s;
     return n;
+}
+
+static Node * parse_struct_field_deref(Scope *s, Node *l, Token *op) {
+    ensure_ptr(l);
+    Node *n = node(N_DEREF, op);
+    n->t = l->t->ptr;
+    n->l = l;
+    return parse_struct_field_access(s, n, op);
 }
 
 static Node * parse_post_inc_dec(Node *l, Token *op) {
@@ -739,7 +772,8 @@ static Node * parse_postfix(Scope *s, Node *l) {
         switch (op->k) {
         case '[': l = parse_array_access(s, l, op); break;
         case '(': l = parse_call(s, l, op); break;
-        case '.': case TK_ARROW:  l = parse_struct_field_access(s, l, op); break;
+        case '.': l = parse_struct_field_access(s, l, op); break;
+        case TK_ARROW: l = parse_struct_field_deref(s, l, op); break;
         case TK_INC: case TK_DEC: l = parse_post_inc_dec(l, op); break;
         default:
             undo_tk(s->l, op);
@@ -1198,26 +1232,23 @@ static Node * calc_const_expr_raw(Node *e) {
     case N_IDX:
         l = calc_const_expr_raw(e->arr), r = calc_const_expr_raw(e->idx);
         if (r->k != N_IMM) goto err;
-        switch (l->k) {
-        case N_STR:
-            n = node(N_IMM, e->tk);
-            n->t = l->t->ptr;
-            n->imm = (uint64_t) l->str[r->imm];
-            break;
-        case N_ARR:
-            TODO(); // TODO: for size_t i in l->inits; find offset == r->imm * l->t->elem->size or 0
-        case N_KVAL: case N_KPTR:
-            n = node(N_KVAL, e->tk);
-            n->t = l->t->ptr;
-            n->global = l->global;
-            n->offset = (int64_t) (l->offset + r->imm * n->t->size);
-            break;
-        default: goto err;
-        }
+        if (l->k != N_KVAL && l->k != N_KPTR) goto err;
+        n = node(N_KVAL, e->tk);
+        n->t = e->t;
+        n->global = l->global;
+        n->offset = (int64_t) (l->offset + r->imm * n->t->size);
         break;
-    case N_DOT:   TODO();
-    case N_ARROW: TODO();
-    default:      goto err;
+    case N_DOT:
+        l = calc_const_expr_raw(e->strct);
+        if (l->k != N_KVAL) goto err;
+        Field *f = find_field(l->t, e->field_name);
+        assert(f);
+        n = node(N_KVAL, e->tk);
+        n->t = e->t;
+        n->global = l->global;
+        n->offset = l->offset + (int64_t) f->offset;
+        break;
+    default: goto err;
     }
     return n;
 err:
@@ -1718,6 +1749,7 @@ Node * parse(char *path) {
     file_scope.k = SCOPE_FILE;
     file_scope.l = l;
     file_scope.vars = map_new();
+    file_scope.tags = map_new();
     Node *head = NULL;
     Node **cur = &head;
     while (!next_tk_opt(l, TK_EOF)) {

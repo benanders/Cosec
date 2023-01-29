@@ -116,9 +116,15 @@ int is_char_arr(Type *t) {
     return t->k == T_ARR && t->elem->k == T_CHAR;
 }
 
+static int fields_are_equal(Field *a, Field *b) {
+    return strcmp(a->name, b->name) == 0 && a->offset == b->offset &&
+           are_equal(a->t, b->t);
+}
+
 int are_equal(Type *a, Type *b) {
     if (!a && !b) return 1;
     if (!a || !b) return 0;
+    if (a->k != b->k) return 0;
     switch (a->k) {
     case T_PTR: return are_equal(a->ptr, b->ptr);
     case T_ARR: return a->len == b->len && are_equal(a->ptr, b->ptr);
@@ -128,8 +134,12 @@ int are_equal(Type *a, Type *b) {
             if (!are_equal(vec_get(a->params, i), vec_get(b->params, i))) return 0;
         }
         return are_equal(a->ret, b->ret);
-    case T_STRUCT: case T_ENUM: case T_UNION:
-        TODO();
-    default: return a->k == b->k && a->is_unsigned == b->is_unsigned;
+    case T_STRUCT: case T_UNION:
+        if (vec_len(a->fields) != vec_len(b->fields)) return 0;
+        for (size_t i = 0; i < vec_len(a->fields); i++) {
+            if (!fields_are_equal(vec_get(a->fields, i), vec_get(b->fields, i))) return 0;
+        }
+        return 1;
+    default: return a->is_unsigned == b->is_unsigned;
     }
 }

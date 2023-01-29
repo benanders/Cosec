@@ -143,7 +143,7 @@ static void print_expr(Node *n) {
         }
         printf(")");
         break;
-    case N_DOT: case N_ARROW:
+    case N_DOT:
         print_type(n->t);
         printf(" ( %s ", n->k == N_DOT ? "." : "->");
         print_expr(n->strct);
