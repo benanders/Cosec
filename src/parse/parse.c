@@ -113,8 +113,8 @@ static void def_symbol(Scope *s, Node *n) {
 }
 
 static Node * def_var(Scope *s, Token *name, Type *t) {
-    if (t->k == T_VOID) {
-        error_at(name, "variable cannot have type 'void'");
+    if (is_incomplete(t)) {
+        error_at(name, "variable cannot have incomplete type");
     }
     if (t->k == T_FN && s->k != SCOPE_FILE && t->linkage == L_STATIC) {
         error_at(name, "function declared in block scope cannot have 'static' storage class");
@@ -141,14 +141,7 @@ static Node * def_typedef(Scope *s, Token *name, Type *t) {
 }
 
 static void def_tag(Scope *s, Token *tag, Type *t) {
-    Type *prev = map_get(s->tags, tag->s);
-    if (prev) {
-        if (prev->k != t->k) {
-            error_at(tag, "redefinition of tag '%s' with different type", tag->s);
-        } else {
-            error_at(tag, "redefinition of tag '%s'", tag->s);
-        }
-    }
+    assert(!map_get(s->tags, tag->s));
     map_put(s->tags, tag->s, t);
 }
 
@@ -294,8 +287,8 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
         while (!peek_tk_is(s->l, ';') && !peek_tk_is(s->l, TK_EOF)) {
             Token *name;
             Type *ft = parse_declarator(s, base, &name, NULL);
-            if (ft->k == T_VOID) {
-                error_at(name, "%s field cannot have type 'void'",
+            if (is_incomplete(ft)) {
+                error_at(name, "%s field cannot have incomplete type",
                          is_struct ? "struct" : "union");
             }
             if (find_field(t, name->s) != NOT_FOUND) {
@@ -329,9 +322,13 @@ static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
         if (tt && tt->fields) { // Redefinition in same scope
             error_at(tag, "redefinition of %s '%s'",
                      is_struct ? "struct" : "union", tag->s);
+        } else if (!tt) { // No previous declaration
+            def_tag(s, tag, t);
         }
-        def_tag(s, tag, t);
         parse_fields(s, t, is_struct);
+        if (tt) {
+            tt->fields = t->fields;
+        }
     } else {
         Type *tt = find_tag(s, tag->s);
         if (!tt) { // Declaration
@@ -468,8 +465,8 @@ static Type * parse_fn_declarator_param(Scope *s, Token **name) {
     } else if (t->k == T_FN) { // Function is adjusted to pointer to function
         t = t_ptr(t);
     }
-    if (t->k == T_VOID) {
-        error_at(err, "parameter cannot have type 'void'");
+    if (is_incomplete(t)) {
+        error_at(err, "parameter cannot have incomplete type");
     }
     return t;
 }

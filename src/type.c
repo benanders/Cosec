@@ -115,6 +115,11 @@ int is_char_arr(Type *t) {
     return t->k == T_ARR && t->elem->k == T_CHAR;
 }
 
+int is_incomplete(Type *t) {
+    return t->k == T_VOID ||
+           ((t->k == T_STRUCT || t->k == T_UNION) && !t->fields);
+}
+
 static int fields_are_equal(Field *a, Field *b) {
     return strcmp(a->name, b->name) == 0 && a->offset == b->offset &&
            are_equal(a->t, b->t);
