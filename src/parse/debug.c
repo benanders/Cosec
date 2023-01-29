@@ -72,7 +72,10 @@ static void print_type(Type *t) {
         printf("union ");
         print_fields(t);
         break;
-    case T_ENUM: TODO();
+    case T_ENUM:
+        printf("enum ");
+        TODO();
+        break;
     }
 }
 
@@ -139,6 +142,13 @@ static void print_expr(Node *n) {
             printf(", ");
         }
         printf(")");
+        break;
+    case N_DOT: case N_ARROW:
+        print_type(n->t);
+        printf(" ( %s ", n->k == N_DOT ? "." : "->");
+        print_expr(n->strct);
+        printf(" ");
+        printf("%s )", n->field_name);
         break;
     case N_TERNARY:
         print_type(n->t);

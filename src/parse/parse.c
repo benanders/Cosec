@@ -277,7 +277,8 @@ static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
         int sclass;
         Type *base = parse_decl_specs(s, &sclass);
         if (sclass != S_NONE) {
-            error_at(tk, "illegal storage class specifier");
+            error_at(tk, "illegal storage class specifier in %s field",
+                     is_struct ? "struct" : "union");
         }
         if (peek_tk_is(s->l, ';')) {
             if (is_struct) offset = pad(offset, base->align);
@@ -288,7 +289,12 @@ static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
             Token *name;
             Type *ft = parse_declarator(s, base, &name, NULL);
             if (ft->k == T_VOID) {
-                error_at(name, "struct field cannot have type 'void'");
+                error_at(name, "%s field cannot have type 'void'",
+                         is_struct ? "struct" : "union");
+            }
+            if (find_field(t, name->s)) {
+                error_at(name, "duplicate field '%s' in %s", name->s,
+                         is_struct ? "struct" : "union");
             }
             align = ft->align > align ? ft->align : align;
             if (is_struct) offset = pad(offset, ft->align);
@@ -701,6 +707,23 @@ static Node * parse_call(Scope *s, Node *l, Token *op) {
     return n;
 }
 
+static Node * parse_struct_field_access(Scope *s, Node *l, Token *op) {
+    if (l->t->k != T_STRUCT && l->t->k != T_UNION) {
+        error_at(op, "expected struct or union type");
+    }
+    Token *name = expect_tk(s->l, TK_IDENT);
+    Field *f = find_field(l->t, name->s);
+    if (!f) {
+        error_at(name, "no field named '%s' in %s", name->s,
+                 l->t->k == T_STRUCT ? "struct" : "union");
+    }
+    Node *n = node(op->k == '.' ? N_DOT : N_ARROW, op);
+    n->t = f->t;
+    n->strct = l;
+    n->field_name = name->s;
+    return n;
+}
+
 static Node * parse_post_inc_dec(Node *l, Token *op) {
     ensure_lvalue(l);
     l = discharge(l);
@@ -714,10 +737,9 @@ static Node * parse_postfix(Scope *s, Node *l) {
     while (1) {
         Token *op = next_tk(s->l);
         switch (op->k) {
-        case '[':      l = parse_array_access(s, l, op); break;
-        case '(':      l = parse_call(s, l, op); break;
-        case '.':      TODO();
-        case TK_ARROW: TODO();
+        case '[': l = parse_array_access(s, l, op); break;
+        case '(': l = parse_call(s, l, op); break;
+        case '.': case TK_ARROW:  l = parse_struct_field_access(s, l, op); break;
         case TK_INC: case TK_DEC: l = parse_post_inc_dec(l, op); break;
         default:
             undo_tk(s->l, op);

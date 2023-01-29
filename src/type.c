@@ -1,5 +1,6 @@
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "type.h"
 
@@ -82,6 +83,17 @@ Field * new_field(Type *t, char *name, size_t offset) {
     f->name = name;
     f->offset = offset;
     return f;
+}
+
+Field * find_field(Type *t, char *name) {
+    assert(t->k == T_STRUCT || t->k == T_UNION);
+    for (size_t i = 0; i < vec_len(t->fields); i++) {
+        Field *f = vec_get(t->fields, i);
+        if (strcmp(f->name, name) == 0) {
+            return f;
+        }
+    }
+    return NULL;
 }
 
 int is_int(Type *t) {

@@ -82,6 +82,7 @@ Type * t_union();
 Type * t_enum();
 
 Field * new_field(Type *t, char *name, size_t offset);
+Field * find_field(Type *t, char *name);
 
 int is_int(Type *t);
 int is_fp(Type *t);
