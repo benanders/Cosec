@@ -57,6 +57,14 @@ static Node * find_var(Scope *s, char *name) {
     return NULL;
 }
 
+static Type * find_typedef(Scope *s, char *name) {
+    Node *n = find_var(s, name);
+    if (n && n->k == N_TYPEDEF) {
+        return n->t;
+    }
+    return NULL;
+}
+
 static Type * find_tag(Scope *s, char *tag) {
     while (s) {
         Type *t = map_get(s->tags, tag);
@@ -244,18 +252,10 @@ static Node * parse_num(Token *tk) {
 }
 
 
-// ---- Declarators -----------------------------------------------------------
+// ---- Declaration Specifiers ------------------------------------------------
 
 static Type * parse_decl_specs(Scope *s, int *sclass);
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
-
-static Type * find_typedef(Scope *s, char *name) {
-    Node *n = find_var(s, name);
-    if (n && n->k == N_TYPEDEF) {
-        return n->t;
-    }
-    return NULL;
-}
 
 static int is_type(Scope *s, Token *t) {
     if (t->k == TK_IDENT) {
@@ -430,9 +430,12 @@ t_err:
     error_at(tk, "invalid combination of type specifiers");
 }
 
+
+// ---- Declarators -----------------------------------------------------------
+
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
 
-static Node * parse_expr(Scope *s);
+static Node *  parse_expr(Scope *s);
 static int64_t calc_int_expr(Node *e);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {
@@ -607,6 +610,7 @@ static int IS_RASSOC[TK_LAST] = {
 };
 
 static Node * parse_subexpr(Scope *s, int min_prec);
+static Node * parse_decl_init(Scope *s, Type *t);
 
 static Node * conv_to(Node *l, Type *t) {
     Node *n = l;
@@ -872,16 +876,12 @@ static Node * parse_sizeof(Scope *s, Token *op) {
     return n;
 }
 
-static Node * parse_compound_literal(Scope *s) {
-    TODO();
-}
-
 static Node * parse_cast(Scope *s) {
     Type *t = parse_decl_specs(s, NULL);
     t = parse_abstract_declarator(s, t);
     expect_tk(s->l, ')');
-    if (next_tk_opt(s->l, '{')) {
-        return parse_compound_literal(s);
+    if (peek_tk_is(s->l, '{')) { // Compound literal
+        return parse_decl_init(s, t);
     } else {
         Node *l = parse_subexpr(s, PREC_UNARY);
         return conv_to(l, t);
@@ -1245,7 +1245,7 @@ static Node * calc_const_expr_raw(Node *e) {
         n = node(N_KVAL, e->tk);
         n->t = e->t;
         n->global = l->global;
-        n->offset = l->offset + (int64_t) r->imm * n->t->size;
+        n->offset = l->offset + (int64_t) (r->imm * n->t->size);
         break;
     case N_DOT:
         l = calc_const_expr_raw(e->strct);
@@ -1715,7 +1715,6 @@ static Node * parse_init_list(Scope *s, Type *t) {
 }
 
 static Node * parse_decl_init(Scope *s, Type *t) {
-    expect_tk(s->l, '=');
     if (t->linkage == L_EXTERN || t->k == T_FN) {
         error_at(peek_tk(s->l), "illegal initializer");
     }
@@ -1735,7 +1734,7 @@ static Node * parse_decl_init(Scope *s, Type *t) {
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     Node *var = def_var(s, name, t);
     Node *init = NULL;
-    if (peek_tk_is(s->l, '=')) {
+    if (next_tk_opt(s->l, '=')) {
         init = parse_decl_init(s, t);
     }
     Node *decl = node(N_DECL, name);
