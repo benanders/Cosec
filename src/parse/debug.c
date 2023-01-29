@@ -11,7 +11,7 @@ static char * AST_NAMES[N_LAST] = {
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
     ",", "?",
     "-", "~", "!", "++", "--", "++", "--", "*", "&", "conv",
-    "idx", "call", ".", "->",
+    "idx", "call", ".",
     "fn def", "typedef", "decl", "if", "while", "do while", "for", "switch",
     "case", "default", "break", "continue", "goto", "label", "return",
 };

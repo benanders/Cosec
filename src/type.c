@@ -85,15 +85,15 @@ Field * new_field(Type *t, char *name, size_t offset) {
     return f;
 }
 
-Field * find_field(Type *t, char *name) {
+size_t find_field(Type *t, char *name) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
     for (size_t i = 0; i < vec_len(t->fields); i++) {
         Field *f = vec_get(t->fields, i);
         if (strcmp(f->name, name) == 0) {
-            return f;
+            return i;
         }
     }
-    return NULL;
+    return NOT_FOUND;
 }
 
 int is_int(Type *t) {

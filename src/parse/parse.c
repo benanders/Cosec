@@ -297,7 +297,7 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
                 error_at(name, "%s field cannot have type 'void'",
                          is_struct ? "struct" : "union");
             }
-            if (find_field(t, name->s)) {
+            if (find_field(t, name->s) != NOT_FOUND) {
                 error_at(name, "duplicate field '%s' in %s", name->s,
                          is_struct ? "struct" : "union");
             }
@@ -322,19 +322,27 @@ static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
         return;
     }
     Token *tag = next_tk(s->l);
-    Type *tt = find_tag(s, tag->s);
-    if (!tt) {
+    if (peek_tk_is(s->l, '{')) { // Definition
+        Type *tt = map_get(s->tags, tag->s);
+        if (tt && vec_len(tt->fields) > 0) { // Redefinition in same scope
+            error_at(tag, "redefinition of %s '%s'",
+                     is_struct ? "struct" : "union", tag->s);
+        }
         def_tag(s, tag, t);
-    }
-    if (peek_tk_is(s->l, '{') && tt && vec_len(tt->fields) > 0) {
-        error_at(tag, "redefinition of %s '%s'",
-                 is_struct ? "struct" : "union", tag->s);
-    } else if (peek_tk_is(s->l, '{')) {
         parse_fields(s, t, is_struct);
-    } else if (tt) {
-        t->fields = tt->fields;
+    } else {
+        Type *tt = find_tag(s, tag->s);
+        if (!tt) { // Declaration
+            def_tag(s, tag, t);
+        } else { // Use
+            if (is_struct ? tt->k != T_STRUCT : tt->k != T_UNION) {
+                error_at(tag, "use of %s tag '%s' that does not match previous declaration",
+                         is_struct ? "struct" : "union", tag->s);
+            }
+            t->fields = tt->fields;
+        }
     }
-};
+}
 
 static Type * parse_union_def(Scope *s) {
     Type *t = t_union();
@@ -737,11 +745,12 @@ static Node * parse_struct_field_access(Scope *s, Node *l, Token *op) {
         error_at(op, "expected struct or union type");
     }
     Token *name = expect_tk(s->l, TK_IDENT);
-    Field *f = find_field(l->t, name->s);
-    if (!f) {
+    size_t f_idx = find_field(l->t, name->s);
+    if (f_idx == NOT_FOUND) {
         error_at(name, "no field named '%s' in %s", name->s,
                  l->t->k == T_STRUCT ? "struct" : "union");
     }
+    Field *f = vec_get(l->t->fields, f_idx);
     Node *n = node(N_DOT, op);
     n->t = f->t;
     n->strct = l;
@@ -1236,13 +1245,14 @@ static Node * calc_const_expr_raw(Node *e) {
         n = node(N_KVAL, e->tk);
         n->t = e->t;
         n->global = l->global;
-        n->offset = (int64_t) (l->offset + r->imm * n->t->size);
+        n->offset = l->offset + (int64_t) r->imm * n->t->size;
         break;
     case N_DOT:
         l = calc_const_expr_raw(e->strct);
         if (l->k != N_KVAL) goto err;
-        Field *f = find_field(l->t, e->field_name);
-        assert(f);
+        size_t f_idx = find_field(l->t, e->field_name);
+        assert(f_idx != NOT_FOUND);
+        Field *f = vec_get(l->t->fields, f_idx);
         n = node(N_KVAL, e->tk);
         n->t = e->t;
         n->global = l->global;
@@ -1521,7 +1531,7 @@ static Node * parse_block(Scope *s) {
     Node *head = NULL;
     Node **cur = &head;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
-        *cur = parse_stmt_or_decl(s);
+        *cur = parse_stmt_or_decl(&block);
         while (*cur) cur = &(*cur)->next;
     }
     expect_tk(s->l, '}');
@@ -1546,7 +1556,7 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
     return fn;
 }
 
-static void parse_string_init(Scope *s, Vec *inits, Type *t, uint64_t offset) {
+static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
     assert(is_char_arr(t));
     Token *str = next_tk_opt(s->l, TK_STR);
     if (!str && peek_tk_is(s->l, '{') && peek2_tk_is(s->l, TK_STR)) {
@@ -1575,15 +1585,11 @@ static void parse_string_init(Scope *s, Vec *inits, Type *t, uint64_t offset) {
     }
 }
 
-static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated);
+static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, int designated);
 
-static void parse_init_elem(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
-    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION) {
+static void parse_init_elem(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
+    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION || peek_tk_is(s->l, '{')) {
         parse_init_list_raw(s, inits, t, offset, designated);
-    } else if (next_tk_opt(s->l, '{')) {
-        parse_init_elem(s, inits, t, offset, 1);
-        next_tk_opt(s->l, ',');
-        expect_tk(s->l, '}');
     } else {
         Node *e = parse_expr_no_commas(s);
         e = conv_to(e, t);
@@ -1597,7 +1603,7 @@ static void parse_init_elem(Scope *s, Vec *inits, Type *t, uint64_t offset, int 
     }
 }
 
-static int64_t parse_array_designator(Scope *s, Type *t) {
+static size_t parse_array_designator(Scope *s, Type *t) {
     expect_tk(s->l, '[');
     Node *e = parse_expr(s);
     int64_t desg = calc_int_expr(e);
@@ -1609,10 +1615,10 @@ static int64_t parse_array_designator(Scope *s, Type *t) {
     return desg;
 }
 
-static void parse_array_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
+static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     assert(t->k == T_ARR);
     int has_brace = next_tk_opt(s->l, '{') != NULL;
-    uint64_t idx = 0;
+    size_t idx = 0;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
         if (!has_brace && t->len != NO_ARR_LEN && idx >= t->len) {
             break;
@@ -1626,11 +1632,10 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int
         }
         int excess = t->len != NO_ARR_LEN && idx >= t->len;
         if (excess) {
-            warning_at(peek_tk(s->l), "excessive elements in array initializer");
+            warning_at(peek_tk(s->l), "excess elements in array initializer");
         }
-        uint64_t idx_multiplier = t->elem->k == T_ARR ? t->elem->len : 1;
-        uint64_t elem_idx = offset + idx * idx_multiplier;
-        parse_init_elem(s, excess ? NULL : inits, t->elem, elem_idx, designated);
+        size_t elem_offset = offset + idx * t->elem->size;
+        parse_init_elem(s, excess ? NULL : inits, t->elem, elem_offset, designated);
         idx++;
         designated = 0;
     }
@@ -1643,11 +1648,50 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int
     }
 }
 
-static Node * parse_struct_union_init(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
-    TODO();
+static size_t parse_struct_designator(Scope *s, Type *t) {
+    expect_tk(s->l, '.');
+    Token *name = expect_tk(s->l, TK_IDENT);
+    size_t f_idx = find_field(t, name->s);
+    if (f_idx == NOT_FOUND) {
+        error_at(name, "designator '%s' does not refer to any field in the %s",
+                 name->s, t->k == T_STRUCT ? "struct" : "union");
+    }
+    expect_tk(s->l, '=');
+    return f_idx;
 }
 
-static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, uint64_t offset, int designated) {
+static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
+    assert(t->k == T_STRUCT || t->k == T_UNION);
+    int has_brace = next_tk_opt(s->l, '{') != NULL;
+    size_t idx = 0;
+    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+        if (!has_brace && idx >= vec_len(t->fields)) {
+            break;
+        }
+        if (peek_tk_is(s->l, '.') && !has_brace && !designated) {
+            break;
+        }
+        if (peek_tk_is(s->l, '.')) {
+            idx = parse_struct_designator(s, t);
+            designated = 1;
+        }
+        int excess = idx >= vec_len(t->fields);
+        if (excess) {
+            warning_at(peek_tk(s->l), "excess elements in %s initializer",
+                       t->k == T_STRUCT ? "struct" : "union");
+        }
+        Field *f = vec_get(t->fields, excess ? vec_len(t->fields) - 1 : idx);
+        size_t field_offset = offset + f->offset;
+        parse_init_elem(s, excess ? NULL : inits, f->t, field_offset, designated);
+        idx++;
+        designated = 0;
+    }
+    if (has_brace) {
+        expect_tk(s->l, '}');
+    }
+}
+
+static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     if (is_char_arr(t)) {
         parse_string_init(s, inits, t, offset);
         return;
@@ -1655,7 +1699,7 @@ static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, uint64_t offset, 
     if (t->k == T_ARR) {
         parse_array_init(s, inits, t, offset, designated);
     } else if (t->k == T_STRUCT || t->k == T_UNION) {
-        parse_struct_union_init(s, inits, t, offset, designated);
+        parse_struct_init(s, inits, t, offset, designated);
     } else { // Everything else, e.g., int a = {3}
         Type *arr_t = t_arr(t, 1);
         parse_array_init(s, inits, arr_t, offset, designated);
