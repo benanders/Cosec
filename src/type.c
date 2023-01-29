@@ -56,6 +56,34 @@ Type * t_fn(Type *ret, Vec *params) {
     return t;
 }
 
+Type * t_struct() {
+    Type *t = t_new();
+    t->k = T_STRUCT;
+    t->fields = vec_new();
+    return t;
+}
+
+Type * t_union() {
+    Type *t = t_new();
+    t->k = T_UNION;
+    t->fields = vec_new();
+    return t;
+}
+
+Type * t_enum() {
+    Type *t = t_new();
+    t->k = T_ENUM;
+    return t;
+}
+
+Field * new_field(Type *t, char *name, size_t offset) {
+    Field *f = malloc(sizeof(Field));
+    f->t = t;
+    f->name = name;
+    f->offset = offset;
+    return f;
+}
+
 int is_int(Type *t) {
     return t->k >= T_CHAR && t->k <= T_LLONG;
 }

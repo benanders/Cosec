@@ -18,6 +18,19 @@ static char * AST_NAMES[N_LAST] = {
 
 static void print_nodes(Node *n, int indent);
 static void print_node(Node *n, int indent);
+static void print_type(Type *t);
+
+static void print_fields(Type *t) {
+    printf("{ ");
+    for (size_t i = 0; i < vec_len(t->fields); i++) {
+        Field *f = vec_get(t->fields, i);
+        print_type(f->t);
+        if (f->name) printf(" %s", f->name);
+        if (t->k == T_STRUCT) printf(" (%lu)", f->offset);
+        printf(", ");
+    }
+    printf("}");
+}
 
 static void print_type(Type *t) {
     if (!t) return;
@@ -51,6 +64,15 @@ static void print_type(Type *t) {
         }
         printf(")");
         break;
+    case T_STRUCT:
+        printf("struct ");
+        print_fields(t);
+        break;
+    case T_UNION:
+        printf("union ");
+        print_fields(t);
+        break;
+    case T_ENUM: TODO();
     }
 }
 

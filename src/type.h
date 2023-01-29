@@ -9,7 +9,8 @@
 #define NO_ARR_LEN ((uint64_t) -1)
 
 enum { // Storage classes
-    S_TYPEDEF = 1,
+    S_NONE,
+    S_TYPEDEF,
     S_EXTERN,
     S_STATIC,
     S_AUTO,
@@ -54,13 +55,12 @@ enum { // Linkage
 typedef struct {
     struct Type *t;
     char *name;
-    size_t offset;
+    size_t offset; // 0 for unions
 } Field;
 
 typedef struct Type {
     int k;
-    uint64_t size;
-    int align;
+    size_t size, align;
     int linkage;
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
@@ -77,6 +77,11 @@ Type * t_num(int t, int is_unsigned);
 Type * t_ptr(Type *base);
 Type * t_arr(Type *base, uint64_t len);
 Type * t_fn(Type *ret, Vec *args);
+Type * t_struct();
+Type * t_union();
+Type * t_enum();
+
+Field * new_field(Type *t, char *name, size_t offset);
 
 int is_int(Type *t);
 int is_fp(Type *t);

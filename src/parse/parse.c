@@ -18,6 +18,7 @@ typedef struct Scope {
     int k;
     Lexer *l;
     Map *vars;  // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
+    Map *tags;  // of 'Type *'
     Node *fn;   // NULL in file scope
     Vec *cases; // for SCOPE_SWITCH
 } Scope;
@@ -34,6 +35,7 @@ static void enter_scope(Scope *inner, Scope *outer, int k) {
     inner->k = k;
     inner->l = outer->l;
     inner->vars = map_new();
+    inner->tags = map_new();
     inner->fn = outer->fn;
     inner->outer = outer;
     if (k == SCOPE_SWITCH) {
@@ -119,6 +121,18 @@ static Node * def_typedef(Scope *s, Token *name, Type *t) {
     n->var_name = name->s;
     def_symbol(s, n);
     return n;
+}
+
+static void def_tag(Scope *s, Token *tag, Type *t) {
+    Type *prev = map_get(s->tags, tag->s);
+    if (prev) {
+        if (prev->k != t->k) {
+            error_at(tag, "redefinition of tag '%s' with different type", tag->s);
+        } else {
+            error_at(tag, "redefinition of tag '%s'", tag->s);
+        }
+    }
+    map_put(s->tags, tag->s, t);
 }
 
 
@@ -223,6 +237,9 @@ static Node * parse_num(Token *tk) {
 
 // ---- Declarators -----------------------------------------------------------
 
+static Type * parse_decl_specs(Scope *s, int *sclass);
+static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
+
 static Type * find_typedef(Scope *s, char *name) {
     Node *n = find_var(s, name);
     if (n && n->k == N_TYPEDEF) {
@@ -243,19 +260,67 @@ static Type * parse_enum_def(Scope *s) {
     TODO();
 }
 
+static size_t pad(size_t offset, size_t align) {
+    return offset % align == 0 ? offset : offset + align - (offset % align);
+}
+
+static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
+    if (peek_tk_is(s->l, TK_IDENT)) {
+        Token *tag = next_tk(s->l);
+        def_tag(s, tag, t);
+    }
+    expect_tk(s->l, '{');
+    size_t align = 0;
+    size_t offset = 0;
+    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+        Token *tk = peek_tk(s->l);
+        int sclass;
+        Type *base = parse_decl_specs(s, &sclass);
+        if (sclass != S_NONE) {
+            error_at(tk, "illegal storage class specifier");
+        }
+        if (peek_tk_is(s->l, ';')) {
+            if (is_struct) offset = pad(offset, base->align);
+            vec_push(t->fields, new_field(base, NULL, offset));
+            if (is_struct) offset += base->size;
+        }
+        while (!peek_tk_is(s->l, ';') && !peek_tk_is(s->l, TK_EOF)) {
+            Token *name;
+            Type *ft = parse_declarator(s, base, &name, NULL);
+            if (ft->k == T_VOID) {
+                error_at(name, "struct field cannot have type 'void'");
+            }
+            align = ft->align > align ? ft->align : align;
+            if (is_struct) offset = pad(offset, ft->align);
+            vec_push(t->fields, new_field(ft, name->s, offset));
+            if (is_struct) offset += ft->size;
+            if (!next_tk_opt(s->l, ',')) {
+                break;
+            }
+        }
+        expect_tk(s->l, ';');
+    }
+    expect_tk(s->l, '}');
+    t->align = align;
+    t->size = pad(offset, align);
+}
+
 static Type * parse_union_def(Scope *s) {
-    TODO();
+    Type *t = t_union();
+    parse_struct_union_def(s, t, 0);
+    return t;
 }
 
 static Type * parse_struct_def(Scope *s) {
-    TODO();
+    Type *t = t_struct();
+    parse_struct_union_def(s, t, 1);
+    return t;
 }
 
 static Type * parse_decl_specs(Scope *s, int *sclass) {
     if (!is_type(s, peek_tk(s->l))) {
         error_at(peek_tk(s->l), "expected type name");
     }
-
     int sc = 0, tq = 0, fs = 0;
     enum { tnone, tvoid, tchar, tint, tfloat, tdouble } kind = 0;
     enum { tlong = 1, tllong, tshort } size = 0;
@@ -327,7 +392,6 @@ t_err:
 }
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
-static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
 
 static Node * parse_expr(Scope *s);
 static int64_t calc_int_expr(Node *e);
@@ -361,7 +425,7 @@ static Type * parse_fn_declarator_param(Scope *s, Token **name) {
         t = t_ptr(t);
     }
     if (t->k == T_VOID) {
-        error_at(err, "parameter cannot have 'void' type");
+        error_at(err, "parameter cannot have type 'void'");
     }
     return t;
 }
