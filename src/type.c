@@ -60,14 +60,12 @@ Type * t_fn(Type *ret, Vec *params) {
 Type * t_struct() {
     Type *t = t_new();
     t->k = T_STRUCT;
-    t->fields = vec_new();
     return t;
 }
 
 Type * t_union() {
     Type *t = t_new();
     t->k = T_UNION;
-    t->fields = vec_new();
     return t;
 }
 
@@ -87,6 +85,7 @@ Field * new_field(Type *t, char *name, size_t offset) {
 
 size_t find_field(Type *t, char *name) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
+    if (!t->fields) return NOT_FOUND; // Incomplete type
     for (size_t i = 0; i < vec_len(t->fields); i++) {
         Field *f = vec_get(t->fields, i);
         if (strcmp(f->name, name) == 0) {
@@ -135,6 +134,7 @@ int are_equal(Type *a, Type *b) {
         }
         return are_equal(a->ret, b->ret);
     case T_STRUCT: case T_UNION:
+        if (!a->fields || !b->fields) return 0;
         if (vec_len(a->fields) != vec_len(b->fields)) return 0;
         for (size_t i = 0; i < vec_len(a->fields); i++) {
             if (!fields_are_equal(vec_get(a->fields, i), vec_get(b->fields, i))) return 0;

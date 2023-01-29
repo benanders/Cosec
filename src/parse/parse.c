@@ -277,6 +277,7 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
     expect_tk(s->l, '{');
     size_t align = 0;
     size_t offset = 0;
+    Vec *fields = vec_new();
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
         Token *tk = peek_tk(s->l);
         int sclass;
@@ -287,7 +288,7 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
         }
         if (peek_tk_is(s->l, ';')) {
             if (is_struct) offset = pad(offset, base->align);
-            vec_push(t->fields, new_field(base, NULL, offset));
+            vec_push(fields, new_field(base, NULL, offset));
             if (is_struct) offset += base->size;
         }
         while (!peek_tk_is(s->l, ';') && !peek_tk_is(s->l, TK_EOF)) {
@@ -303,7 +304,7 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
             }
             align = ft->align > align ? ft->align : align;
             if (is_struct) offset = pad(offset, ft->align);
-            vec_push(t->fields, new_field(ft, name->s, offset));
+            vec_push(fields, new_field(ft, name->s, offset));
             if (is_struct) offset += ft->size;
             if (!next_tk_opt(s->l, ',')) {
                 break;
@@ -314,6 +315,7 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
     expect_tk(s->l, '}');
     t->align = align;
     t->size = pad(offset, align);
+    t->fields = fields;
 }
 
 static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
@@ -324,7 +326,7 @@ static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
     Token *tag = next_tk(s->l);
     if (peek_tk_is(s->l, '{')) { // Definition
         Type *tt = map_get(s->tags, tag->s);
-        if (tt && vec_len(tt->fields) > 0) { // Redefinition in same scope
+        if (tt && tt->fields) { // Redefinition in same scope
             error_at(tag, "redefinition of %s '%s'",
                      is_struct ? "struct" : "union", tag->s);
         }
