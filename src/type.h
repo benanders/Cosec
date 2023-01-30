@@ -56,7 +56,7 @@ enum { // Linkage
 typedef struct {
     struct Type *t;
     char *name;
-    size_t offset; // 0 for unions
+    size_t offset; // 0 for T_UNION; enum const value for T_ENUM
 } Field;
 
 typedef struct Type {
@@ -68,7 +68,7 @@ typedef struct Type {
         struct Type *ptr; // T_PTR
         struct { struct Type *elem; uint64_t len; }; // T_ARR
         struct { struct Type *ret; Vec *params; /* of 'Type *' */ }; // T_FN
-        Vec *fields; // T_STRUCT, T_UNION
+        Vec *fields; // T_STRUCT, T_UNION, T_ENUM
     };
 } Type;
 

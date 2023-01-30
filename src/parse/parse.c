@@ -122,9 +122,8 @@ static Node * def_var(Scope *s, Token *name, Type *t) {
     if (t->k == T_FN && t->linkage == L_NONE) {
         t->linkage = L_EXTERN; // Functions are 'extern' if unspecified
     }
-    Node *n = node((s->k == SCOPE_FILE ||
-                    t->linkage == L_STATIC ||
-                    t->linkage == L_EXTERN) ? N_GLOBAL : N_LOCAL, name);
+    int is_global = s->k == SCOPE_FILE || t->linkage == L_STATIC || t->linkage == L_EXTERN;
+    Node *n = node(is_global ? N_GLOBAL : N_LOCAL, name);
     n->t = t;
     n->var_name = name->s;
     def_symbol(s, n);
@@ -141,8 +140,25 @@ static Node * def_typedef(Scope *s, Token *name, Type *t) {
 }
 
 static void def_tag(Scope *s, Token *tag, Type *t) {
-    assert(!map_get(s->tags, tag->s));
+    Type *v = map_get(s->tags, tag->s);
+    if (v && v->fields) {
+        char *name = t->k == T_STRUCT ? "struct" : t->k == T_UNION ? "union" : "enum";
+        error_at(tag, "redefinition of %s '%s'", name, tag->s);
+    }
     map_put(s->tags, tag->s, t);
+}
+
+static void def_enum_const(Scope *s, Token *name, Type *t, int64_t val) {
+    Node *v = map_get(s->vars, name->s);
+    if (v && v->k != t->k) {
+        error_at(name, "redefinition of '%s' as a different kind of symbol", name->s);
+    } else if (v) {
+        error_at(name, "redefinition of enum tag '%s'", name->s);
+    }
+    Node *n = node(N_IMM, name);
+    n->t = t;
+    n->imm = val;
+    map_put(s->vars, name->s, n);
 }
 
 
@@ -164,8 +180,8 @@ static Type * parse_int_suffix(char *s) {
     }
 }
 
-static Type * smallest_type_for_int(uint64_t num, int is_base_10) {
-    if (is_base_10) { // Decimal constant is either int, long, or long long
+static Type * smallest_type_for_int(uint64_t num, int signed_only) {
+    if (signed_only) { // Decimal constant is either int, long, or long long
         if (num <= INT_MAX)       return t_num(T_INT, 0);
         else if (num <= LONG_MAX) return t_num(T_LONG, 0);
         else                      return t_num(T_LLONG, 0);
@@ -250,6 +266,9 @@ static Node * parse_num(Token *tk) {
 static Type * parse_decl_specs(Scope *s, int *sclass);
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
 
+static int64_t calc_int_expr(Node *e);
+static Node *  parse_expr_no_commas(Scope *s);
+
 static int is_type(Scope *s, Token *t) {
     if (t->k == TK_IDENT) {
         return find_typedef(s, t->s) != NULL;
@@ -258,15 +277,11 @@ static int is_type(Scope *s, Token *t) {
     }
 }
 
-static Type * parse_enum_def(Scope *s) {
-    TODO();
-}
-
 static size_t pad(size_t offset, size_t align) {
     return offset % align == 0 ? offset : offset + align - (offset % align);
 }
 
-static void parse_fields(Scope *s, Type *t, int is_struct) {
+static void parse_struct_fields(Scope *s, Type *t) {
     expect_tk(s->l, '{');
     size_t align = 0;
     size_t offset = 0;
@@ -277,28 +292,28 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
         Type *base = parse_decl_specs(s, &sclass);
         if (sclass != S_NONE) {
             error_at(tk, "illegal storage class specifier in %s field",
-                     is_struct ? "struct" : "union");
+                     t->k == T_STRUCT ? "struct" : "union");
         }
         if (peek_tk_is(s->l, ';')) {
-            if (is_struct) offset = pad(offset, base->align);
+            if (t->k == T_STRUCT) offset = pad(offset, base->align);
             vec_push(fields, new_field(base, NULL, offset));
-            if (is_struct) offset += base->size;
+            if (t->k == T_STRUCT) offset += base->size;
         }
         while (!peek_tk_is(s->l, ';') && !peek_tk_is(s->l, TK_EOF)) {
             Token *name;
             Type *ft = parse_declarator(s, base, &name, NULL);
             if (is_incomplete(ft)) {
                 error_at(name, "%s field cannot have incomplete type",
-                         is_struct ? "struct" : "union");
+                         t->k == T_STRUCT ? "struct" : "union");
             }
             if (find_field(t, name->s) != NOT_FOUND) {
                 error_at(name, "duplicate field '%s' in %s", name->s,
-                         is_struct ? "struct" : "union");
+                         t->k == T_STRUCT ? "struct" : "union");
             }
             align = ft->align > align ? ft->align : align;
-            if (is_struct) offset = pad(offset, ft->align);
+            if (t->k == T_STRUCT) offset = pad(offset, ft->align);
             vec_push(fields, new_field(ft, name->s, offset));
-            if (is_struct) offset += ft->size;
+            if (t->k == T_STRUCT) offset += ft->size;
             if (!next_tk_opt(s->l, ',')) {
                 break;
             }
@@ -311,47 +326,76 @@ static void parse_fields(Scope *s, Type *t, int is_struct) {
     t->fields = fields;
 }
 
-static void parse_struct_union_def(Scope *s, Type *t, int is_struct) {
-    if (!peek_tk_is(s->l, TK_IDENT)) { // Anonymous struct
-        parse_fields(s, t, is_struct);
-        return;
+static void parse_enum_consts(Scope *s, Type *enum_t) {
+    expect_tk(s->l, '{');
+    Type *t = t_num(T_INT, 0);
+    Vec *fields = vec_new();
+    int64_t val = 0;
+    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+        Token *name = expect_tk(s->l, TK_IDENT);
+        if (next_tk_opt(s->l, '=')) {
+            Node *e = parse_expr_no_commas(s);
+            val = calc_int_expr(e);
+        }
+        Type *min = smallest_type_for_int(val < 0 ? -val : val, val < 0);
+        if (min->k > t->k || (min->k == t->k && min->is_unsigned)) {
+            *t = *min;
+        }
+        vec_push(fields, new_field(t, name->s, val));
+        def_enum_const(s, name, t, val);
+        val++;
+        if (!next_tk_opt(s->l, ',')) {
+            break;
+        }
     }
-    Token *tag = next_tk(s->l);
-    if (peek_tk_is(s->l, '{')) { // Definition
-        Type *tt = map_get(s->tags, tag->s);
-        if (tt && tt->fields) { // Redefinition in same scope
-            error_at(tag, "redefinition of %s '%s'",
-                     is_struct ? "struct" : "union", tag->s);
-        } else if (!tt) { // No previous declaration
-            def_tag(s, tag, t);
-        }
-        parse_fields(s, t, is_struct);
-        if (tt) {
-            tt->fields = t->fields;
-        }
-    } else {
-        Type *tt = find_tag(s, tag->s);
-        if (!tt) { // Declaration
-            def_tag(s, tag, t);
-        } else { // Use
-            if (is_struct ? tt->k != T_STRUCT : tt->k != T_UNION) {
-                error_at(tag, "use of %s tag '%s' that does not match previous declaration",
-                         is_struct ? "struct" : "union", tag->s);
-            }
-            t->fields = tt->fields;
-        }
+    expect_tk(s->l, '}');
+    enum_t->fields = fields;
+    enum_t->size = t->size;
+    enum_t->align = t->align;
+}
+
+static void parse_fields(Scope *s, Type *t) {
+    if (t->k == T_STRUCT || t->k == T_UNION) {
+        parse_struct_fields(s, t);
+    } else { // T_ENUM
+        parse_enum_consts(s, t);
     }
 }
 
-static Type * parse_union_def(Scope *s) {
-    Type *t = t_union();
-    parse_struct_union_def(s, t, 0);
-    return t;
+static void parse_struct_union_enum_def(Scope *s, Type *t) {
+    if (!peek_tk_is(s->l, TK_IDENT)) { // Anonymous
+        parse_fields(s, t);
+        return;
+    }
+    Token *tag = next_tk(s->l);
+    Type *tt = find_tag(s, tag->s);
+    if (peek_tk_is(s->l, '{')) { // Definition
+        def_tag(s, tag, t);
+        parse_fields(s, t);
+    } else if (tt && t->k != tt->k) {
+        error_at(tag, "use of tag '%s' does not match previous declaration", tag->s);
+    } else if (tt) { // Use
+        t->fields = tt->fields;
+    } else { // Forward declaration
+        def_tag(s, tag, t);
+    }
 }
 
 static Type * parse_struct_def(Scope *s) {
     Type *t = t_struct();
-    parse_struct_union_def(s, t, 1);
+    parse_struct_union_enum_def(s, t);
+    return t;
+}
+
+static Type * parse_union_def(Scope *s) {
+    Type *t = t_union();
+    parse_struct_union_enum_def(s, t);
+    return t;
+}
+
+static Type * parse_enum_def(Scope *s) {
+    Type *t = t_enum();
+    parse_struct_union_enum_def(s, t);
     return t;
 }
 
@@ -433,9 +477,7 @@ t_err:
 // ---- Declarators -----------------------------------------------------------
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
-
-static Node *  parse_expr(Scope *s);
-static int64_t calc_int_expr(Node *e);
+static Node * parse_expr(Scope *s);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
@@ -465,8 +507,8 @@ static Type * parse_fn_declarator_param(Scope *s, Token **name) {
     } else if (t->k == T_FN) { // Function is adjusted to pointer to function
         t = t_ptr(t);
     }
-    if (is_incomplete(t)) {
-        error_at(err, "parameter cannot have incomplete type");
+    if (t->k == T_VOID) {
+        error_at(err, "parameter cannot have type 'void'");
     }
     return t;
 }

@@ -99,16 +99,14 @@ typedef struct Node {
     Type *t;
     Token *tk;
     union {
-        // Constants
+        // Constants and variables
         uint64_t imm; // N_IMM
         double fp;    // N_FP
         struct { char *str; size_t len; }; // N_STR
         Vec *inits; /* of 'Node *' with k = N_INIT */ // N_ARR
         struct { uint64_t init_offset; struct Node *init_val; }; // N_INIT
-        struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
-
-        // Variables
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
+        struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
 
         // Operations
         struct { struct Node *l, *r; };

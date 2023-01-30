@@ -20,14 +20,30 @@ static void print_nodes(Node *n, int indent);
 static void print_node(Node *n, int indent);
 static void print_type(Type *t);
 
-static void print_fields(Type *t) {
+static void print_struct_fields(Type *t) {
+    if (!t->fields) return; // Anonymous
     printf("{ ");
     for (size_t i = 0; i < vec_len(t->fields); i++) {
         Field *f = vec_get(t->fields, i);
         print_type(f->t);
         if (f->name) printf(" %s", f->name);
-        if (t->k == T_STRUCT) printf(" (%lu)", f->offset);
+        if (t->k == T_STRUCT) printf(" (%llu)", f->offset);
         printf(", ");
+    }
+    printf("}");
+}
+
+static void print_enum_consts(Type *t) {
+    if (!t->fields) return; // Anonymous
+    printf("{ ");
+    for (size_t i = 0; i < vec_len(t->fields); i++) {
+        Field *f = vec_get(t->fields, i);
+        if (i == 0) {
+            printf("(");
+            print_type(f->t);
+            printf(") ");
+        }
+        printf("%s = %llu, ", f->name, f->offset);
     }
     printf("}");
 }
@@ -44,14 +60,8 @@ static void print_type(Type *t) {
     case T_FLOAT:   printf("float"); break;
     case T_DOUBLE:  printf("double"); break;
     case T_LDOUBLE: printf("ldouble"); break;
-    case T_PTR:
-        print_type(t->ptr);
-        printf("*");
-        break;
-    case T_ARR:
-        print_type(t->elem);
-        printf("[%llu]", t->len);
-        break;
+    case T_PTR:     print_type(t->ptr); printf("*"); break;
+    case T_ARR:     print_type(t->elem); printf("[%llu]", t->len); break;
     case T_FN:
         print_type(t->ret);
         printf("(");
@@ -64,18 +74,9 @@ static void print_type(Type *t) {
         }
         printf(")");
         break;
-    case T_STRUCT:
-        printf("struct ");
-        print_fields(t);
-        break;
-    case T_UNION:
-        printf("union ");
-        print_fields(t);
-        break;
-    case T_ENUM:
-        printf("enum ");
-        TODO();
-        break;
+    case T_STRUCT: printf("struct "); print_struct_fields(t); break;
+    case T_UNION:  printf("union "); print_struct_fields(t); break;
+    case T_ENUM:   printf("enum "); print_enum_consts(t); break;
     }
 }
 
