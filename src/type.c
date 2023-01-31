@@ -38,12 +38,15 @@ Type * t_ptr(Type *base) {
     return t;
 }
 
-Type * t_arr(Type *base, uint64_t len) {
+Type * t_arr(Type *base, uint64_t len, int is_vla) {
     Type *t = t_new();
     t->k = T_ARR;
     t->elem = base;
     t->len = len;
-    t->size = t->elem->size * len;
+    t->is_vla = is_vla;
+    if (len != NO_ARR_LEN) {
+        t->size = t->elem->size * len;
+    }
     t->align = 8;
     return t;
 }
@@ -117,6 +120,7 @@ int is_char_arr(Type *t) {
 
 int is_incomplete(Type *t) {
     return t->k == T_VOID ||
+           (t->k == T_ARR && t->len == NO_ARR_LEN && !t->is_vla) ||
            ((t->k == T_STRUCT || t->k == T_UNION) && !t->fields);
 }
 

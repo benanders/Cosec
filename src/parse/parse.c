@@ -113,9 +113,6 @@ static void def_symbol(Scope *s, Node *n) {
 }
 
 static Node * def_var(Scope *s, Token *name, Type *t) {
-    if (is_incomplete(t)) {
-        error_at(name, "variable cannot have incomplete type");
-    }
     if (t->k == T_FN && s->k != SCOPE_FILE && t->linkage == L_STATIC) {
         error_at(name, "function declared in block scope cannot have 'static' storage class");
     }
@@ -478,21 +475,31 @@ t_err:
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
 static Node * parse_expr(Scope *s);
+static int    try_calc_int_expr(Node *e, int64_t *val);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
-    uint64_t len = NO_ARR_LEN;
+    int64_t len = NO_ARR_LEN;
+    int is_vla = 0;
     if (!next_tk_opt(s->l, ']')) {
         Node *num = parse_expr(s);
-        len = calc_int_expr(num);
+        if (!try_calc_int_expr(num, &len)) {
+            is_vla = 1;
+        }
+        if (!is_vla && len < 0) {
+            error_at(num->tk, "cannot have array with negative size ('%ld')", len);
+        }
         expect_tk(s->l, ']');
     }
     Token *err = peek_tk(s->l);
     Type *t = parse_declarator_tail(s, base, NULL);
     if (t->k == T_FN) {
-        error_at(err, "cannot have an array of functions");
+        error_at(err, "cannot have array of functions");
     }
-    return t_arr(t, len);
+    if (is_incomplete(t)) {
+        error_at(err, "cannot have array of elements with incomplete type");
+    }
+    return t_arr(t, len, is_vla);
 }
 
 static Type * parse_fn_declarator_param(Scope *s, Token **name) {
@@ -696,7 +703,7 @@ static Node * parse_operand(Scope *s) {
         break;
     case TK_STR:
         n = node(N_STR, t);
-        n->t = t_arr(t_num(T_CHAR, 0), t->len);
+        n->t = t_arr(t_num(T_CHAR, 0), t->len, 0);
         n->str = t->s;
         n->len = t->len;
         break;
@@ -1077,35 +1084,35 @@ static Node * parse_expr_no_commas(Scope *s) {
 
 // ---- Constant Expressions --------------------------------------------------
 
-#define CALC_UNOP_INT(op)               \
-    l = calc_const_expr_raw(e->l, err); \
-    if (!l) goto err;                   \
-    if (l->k == N_IMM) {                \
-        n->k = N_IMM;                   \
-        n->imm = op l->imm;             \
-    } else {                            \
-        goto err;                       \
-    }                                   \
+#define CALC_UNOP_INT(op)           \
+    l = eval_const_expr(e->l, err); \
+    if (!l) goto err;               \
+    if (l->k == N_IMM) {            \
+        n->k = N_IMM;               \
+        n->imm = op l->imm;         \
+    } else {                        \
+        goto err;                   \
+    }                               \
     break;
 
-#define CALC_UNOP_ARITH(op)             \
-    l = calc_const_expr_raw(e->l, err); \
-    if (!l) goto err;                   \
-    if (l->k == N_IMM) {                \
-        n->k = N_IMM;                   \
-        n->imm = op l->imm;             \
-    } else if (l->k == N_FP) {          \
-        n->k = N_FP;                    \
-        n->fp = op l->fp;               \
-    } else {                            \
-        goto err;                       \
-    }                                   \
+#define CALC_UNOP_ARITH(op)         \
+    l = eval_const_expr(e->l, err); \
+    if (!l) goto err;               \
+    if (l->k == N_IMM) {            \
+        n->k = N_IMM;               \
+        n->imm = op l->imm;         \
+    } else if (l->k == N_FP) {      \
+        n->k = N_FP;                \
+        n->fp = op l->fp;           \
+    } else {                        \
+        goto err;                   \
+    }                               \
     break;
 
 #define CALC_BINOP_INT(op)                \
-    l = calc_const_expr_raw(e->l, err);   \
+    l = eval_const_expr(e->l, err);       \
     if (!l) goto err;                     \
-    r = calc_const_expr_raw(e->r, err);   \
+    r = eval_const_expr(e->r, err);       \
     if (!r) goto err;                     \
     if (l->k == N_IMM && r->k == N_IMM) { \
         n->k = N_IMM;                     \
@@ -1116,9 +1123,9 @@ static Node * parse_expr_no_commas(Scope *s) {
     break;
 
 #define CALC_BINOP_ARITH(op)                   \
-    l = calc_const_expr_raw(e->l, err);        \
+    l = eval_const_expr(e->l, err);            \
     if (!l) goto err;                          \
-    r = calc_const_expr_raw(e->r, err);        \
+    r = eval_const_expr(e->r, err);            \
     if (!r) goto err;                          \
     if (l->k == N_IMM && r->k == N_IMM) {      \
         n->k = N_IMM;                          \
@@ -1132,9 +1139,9 @@ static Node * parse_expr_no_commas(Scope *s) {
     break;
 
 #define CALC_BINOP_ARITH_PTR(op)                                       \
-    l = calc_const_expr_raw(e->l, err);                                \
+    l = eval_const_expr(e->l, err);                                    \
     if (!l) goto err;                                                  \
-    r = calc_const_expr_raw(e->r, err);                                \
+    r = eval_const_expr(e->r, err);                                    \
     if (!r) goto err;                                                  \
     if (l->k == N_IMM && r->k == N_IMM) {                              \
         n->k = N_IMM;                                                  \
@@ -1156,9 +1163,9 @@ static Node * parse_expr_no_commas(Scope *s) {
     break;
 
 #define CALC_BINOP_EQ(op)                                          \
-    l = calc_const_expr_raw(e->l, err);                            \
+    l = eval_const_expr(e->l, err);                                \
     if (!l) goto err;                                              \
-    r = calc_const_expr_raw(e->r, err);                            \
+    r = eval_const_expr(e->r, err);                                \
     if (!r) goto err;                                              \
     if (l->k == N_IMM && r->k == N_IMM) {                          \
         n->k = N_IMM;                                              \
@@ -1180,9 +1187,9 @@ static Node * parse_expr_no_commas(Scope *s) {
     break;
 
 #define CALC_BINOP_REL(op)                     \
-    l = calc_const_expr_raw(e->l, err);        \
+    l = eval_const_expr(e->l, err);            \
     if (!l) goto err;                          \
-    r = calc_const_expr_raw(e->r, err);        \
+    r = eval_const_expr(e->r, err);            \
     if (!r) goto err;                          \
     if (l->k == N_IMM && r->k == N_IMM) {      \
         n->k = N_IMM;                          \
@@ -1195,7 +1202,7 @@ static Node * parse_expr_no_commas(Scope *s) {
     }                                          \
     break;
 
-static Node * calc_const_expr_raw(Node *e, Token **err) {
+static Node * eval_const_expr(Node *e, Token **err) {
     Node *cond, *l, *r;
     Node *n = node(e->k, e->tk);
     n->t = e->t;
@@ -1207,7 +1214,7 @@ static Node * calc_const_expr_raw(Node *e, Token **err) {
         for (size_t i = 0; i < vec_len(e->inits); i++) {
             Node *v = vec_get(e->inits, i);
             assert(v->k == N_INIT);
-            Node *k = calc_const_expr_raw(v->init_val, err);
+            Node *k = eval_const_expr(v->init_val, err);
             if (!k) goto err;
             if (k->k == N_KVAL) goto err;
             Node *init = node(N_INIT, v->tk);
@@ -1241,21 +1248,21 @@ static Node * calc_const_expr_raw(Node *e, Token **err) {
     case N_LOG_AND: CALC_BINOP_INT(&&)
     case N_LOG_OR:  CALC_BINOP_INT(||)
     case N_COMMA:
-        l = calc_const_expr_raw(e->l, err);
+        l = eval_const_expr(e->l, err);
         if (!l) goto err;
-        r = calc_const_expr_raw(e->r, err);
+        r = eval_const_expr(e->r, err);
         if (!r) goto err;
         n = r;
         break;
 
         // Ternary operation
     case N_TERNARY:
-        cond = calc_const_expr_raw(e->if_cond, err);
+        cond = eval_const_expr(e->if_cond, err);
         if (!cond) goto err;
         if (cond->k != N_IMM) goto err;
-        l = calc_const_expr_raw(e->if_body, err);
+        l = eval_const_expr(e->if_body, err);
         if (!l) goto err;
-        r = calc_const_expr_raw(e->if_else, err);
+        r = eval_const_expr(e->if_else, err);
         if (!r) goto err;
         n = cond->imm ? l : r;
         break;
@@ -1263,23 +1270,24 @@ static Node * calc_const_expr_raw(Node *e, Token **err) {
         // Unary operations
     case N_NEG:     CALC_UNOP_ARITH(-)
     case N_BIT_NOT: CALC_UNOP_INT(~)
-    case N_LOG_NOT: CALC_UNOP_INT(!)
+    case N_LOG_NOT:
+        CALC_UNOP_INT(!)
     case N_ADDR:
-        l = calc_const_expr_raw(e->l, err);
+        l = eval_const_expr(e->l, err);
         if (!l) goto err;
         if (l->k != N_KVAL) goto err;
         n = l;
         n->k = N_KPTR;
         break;
     case N_DEREF:
-        l = calc_const_expr_raw(e->l, err);
+        l = eval_const_expr(e->l, err);
         if (!l) goto err;
         if (l->k != N_KPTR) goto err;
         n = l;
         n->k = N_KVAL;
         break;
     case N_CONV:
-        l = calc_const_expr_raw(e->l, err);
+        l = eval_const_expr(e->l, err);
         if (!l) goto err;
         if (is_fp(n->t) && l->k == N_IMM) { // int -> float
             n->k = N_FP;
@@ -1302,17 +1310,17 @@ static Node * calc_const_expr_raw(Node *e, Token **err) {
 
         // Postfix operations
     case N_IDX:
-        l = calc_const_expr_raw(e->if_body, err);
+        l = eval_const_expr(e->arr, err);
         if (!l) goto err;
         if (l->k != N_KVAL && l->k != N_KPTR) goto err;
-        r = calc_const_expr_raw(e->if_else, err);
+        r = eval_const_expr(e->idx, err);
         if (!r) goto err;
         if (r->k != N_IMM) goto err;
         n = l;
         n->kptr_offset += (int64_t) (r->imm * n->t->size);
         break;
     case N_DOT:
-        l = calc_const_expr_raw(e->if_body, err);
+        l = eval_const_expr(e->strct, err);
         if (!l) goto err;
         if (l->k != N_KVAL) goto err;
         size_t f_idx = find_field(l->t, e->field_name);
@@ -1331,7 +1339,7 @@ err:
 
 static Node * calc_const_expr(Node *e) {
     Token *err;
-    Node *n = calc_const_expr_raw(e, &err);
+    Node *n = eval_const_expr(e, &err);
     if (!n) {
         error_at(err, "expected constant expression");
     }
@@ -1349,12 +1357,15 @@ static int64_t calc_int_expr(Node *e) {
     return (int64_t) n->imm;
 }
 
-static Node * try_calc_int_expr(Node *e) {
-    Node *n = calc_const_expr_raw(e, NULL);
+static int try_calc_int_expr(Node *e, int64_t *val) {
+    Node *n = eval_const_expr(e, NULL);
     if (n && n->k != N_IMM) {
         error_at(n->tk, "expected constant integer expression");
     }
-    return n;
+    if (n) {
+        *val = (int64_t) n->imm;
+    }
+    return n != NULL;
 }
 
 
@@ -1777,7 +1788,7 @@ static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, in
     } else if (t->k == T_STRUCT || t->k == T_UNION) {
         parse_struct_init(s, inits, t, offset, designated);
     } else { // Everything else, e.g., int a = {3}
-        Type *arr_t = t_arr(t, 1);
+        Type *arr_t = t_arr(t, 1, 0);
         parse_array_init(s, inits, arr_t, offset, designated);
     }
 }
@@ -1812,6 +1823,12 @@ static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     Node *init = NULL;
     if (next_tk_opt(s->l, '=')) {
         init = parse_decl_init(s, t);
+    }
+    if (is_incomplete(t)) {
+        // Check this after parsing the initializer because arrays without a
+        // specified length may have their type completed
+        // e.g., int a[] /* INCOMPLETE HERE */ = {1, 2, 3}; /* COMPLETE HERE */
+        error_at(name, "variable cannot have incomplete type");
     }
     Node *decl = node(N_DECL, name);
     decl->var = var;
