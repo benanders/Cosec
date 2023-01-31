@@ -7,7 +7,6 @@
 #include "util.h"
 
 #define NOT_FOUND  ((size_t) -1)
-#define NO_ARR_LEN ((uint64_t) -1)
 
 enum { // Storage classes
     S_NONE,
@@ -66,7 +65,7 @@ typedef struct Type {
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
         struct Type *ptr; // T_PTR
-        struct { struct Type *elem; uint64_t len; int is_vla; }; // T_ARR
+        struct { struct Type *elem; struct Node *len; }; // T_ARR (VLA if len->k != N_IMM)
         struct { struct Type *ret; Vec *params; /* of 'Type *' */ }; // T_FN
         Vec *fields; // T_STRUCT, T_UNION, T_ENUM
     };
@@ -76,7 +75,7 @@ Type * t_new();
 Type * t_copy(Type *t);
 Type * t_num(int t, int is_unsigned);
 Type * t_ptr(Type *base);
-Type * t_arr(Type *base, uint64_t len, int is_vla);
+Type * t_arr(Type *base, struct Node *len);
 Type * t_fn(Type *ret, Vec *args);
 Type * t_struct();
 Type * t_union();
@@ -89,6 +88,7 @@ int is_int(Type *t);
 int is_fp(Type *t);
 int is_arith(Type *t);
 int is_void_ptr(Type *t);
+int is_vla(Type *t);
 int is_char_arr(Type *t);
 int is_incomplete(Type *t);
 int are_equal(Type *a, Type *b);

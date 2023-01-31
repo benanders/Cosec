@@ -71,7 +71,7 @@ enum { // AST nodes
     // Postfix operations
     N_IDX,
     N_CALL,
-    N_DOT,
+    N_FIELD,
 
     // Statements
     N_FN_DEF,
@@ -103,16 +103,16 @@ typedef struct Node {
         uint64_t imm; // N_IMM
         double fp;    // N_FP
         struct { char *str; size_t len; }; // N_STR
-        Vec *inits; /* of 'Node *' with k = N_INIT */ // N_ARR
-        struct { uint64_t init_offset; struct Node *init_val; }; // N_INIT
+        Vec *inits; /* of N_INIT */ // N_ARR
+        struct { struct Node *init_val; uint64_t init_offset; }; // N_INIT
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
         struct { struct Node *global; /* to N_GLOBAL */ int64_t kptr_offset; }; // N_KPTR, N_KVAL
 
         // Operations
-        struct { struct Node *l, *r; };
+        struct { struct Node *l, *r; }; // Unary, binary
         struct { struct Node *arr, *idx; }; // N_IDX
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
-        struct { struct Node *strct; char *field_name; }; // N_DOT
+        struct { struct Node *strct; char *field_name; }; // N_FIELD
 
         // Statements
         struct { char *fn_name; Vec *param_names; struct Node *fn_body; }; // N_FN_DEF

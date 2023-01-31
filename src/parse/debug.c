@@ -19,6 +19,7 @@ static char * AST_NAMES[N_LAST] = {
 static void print_nodes(Node *n, int indent);
 static void print_node(Node *n, int indent);
 static void print_type(Type *t);
+static void print_expr(Node *n);
 
 static void print_struct_fields(Type *t) {
     if (!t->fields) return; // Anonymous
@@ -61,7 +62,13 @@ static void print_type(Type *t) {
     case T_DOUBLE:  printf("double"); break;
     case T_LDOUBLE: printf("ldouble"); break;
     case T_PTR:     print_type(t->ptr); printf("*"); break;
-    case T_ARR:     print_type(t->elem); printf("[%llu]", t->len); break;
+    case T_ARR:
+        print_type(t->elem);
+        printf("[");
+        if (t->len && t->len->k == N_IMM) printf("%llu", t->len->imm);
+        else if (t->len) print_expr(t->len);
+        printf("]");
+        break;
     case T_FN:
         print_type(t->ret);
         printf("(");
@@ -144,9 +151,9 @@ static void print_expr(Node *n) {
         }
         printf(")");
         break;
-    case N_DOT:
+    case N_FIELD:
         print_type(n->t);
-        printf(" ( %s ", n->k == N_DOT ? "." : "->");
+        printf(" ( %s ", n->k == N_FIELD ? "." : "->");
         print_expr(n->strct);
         printf(" ");
         printf("%s )", n->field_name);

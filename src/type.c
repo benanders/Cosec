@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "type.h"
+#include "parse/parse.h"
 
 Type * t_new() {
     Type *t = calloc(1, sizeof(Type));
@@ -38,14 +39,13 @@ Type * t_ptr(Type *base) {
     return t;
 }
 
-Type * t_arr(Type *base, uint64_t len, int is_vla) {
+Type * t_arr(Type *base, struct Node *len) {
     Type *t = t_new();
     t->k = T_ARR;
     t->elem = base;
     t->len = len;
-    t->is_vla = is_vla;
-    if (len != NO_ARR_LEN) {
-        t->size = t->elem->size * len;
+    if (len->k == N_IMM) {
+        t->size = t->elem->size * len->imm;
     }
     t->align = 8;
     return t;
@@ -118,9 +118,13 @@ int is_char_arr(Type *t) {
     return t->k == T_ARR && t->elem->k == T_CHAR;
 }
 
+int is_vla(Type *t) {
+    return t->k == T_ARR && t->len && t->len->k != N_IMM;
+}
+
 int is_incomplete(Type *t) {
     return t->k == T_VOID ||
-           (t->k == T_ARR && t->len == NO_ARR_LEN && !t->is_vla) ||
+           (t->k == T_ARR && !t->len) ||
            ((t->k == T_STRUCT || t->k == T_UNION) && !t->fields);
 }
 

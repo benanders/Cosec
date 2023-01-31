@@ -475,19 +475,23 @@ t_err:
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
 static Node * parse_expr(Scope *s);
-static int    try_calc_int_expr(Node *e, int64_t *val);
+
+static int try_calc_int_expr(Node *e, int64_t *val);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
-    int64_t len = NO_ARR_LEN;
-    int is_vla = 0;
+    Node *len = NULL;
     if (!next_tk_opt(s->l, ']')) {
-        Node *num = parse_expr(s);
-        if (!try_calc_int_expr(num, &len)) {
-            is_vla = 1;
-        }
-        if (!is_vla && len < 0) {
-            error_at(num->tk, "cannot have array with negative size ('%ld')", len);
+        Node *n = parse_expr(s);
+        int64_t i;
+        if (!try_calc_int_expr(n, &i)) {
+            len = n; // VLA
+        } else if (i < 0) {
+            error_at(n->tk, "cannot have array with negative size ('%ld')", i);
+        } else {
+            len = node(N_IMM, n->tk);
+            len->t = t_num(T_LLONG, 1);
+            len->imm = i;
         }
         expect_tk(s->l, ']');
     }
@@ -499,7 +503,7 @@ static Type * parse_array_declarator(Scope *s, Type *base) {
     if (is_incomplete(t)) {
         error_at(err, "cannot have array of elements with incomplete type");
     }
-    return t_arr(t, len, is_vla);
+    return t_arr(t, len);
 }
 
 static Type * parse_fn_declarator_param(Scope *s, Token **name) {
@@ -691,31 +695,34 @@ static Node * discharge(Node *l) {
 
 static Node * parse_operand(Scope *s) {
     Node *n;
-    Token *t = next_tk(s->l);
-    switch (t->k) {
+    Token *tk = next_tk(s->l);
+    switch (tk->k) {
     case TK_NUM:
-        n = parse_num(t);
+        n = parse_num(tk);
         break;
     case TK_CH:
-        n = node(N_IMM, t);
+        n = node(N_IMM, tk);
         n->t = t_num(T_CHAR, 0);
-        n->imm = t->ch;
+        n->imm = tk->ch;
         break;
     case TK_STR:
-        n = node(N_STR, t);
-        n->t = t_arr(t_num(T_CHAR, 0), t->len, 0);
-        n->str = t->s;
-        n->len = t->len;
+        n = node(N_STR, tk);
+        Node *len = node(N_IMM, tk);
+        len->t = t_num(T_LLONG, 1);
+        len->imm = tk->len;
+        n->t = t_arr(t_num(T_CHAR, 0), len);
+        n->str = tk->s;
+        n->len = tk->len;
         break;
     case TK_IDENT:
-        n = find_var(s, t->s);
-        if (!n) error_at(t, "undeclared identifier '%s'", t->s);
+        n = find_var(s, tk->s);
+        if (!n) error_at(tk, "undeclared identifier '%s'", tk->s);
         break;
     case '(':
         n = parse_subexpr(s, PREC_MIN);
         expect_tk(s->l, ')');
         break;
-    default: error_at(t, "expected expression");
+    default: error_at(tk, "expected expression");
     }
     return n;
 }
@@ -803,7 +810,7 @@ static Node * parse_struct_field_access(Scope *s, Node *l, Token *op) {
                  l->t->k == T_STRUCT ? "struct" : "union");
     }
     Field *f = vec_get(l->t->fields, f_idx);
-    Node *n = node(N_DOT, op);
+    Node *n = node(N_FIELD, op);
     n->t = f->t;
     n->strct = l;
     n->field_name = name->s;
@@ -1319,7 +1326,7 @@ static Node * eval_const_expr(Node *e, Token **err) {
         n = l;
         n->kptr_offset += (int64_t) (r->imm * n->t->size);
         break;
-    case N_DOT:
+    case N_FIELD:
         l = eval_const_expr(e->strct, err);
         if (!l) goto err;
         if (l->k != N_KVAL) goto err;
@@ -1645,6 +1652,7 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
 
 static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
     assert(is_char_arr(t));
+    assert(!is_vla(t));
     Token *str = next_tk_opt(s->l, TK_STR);
     if (!str && peek_tk_is(s->l, '{') && peek2_tk_is(s->l, TK_STR)) {
         next_tk(s->l);
@@ -1654,14 +1662,16 @@ static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
     if (!str) {
         return; // Parse as normal array
     }
-    if (t->len == NO_ARR_LEN) {
-        t->len = str->len;
-        t->size = t->len * t->elem->size;
+    if (!t->len) {
+        t->len = node(N_IMM, NULL);
+        t->len->t = t_num(T_LLONG, 1);
+        t->len->imm = str->len;
+        t->size = t->len->imm * t->elem->size;
     }
-    if (t->len < str->len) {
+    if (t->len->imm < str->len) {
         warning_at(str, "initializer string is too long");
     }
-    for (size_t i = 0; i < t->len || i < str->len; i++) {
+    for (size_t i = 0; i < t->len->imm || i < str->len; i++) {
         Node *ch = node(N_IMM, str);
         ch->t = t->elem;
         ch->imm = i < str->len ? (uint64_t) str->s[i] : 0;
@@ -1694,7 +1704,7 @@ static size_t parse_array_designator(Scope *s, Type *t) {
     expect_tk(s->l, '[');
     Node *e = parse_expr(s);
     int64_t desg = calc_int_expr(e);
-    if (desg < 0 || (uint64_t) desg >= t->len) {
+    if (desg < 0 || (t->len && (uint64_t) desg >= t->len->imm)) {
         error_at(e->tk, "array designator index '%llu' exceeds array bounds", desg);
     }
     expect_tk(s->l, ']');
@@ -1704,10 +1714,11 @@ static size_t parse_array_designator(Scope *s, Type *t) {
 
 static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     assert(t->k == T_ARR);
+    assert(!is_vla(t));
     int has_brace = next_tk_opt(s->l, '{') != NULL;
     size_t idx = 0;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
-        if (!has_brace && t->len != NO_ARR_LEN && idx >= t->len) {
+        if (!has_brace && t->len && idx >= t->len->imm) {
             break;
         }
         if (peek_tk_is(s->l, '[') && !has_brace && !designated) {
@@ -1717,7 +1728,7 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
             idx = parse_array_designator(s, t);
             designated = 1;
         }
-        int excess = t->len != NO_ARR_LEN && idx >= t->len;
+        int excess = t->len && idx >= t->len->imm;
         if (excess) {
             warning_at(peek_tk(s->l), "excess elements in array initializer");
         }
@@ -1729,9 +1740,11 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
     if (has_brace) {
         expect_tk(s->l, '}');
     }
-    if (t->len == NO_ARR_LEN) {
-        t->len = idx;
-        t->size = t->len * t->elem->size;
+    if (!t->len) {
+        t->len = node(N_IMM, NULL);
+        t->len->t = t_num(T_LLONG, 1);
+        t->len->imm = idx;
+        t->size = t->len->imm * t->elem->size;
     }
 }
 
@@ -1788,7 +1801,10 @@ static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, in
     } else if (t->k == T_STRUCT || t->k == T_UNION) {
         parse_struct_init(s, inits, t, offset, designated);
     } else { // Everything else, e.g., int a = {3}
-        Type *arr_t = t_arr(t, 1, 0);
+        Node *len = node(N_IMM, peek_tk(s->l));
+        len->t = t_num(T_LLONG, 1);
+        len->imm = 1;
+        Type *arr_t = t_arr(t, len);
         parse_array_init(s, inits, arr_t, offset, designated);
     }
 }
@@ -1804,6 +1820,9 @@ static Node * parse_init_list(Scope *s, Type *t) {
 static Node * parse_decl_init(Scope *s, Type *t) {
     if (t->linkage == L_EXTERN || t->k == T_FN) {
         error_at(peek_tk(s->l), "illegal initializer");
+    }
+    if (is_vla(t)) {
+        error_at(peek_tk(s->l), "cannot initialize variable-length array");
     }
     Node *init;
     if (peek_tk_is(s->l, '{') || is_char_arr(t)) {
