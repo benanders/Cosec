@@ -106,7 +106,7 @@ typedef struct Node {
         Vec *inits; /* of 'Node *' with k = N_INIT */ // N_ARR
         struct { uint64_t init_offset; struct Node *init_val; }; // N_INIT
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
-        struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
+        struct { struct Node *global; /* to N_GLOBAL */ int64_t kptr_offset; }; // N_KPTR, N_KVAL
 
         // Operations
         struct { struct Node *l, *r; };

@@ -118,10 +118,10 @@ static void print_expr(Node *n) {
         print_type(n->t);
         assert(n->global->k == N_GLOBAL);
         printf(" &%s", n->global->var_name);
-        if (n->offset > 0) {
-            printf(" + %llu", n->offset);
-        } else if (n->offset < 0) {
-            printf(" - %llu", -n->offset);
+        if (n->kptr_offset > 0) {
+            printf(" + %llu", n->kptr_offset);
+        } else if (n->kptr_offset < 0) {
+            printf(" - %llu", -n->kptr_offset);
         }
         break;
 

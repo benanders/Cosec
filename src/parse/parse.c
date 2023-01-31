@@ -1077,139 +1077,147 @@ static Node * parse_expr_no_commas(Scope *s) {
 
 // ---- Constant Expressions --------------------------------------------------
 
-#define CALC_UNOP_INT(op)          \
-    l = calc_const_expr_raw(e->l); \
-    if (l->k == N_IMM) {           \
-        n = node(N_IMM, e->tk);    \
-        n->t = e->t;               \
-        n->imm = op l->imm;        \
-    } else {                       \
-        goto err;                  \
-    }                              \
+#define CALC_UNOP_INT(op)               \
+    l = calc_const_expr_raw(e->l, err); \
+    if (!l) goto err;                   \
+    if (l->k == N_IMM) {                \
+        n->k = N_IMM;                   \
+        n->imm = op l->imm;             \
+    } else {                            \
+        goto err;                       \
+    }                                   \
     break;
 
-#define CALC_UNOP_ARITH(op)        \
-    l = calc_const_expr_raw(e->l); \
-    if (l->k == N_IMM) {           \
-        n = node(N_IMM, e->tk);    \
-        n->t = e->t;               \
-        n->imm = op l->imm;        \
-    } else if (l->k == N_FP) {     \
-        n = node(N_FP, e->tk);     \
-        n->t = e->t;               \
-        n->fp = op l->fp;          \
-    } else {                       \
-        goto err;                  \
-    }                              \
+#define CALC_UNOP_ARITH(op)             \
+    l = calc_const_expr_raw(e->l, err); \
+    if (!l) goto err;                   \
+    if (l->k == N_IMM) {                \
+        n->k = N_IMM;                   \
+        n->imm = op l->imm;             \
+    } else if (l->k == N_FP) {          \
+        n->k = N_FP;                    \
+        n->fp = op l->fp;               \
+    } else {                            \
+        goto err;                       \
+    }                                   \
     break;
 
-#define CALC_BINOP_INT(op)                                        \
-    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
-    if (l->k == N_IMM && r->k == N_IMM) {                         \
-        n = node(N_IMM, e->tk);                                   \
-        n->t = e->t;                                              \
-        n->imm = l->imm op r->imm;                                \
-    } else {                                                      \
-        goto err;                                                 \
-    }                                                             \
+#define CALC_BINOP_INT(op)                \
+    l = calc_const_expr_raw(e->l, err);   \
+    if (!l) goto err;                     \
+    r = calc_const_expr_raw(e->r, err);   \
+    if (!r) goto err;                     \
+    if (l->k == N_IMM && r->k == N_IMM) { \
+        n->k = N_IMM;                     \
+        n->imm = l->imm op r->imm;        \
+    } else {                              \
+        goto err;                         \
+    }                                     \
     break;
 
-#define CALC_BINOP_ARITH(op)                                      \
-    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
-    if (l->k == N_IMM && r->k == N_IMM) {                         \
-        n = node(N_IMM, e->tk);                                   \
-        n->t = e->t;                                              \
-        n->imm = l->imm op r->imm;                                \
-    } else if (l->k == N_FP && r->k == N_FP) {                    \
-        n = node(N_FP, e->tk);                                    \
-        n->t = e->t;                                              \
-        n->fp = l->fp op r->fp;                                   \
-    } else {                                                      \
-        goto err;                                                 \
-    }                                                             \
+#define CALC_BINOP_ARITH(op)                   \
+    l = calc_const_expr_raw(e->l, err);        \
+    if (!l) goto err;                          \
+    r = calc_const_expr_raw(e->r, err);        \
+    if (!r) goto err;                          \
+    if (l->k == N_IMM && r->k == N_IMM) {      \
+        n->k = N_IMM;                          \
+        n->imm = l->imm op r->imm;             \
+    } else if (l->k == N_FP && r->k == N_FP) { \
+        n->k = N_FP;                           \
+        n->fp = l->fp op r->fp;                \
+    } else {                                   \
+        goto err;                              \
+    }                                          \
     break;
 
-#define CALC_BINOP_ARITH_PTR(op)                                  \
-    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
-    if (l->k == N_IMM && r->k == N_IMM) {                         \
-        n = node(N_IMM, e->tk);                                   \
-        n->t = e->t;                                              \
-        n->imm = l->imm op r->imm;                                \
-    } else if (l->k == N_FP && r->k == N_FP) {                    \
-        n = node(N_FP, e->tk);                                    \
-        n->t = e->t;                                              \
-        n->fp = l->fp op r->fp;                                   \
-    } else if (l->k == N_KPTR && r->k == N_IMM) {                 \
-        n = node(N_KPTR, e->tk);                                  \
-        n->t = e->t;                                              \
-        n->global = l->global;                                    \
-        n->offset = l->offset op (r->imm * n->t->ptr->size);      \
-    } else if (l->k == N_IMM && r->k == N_KPTR) {                 \
-        n = node(N_KPTR, e->tk);                                  \
-        n->t = e->t;                                              \
-        n->global = r->global;                                    \
-        n->offset = r->offset op (l->imm * n->t->ptr->size);      \
-    } else {                                                      \
-        goto err;                                                 \
-    }                                                             \
-    break;
-
-#define CALC_BINOP_EQ(op)                                              \
-    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r);      \
+#define CALC_BINOP_ARITH_PTR(op)                                       \
+    l = calc_const_expr_raw(e->l, err);                                \
+    if (!l) goto err;                                                  \
+    r = calc_const_expr_raw(e->r, err);                                \
+    if (!r) goto err;                                                  \
     if (l->k == N_IMM && r->k == N_IMM) {                              \
-        n = node(N_IMM, e->tk);                                        \
-        n->t = e->t;                                                   \
-        n->imm = op (l->imm == r->imm);                                \
+        n->k = N_IMM;                                                  \
+        n->imm = l->imm op r->imm;                                     \
     } else if (l->k == N_FP && r->k == N_FP) {                         \
-        n = node(N_FP, e->tk);                                         \
-        n->t = e->t;                                                   \
-        n->fp = op (l->fp == r->fp);                                   \
-    } else if (l->k == N_KPTR && r->k == N_KPTR) {                     \
-        n = node(N_IMM, e->tk);                                        \
-        n->t = e->t;                                                   \
-        n->fp = op (l->global == r->global && l->offset == r->offset); \
-    } else if ((l->k == N_KPTR && r->k == N_IMM && r->imm == 0) ||     \
-               (r->k == N_KPTR && l->k == N_IMM && l->imm == 0)) {     \
-        n = node(N_IMM, e->tk);                                        \
-        n->t = e->t;                                                   \
-        n->imm = op 0;                                                 \
+        n->k = N_FP;                                                   \
+        n->fp = l->fp op r->fp;                                        \
+    } else if (l->k == N_KPTR && r->k == N_IMM) {                      \
+        n->k = N_KPTR;                                                 \
+        n->global = l->global;                                         \
+        n->kptr_offset = l->kptr_offset op (r->imm * e->t->ptr->size); \
+    } else if (l->k == N_IMM && r->k == N_KPTR) {                      \
+        n->k = N_KPTR;                                                 \
+        n->global = r->global;                                         \
+        n->kptr_offset = r->kptr_offset op (l->imm * e->t->ptr->size); \
     } else {                                                           \
         goto err;                                                      \
     }                                                                  \
     break;
 
-#define CALC_BINOP_REL(op)                                        \
-    l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r); \
-    if (l->k == N_IMM && r->k == N_IMM) {                         \
-        n = node(N_IMM, e->tk);                                   \
-        n->t = e->t;                                              \
-        n->imm = l->imm op r->imm;                                \
-    } else if (l->k == N_FP && r->k == N_FP) {                    \
-        n = node(N_IMM, e->tk);                                   \
-        n->t = e->t;                                              \
-        n->imm = l->fp op r->fp;                                  \
-    } else {                                                      \
-        goto err;                                                 \
-    }                                                             \
+#define CALC_BINOP_EQ(op)                                          \
+    l = calc_const_expr_raw(e->l, err);                            \
+    if (!l) goto err;                                              \
+    r = calc_const_expr_raw(e->r, err);                            \
+    if (!r) goto err;                                              \
+    if (l->k == N_IMM && r->k == N_IMM) {                          \
+        n->k = N_IMM;                                              \
+        n->imm = op (l->imm == r->imm);                            \
+    } else if (l->k == N_FP && r->k == N_FP) {                     \
+        n->k = N_IMM;                                              \
+        n->imm = op (l->fp == r->fp);                              \
+    } else if (l->k == N_KPTR && r->k == N_KPTR) {                 \
+        n->k = N_IMM;                                              \
+        n->imm = op (l->global == r->global &&                     \
+                     l->kptr_offset == r->kptr_offset);            \
+    } else if ((l->k == N_KPTR && r->k == N_IMM && r->imm == 0) || \
+               (r->k == N_KPTR && l->k == N_IMM && l->imm == 0)) { \
+        n->k = N_IMM;                                              \
+        n->imm = op 0;                                             \
+    } else {                                                       \
+        goto err;                                                  \
+    }                                                              \
     break;
 
-static Node * calc_const_expr(Node *e);
+#define CALC_BINOP_REL(op)                     \
+    l = calc_const_expr_raw(e->l, err);        \
+    if (!l) goto err;                          \
+    r = calc_const_expr_raw(e->r, err);        \
+    if (!r) goto err;                          \
+    if (l->k == N_IMM && r->k == N_IMM) {      \
+        n->k = N_IMM;                          \
+        n->imm = l->imm op r->imm;             \
+    } else if (l->k == N_FP && r->k == N_FP) { \
+        n->k = N_IMM;                          \
+        n->imm = l->fp op r->fp;               \
+    } else {                                   \
+        goto err;                              \
+    }                                          \
+    break;
 
-static Node * calc_const_expr_raw(Node *e) {
-    Node *n, *cond, *l, *r;
+static Node * calc_const_expr_raw(Node *e, Token **err) {
+    Node *cond, *l, *r;
+    Node *n = node(e->k, e->tk);
+    n->t = e->t;
     switch (e->k) {
         // Constants
-    case N_IMM: case N_FP: case N_KPTR: n = e; break;
+    case N_IMM: case N_FP: case N_KPTR: *n = *e; break;
     case N_ARR:
-        n = e;
-        for (size_t i = 0; i < vec_len(n->inits); i++) {
-            Node *init = vec_get(e->inits, i);
-            init->init_val = calc_const_expr(init->init_val);
+        n->inits = vec_new();
+        for (size_t i = 0; i < vec_len(e->inits); i++) {
+            Node *v = vec_get(e->inits, i);
+            assert(v->k == N_INIT);
+            Node *k = calc_const_expr_raw(v->init_val, err);
+            if (!k) goto err;
+            if (k->k == N_KVAL) goto err;
+            Node *init = node(N_INIT, v->tk);
+            init->init_offset = v->init_offset;
+            init->init_val = k;
+            vec_push(n->inits, init);
         }
         break;
     case N_GLOBAL:
-        n = node(N_KVAL, e->tk);
-        n->t = e->t;
+        n->k = N_KVAL;
         n->global = e;
         break;
 
@@ -1233,16 +1241,22 @@ static Node * calc_const_expr_raw(Node *e) {
     case N_LOG_AND: CALC_BINOP_INT(&&)
     case N_LOG_OR:  CALC_BINOP_INT(||)
     case N_COMMA:
-        l = calc_const_expr_raw(e->l), r = calc_const_expr_raw(e->r);
+        l = calc_const_expr_raw(e->l, err);
+        if (!l) goto err;
+        r = calc_const_expr_raw(e->r, err);
+        if (!r) goto err;
         n = r;
         break;
 
         // Ternary operation
     case N_TERNARY:
-        cond = calc_const_expr_raw(e->if_cond);
-        l = calc_const_expr_raw(e->if_body);
-        r = calc_const_expr_raw(e->if_else);
+        cond = calc_const_expr_raw(e->if_cond, err);
+        if (!cond) goto err;
         if (cond->k != N_IMM) goto err;
+        l = calc_const_expr_raw(e->if_body, err);
+        if (!l) goto err;
+        r = calc_const_expr_raw(e->if_else, err);
+        if (!r) goto err;
         n = cond->imm ? l : r;
         break;
 
@@ -1251,25 +1265,22 @@ static Node * calc_const_expr_raw(Node *e) {
     case N_BIT_NOT: CALC_UNOP_INT(~)
     case N_LOG_NOT: CALC_UNOP_INT(!)
     case N_ADDR:
-        l = calc_const_expr_raw(e->l);
+        l = calc_const_expr_raw(e->l, err);
+        if (!l) goto err;
         if (l->k != N_KVAL) goto err;
-        n = node(N_KPTR, e->tk);
-        n->t = e->t;
-        n->global = l->global;
+        n = l;
+        n->k = N_KPTR;
         break;
     case N_DEREF:
-        l = calc_const_expr_raw(e->l);
+        l = calc_const_expr_raw(e->l, err);
+        if (!l) goto err;
         if (l->k != N_KPTR) goto err;
-        n = node(N_KVAL, e->tk);
-        n->t = e->t;
-        n->global = l->global;
-        n->offset = l->offset;
+        n = l;
+        n->k = N_KVAL;
         break;
     case N_CONV:
-        l = calc_const_expr_raw(e->l);
-        n = node(l->k, e->tk);
-        *n = *l;
-        n->t = e->t;
+        l = calc_const_expr_raw(e->l, err);
+        if (!l) goto err;
         if (is_fp(n->t) && l->k == N_IMM) { // int -> float
             n->k = N_FP;
             n->fp = (double) l->imm;
@@ -1279,55 +1290,71 @@ static Node * calc_const_expr_raw(Node *e) {
         } else if (is_int(n->t) && l->k == N_IMM) { // int -> int
             n->k = N_IMM;
             size_t b = n->t->size * 8; // Bits
-            n->imm = l->imm & (((int64_t) 1 << b) - 1); // Truncate to 'dst'
+            n->imm = l->imm & (((int64_t) 1 << b) - 1); // Truncate
             if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (b - 1)))) {
-                n->imm |= ~(((int64_t) 1 << b) - 1); // Sext if sign bit set
+                n->imm |= ~(((int64_t) 1 << b) - 1); // Sign extend
             }
+        } else { // Direct conversion
+            *n = *l;
+            n->t = e->t;
         }
         break;
 
         // Postfix operations
     case N_IDX:
-        l = calc_const_expr_raw(e->arr), r = calc_const_expr_raw(e->idx);
-        if (r->k != N_IMM) goto err;
+        l = calc_const_expr_raw(e->if_body, err);
+        if (!l) goto err;
         if (l->k != N_KVAL && l->k != N_KPTR) goto err;
-        n = node(N_KVAL, e->tk);
-        n->t = e->t;
-        n->global = l->global;
-        n->offset = l->offset + (int64_t) (r->imm * n->t->size);
+        r = calc_const_expr_raw(e->if_else, err);
+        if (!r) goto err;
+        if (r->k != N_IMM) goto err;
+        n = l;
+        n->kptr_offset += (int64_t) (r->imm * n->t->size);
         break;
     case N_DOT:
-        l = calc_const_expr_raw(e->strct);
+        l = calc_const_expr_raw(e->if_body, err);
+        if (!l) goto err;
         if (l->k != N_KVAL) goto err;
         size_t f_idx = find_field(l->t, e->field_name);
         assert(f_idx != NOT_FOUND);
         Field *f = vec_get(l->t->fields, f_idx);
-        n = node(N_KVAL, e->tk);
-        n->t = e->t;
-        n->global = l->global;
-        n->offset = l->offset + (int64_t) f->offset;
+        e = l;
+        e->kptr_offset += (int64_t) f->offset;
         break;
     default: goto err;
     }
     return n;
 err:
-    error_at(e->tk, "expected constant expression");
+    if (err && !*err) *err = e->tk;
+    return NULL;
 }
 
 static Node * calc_const_expr(Node *e) {
-    Node *n = calc_const_expr_raw(e);
+    Token *err;
+    Node *n = calc_const_expr_raw(e, &err);
+    if (!n) {
+        error_at(err, "expected constant expression");
+    }
     if (n->k == N_KVAL) {
-        error_at(e->tk, "expected constant expression");
+        error_at(n->tk, "expected constant expression");
     }
     return n;
 }
 
 static int64_t calc_int_expr(Node *e) {
-    Node *n = calc_const_expr_raw(e);
+    Node *n = calc_const_expr(e);
     if (n->k != N_IMM) {
-        error_at(e->tk, "expected constant integer expression");
+        error_at(n->tk, "expected constant integer expression");
     }
     return (int64_t) n->imm;
+}
+
+static Node * try_calc_int_expr(Node *e) {
+    Node *n = calc_const_expr_raw(e, NULL);
+    if (n && n->k != N_IMM) {
+        error_at(n->tk, "expected constant integer expression");
+    }
+    return n;
 }
 
 
