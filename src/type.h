@@ -56,7 +56,7 @@ enum { // Linkage
 typedef struct {
     struct Type *t;
     char *name;
-    size_t offset; // 0 for T_UNION; enum const value for T_ENUM
+    uint64_t offset; // 0 for T_UNION; enum const value for T_ENUM
 } Field;
 
 typedef struct Type {
@@ -82,7 +82,7 @@ Type * t_struct();
 Type * t_union();
 Type * t_enum();
 
-Field * new_field(Type *t, char *name, size_t offset);
+Field * new_field(Type *t, char *name, uint64_t offset);
 size_t  find_field(Type *t, char *name);
 
 int is_int(Type *t);

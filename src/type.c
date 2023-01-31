@@ -75,7 +75,7 @@ Type * t_enum() {
     return t;
 }
 
-Field * new_field(Type *t, char *name, size_t offset) {
+Field * new_field(Type *t, char *name, uint64_t offset) {
     Field *f = malloc(sizeof(Field));
     f->t = t;
     f->name = name;

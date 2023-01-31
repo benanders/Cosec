@@ -1193,12 +1193,20 @@ static Node * parse_expr_no_commas(Scope *s) {
     }                                                             \
     break;
 
+static Node * calc_const_expr(Node *e);
+
 static Node * calc_const_expr_raw(Node *e) {
     Node *n, *cond, *l, *r;
     switch (e->k) {
         // Constants
     case N_IMM: case N_FP: case N_KPTR: n = e; break;
-    case N_ARR: TODO(); // TODO: make new N_ARR with calc_const_expr on each init var
+    case N_ARR:
+        n = e;
+        for (size_t i = 0; i < vec_len(n->inits); i++) {
+            Node *init = vec_get(e->inits, i);
+            init->init_val = calc_const_expr(init->init_val);
+        }
+        break;
     case N_GLOBAL:
         n = node(N_KVAL, e->tk);
         n->t = e->t;
