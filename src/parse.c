@@ -4,7 +4,8 @@
 #include <limits.h>
 
 #include "parse.h"
-#include "../err.h"
+#include "cpp.h"
+#include "err.h"
 
 enum {
     SCOPE_FILE,
@@ -311,7 +312,7 @@ static void parse_struct_fields(Scope *s, Type *t) {
             if (t->k == T_STRUCT) offset = pad(offset, ft->align);
             vec_push(fields, new_field(ft, name->s, offset));
             if (t->k == T_STRUCT) offset += ft->size;
-            if (!next_tk_opt(s->l, ',')) {
+            if (!next_tk_is(s->l, ',')) {
                 break;
             }
         }
@@ -330,7 +331,7 @@ static void parse_enum_consts(Scope *s, Type *enum_t) {
     int64_t val = 0;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
         Token *name = expect_tk(s->l, TK_IDENT);
-        if (next_tk_opt(s->l, '=')) {
+        if (next_tk_is(s->l, '=')) {
             Node *e = parse_expr_no_commas(s);
             val = calc_int_expr(e);
         }
@@ -341,7 +342,7 @@ static void parse_enum_consts(Scope *s, Type *enum_t) {
         vec_push(fields, new_field(t, name->s, val));
         def_enum_const(s, name, t, val);
         val++;
-        if (!next_tk_opt(s->l, ',')) {
+        if (!next_tk_is(s->l, ',')) {
             break;
         }
     }
@@ -481,7 +482,7 @@ static int try_calc_int_expr(Node *e, int64_t *val);
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->l, '[');
     Node *len = NULL;
-    if (!next_tk_opt(s->l, ']')) {
+    if (!next_tk_is(s->l, ']')) {
         Node *n = parse_expr(s);
         int64_t i;
         if (!try_calc_int_expr(n, &i)) {
@@ -543,7 +544,7 @@ static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
         if (param_names) {
             vec_push(param_names, name); // Name may be NULL
         }
-        if (!next_tk_opt(s->l, ',')) {
+        if (!next_tk_is(s->l, ',')) {
             break;
         }
     }
@@ -562,17 +563,17 @@ static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names) {
 }
 
 static void skip_type_quals(Scope *s) {
-    while (next_tk_opt(s->l, TK_CONST) ||
-           next_tk_opt(s->l, TK_RESTRICT) ||
-           next_tk_opt(s->l, TK_VOLATILE));
+    while (next_tk_is(s->l, TK_CONST) ||
+           next_tk_is(s->l, TK_RESTRICT) ||
+           next_tk_is(s->l, TK_VOLATILE));
 }
 
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names) {
-    if (next_tk_opt(s->l, '*')) {
+    if (next_tk_is(s->l, '*')) {
         skip_type_quals(s);
         return parse_declarator(s, t_ptr(base), name, param_names);
     }
-    if (next_tk_opt(s->l, '(')) { // Either sub-declarator or fn parameters
+    if (next_tk_is(s->l, '(')) { // Either sub-declarator or fn parameters
         if (is_type(s, peek_tk(s->l)) || peek_tk_is(s->l, ')')) { // Function
             // An empty '()' is a function pointer, not a no-op sub-declarator
             return parse_fn_declarator(s, base, param_names);
@@ -740,7 +741,8 @@ static void ensure_ptr(Node *n) {
 }
 
 static void ensure_lvalue(Node *n) {
-    if (n->k != N_LOCAL && n->k != N_GLOBAL && n->k != N_DEREF && n->k != N_IDX)
+    if (n->k != N_LOCAL && n->k != N_GLOBAL &&
+            n->k != N_DEREF && n->k != N_IDX && n->k != N_FIELD)
         error_at(n->tk, "expression is not assignable");
     if (n->t->k == T_ARR)  error_at(n->tk, "array type is not assignable");
     if (n->t->k == T_FN)   error_at(n->tk, "function type is not assignable");
@@ -784,7 +786,7 @@ static Node * parse_call(Scope *s, Node *l, Token *op) {
         Type *expected = vec_get(fn_t->params, vec_len(args));
         arg = conv_to(arg, expected);
         vec_push(args, arg);
-        if (!next_tk_opt(s->l, ',')) {
+        if (!next_tk_is(s->l, ',')) {
             break;
         }
     }
@@ -1653,7 +1655,7 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
 static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
     assert(is_char_arr(t));
     assert(!is_vla(t));
-    Token *str = next_tk_opt(s->l, TK_STR);
+    Token *str = next_tk_is(s->l, TK_STR);
     if (!str && peek_tk_is(s->l, '{') && peek2_tk_is(s->l, TK_STR)) {
         next_tk(s->l);
         str = next_tk(s->l);
@@ -1715,7 +1717,7 @@ static size_t parse_array_designator(Scope *s, Type *t) {
 static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     assert(t->k == T_ARR);
     assert(!is_vla(t));
-    int has_brace = next_tk_opt(s->l, '{') != NULL;
+    int has_brace = next_tk_is(s->l, '{') != NULL;
     size_t idx = 0;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
         if (!has_brace && t->len && idx >= t->len->imm) {
@@ -1762,7 +1764,7 @@ static size_t parse_struct_designator(Scope *s, Type *t) {
 
 static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
-    int has_brace = next_tk_opt(s->l, '{') != NULL;
+    int has_brace = next_tk_is(s->l, '{') != NULL;
     size_t idx = 0;
     while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
         if (!has_brace && idx >= vec_len(t->fields)) {
@@ -1840,7 +1842,7 @@ static Node * parse_decl_init(Scope *s, Type *t) {
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     Node *var = def_var(s, name, t);
     Node *init = NULL;
-    if (next_tk_opt(s->l, '=')) {
+    if (next_tk_is(s->l, '=')) {
         init = parse_decl_init(s, t);
     }
     if (is_incomplete(t)) {
@@ -1878,7 +1880,7 @@ static Node * parse_init_decl(Scope *s, Type *base, int sclass) {
 static Node * parse_decl(Scope *s) {
     int sclass;
     Type *base = parse_decl_specs(s, &sclass);
-    if (next_tk_opt(s->l, ';')) {
+    if (next_tk_is(s->l, ';')) {
         return NULL;
     }
     Node *head = NULL;
@@ -1889,7 +1891,7 @@ static Node * parse_decl(Scope *s) {
             return head;
         }
         while (*cur) cur = &(*cur)->next;
-        if (!next_tk_opt(s->l, ',')) {
+        if (!next_tk_is(s->l, ',')) {
             break;
         }
     }
@@ -1907,7 +1909,7 @@ Node * parse(char *path) {
     file_scope.tags = map_new();
     Node *head = NULL;
     Node **cur = &head;
-    while (!next_tk_opt(l, TK_EOF)) {
+    while (!next_tk_is(l, TK_EOF)) {
         *cur = parse_decl(&file_scope);
         while (*cur) cur = &(*cur)->next;
     }

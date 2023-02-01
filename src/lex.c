@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "lex.h"
-#include "../err.h"
+#include "err.h"
 
 #define FIRST_KEYWORD  TK_VOID
 
@@ -20,6 +20,7 @@ static char *KEYWORDS[] = {
 };
 
 static Token *SPACE_TK = &(Token) { .k = TK_SPACE };
+static Token *NEWLINE_TK = &(Token) { .k = TK_NEWLINE };
 
 Lexer * new_lexer(File *f) {
     Lexer *l = calloc(1, sizeof(Lexer));
@@ -59,21 +60,21 @@ static void skip_block_comment(Lexer *l) {
 }
 
 static int skip_space(Lexer *l) {
-    int c = next_ch(l->f);
+    int c = peek_ch(l->f);
     if (c == EOF) {
         return 0;
-    } else if (isspace(c)) {
+    } else if (isspace(c) && c != '\n') {
+        next_ch(l->f);
         return 1;
     } else if (c == '/') {
-        if (next_ch_is(l->f, '/')) {
+        if (peek2_ch(l->f) == '/') {
             skip_line_comment(l);
             return 1;
-        } else if (next_ch_is(l->f, '*')) {
+        } else if (peek2_ch(l->f) == '*') {
             skip_block_comment(l);
             return 1;
         }
     }
-    undo_ch(l->f, c);
     return 0;
 }
 
@@ -255,13 +256,19 @@ static Token * lex_sym(Lexer *l) {
     return t;
 }
 
-static Token * lex_tk(Lexer *l) {
+
+// ---- Tokens ----------------------------------------------------------------
+
+static Token * lex_raw(Lexer *l) {
     if (skip_spaces(l)) {
         return SPACE_TK;
     }
     int c = peek_ch(l->f);
     if (c == EOF) {
         return new_tk(l, TK_EOF);
+    } else if (c == '\n') {
+        next_ch(l->f);
+        return NEWLINE_TK;
     } else if (isalpha(c) || c == '_') {
         return lex_ident(l);
     } else if (isdigit(c) || (c == '.' && isdigit(peek2_ch(l->f)))) {
@@ -275,18 +282,17 @@ static Token * lex_tk(Lexer *l) {
     }
 }
 
-
-// ---- Tokens ----------------------------------------------------------------
-
-Token * next_tk(Lexer *l) {
+Token * lex_tk(Lexer *l) {
     Token *t;
     if (vec_len(l->buf) > 0) {
         t = vec_pop(l->buf);
     } else {
-        t = lex_tk(l);
+        t = lex_raw(l);
         while (t->k == TK_SPACE) {
-            t = lex_tk(l);
+            t = lex_raw(l);
+            t->has_space = 1;
         }
+        t->is_line_start = (t->col == 1);
     }
     return t;
 }
@@ -298,48 +304,7 @@ void undo_tk(Lexer *l, Token *t) {
     vec_push(l->buf, t);
 }
 
-Token * next_tk_opt(Lexer *l, int k) {
-    Token *t = next_tk(l);
-    if (t->k == k) {
-        return t;
-    }
-    undo_tk(l, t);
-    return NULL;
-}
-
-Token * peek_tk(Lexer *l) {
-    Token *t = next_tk(l);
-    undo_tk(l, t);
-    return t;
-}
-
-Token * peek_tk_is(Lexer *l, int k) {
-    Token *t = peek_tk(l);
-    return t->k == k ? t : NULL;
-}
-
-Token * peek2_tk(Lexer *l) {
-    Token *t = next_tk(l);
-    Token *t2 = peek_tk(l);
-    undo_tk(l, t);
-    return t2;
-}
-
-Token * peek2_tk_is(Lexer *l, int k) {
-    Token *t = peek2_tk(l);
-    return t->k == k ? t : NULL;
-}
-
-Token * expect_tk(Lexer *l, int k) {
-    Token *t = next_tk(l);
-    if (t->k != k) {
-        error_at(t, "expected %s, found %s", tk2str(k), token2str(t));
-    } else {
-        return t;
-    }
-}
-
-static char *TKS[] = {
+static char *TKS[TK_LAST - TK_SHL] = {
     "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
     "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->",
     "void", "char", "short", "int", "long", "float", "double", "signed",
@@ -347,9 +312,8 @@ static char *TKS[] = {
     "extern", "register", "inline", "const", "restrict", "volatile", "sizeof",
     "if", "else", "while", "do", "for", "switch", "case", "default", "break",
     "continue", "goto", "return", "number", "character", "string",
-    "identifier", "end of file", "newline", "space",
+    "identifier", "end of file", "space", "newline",
 };
-
 
 char * tk2str(int t) {
     Buf *b = buf_new();

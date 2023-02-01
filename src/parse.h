@@ -2,7 +2,7 @@
 #ifndef COSEC_PARSE_H
 #define COSEC_PARSE_H
 
-#include "../type.h"
+#include "type.h"
 #include "lex.h"
 
 enum { // AST nodes

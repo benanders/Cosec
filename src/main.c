@@ -3,9 +3,9 @@
 #include <string.h>
 
 #include "err.h"
-#include "parse/debug.h"
+#include "debug.h"
 
-#include "parse/parse.h"
+#include "parse.h"
 
 // Compile the generated assembly with (on my macOS machine):
 //   nasm -f macho64 out.s

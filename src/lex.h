@@ -3,7 +3,7 @@
 #define COSEC_LEX_H
 
 #include "file.h"
-#include "../util.h"
+#include "util.h"
 
 enum {
     // Symbols
@@ -82,6 +82,7 @@ enum {
     TK_IDENT,
     TK_EOF,
     TK_SPACE,
+    TK_NEWLINE,
 
     TK_LAST, // For tables indexed by token
 };
@@ -90,6 +91,7 @@ typedef struct {
     int k;
     File *f;
     int line, col;
+    int is_line_start, has_space;
     union {
         struct { char *s; size_t len; }; // TK_IDENT, TK_STR, TK_NUM
         int ch; // TK_CH
@@ -102,15 +104,8 @@ typedef struct {
 } Lexer;
 
 Lexer * new_lexer(File *f);
-
-Token * next_tk(Lexer *l);
+Token * lex_tk(Lexer *l);
 void    undo_tk(Lexer *l, Token *t);
-Token * next_tk_opt(Lexer *l, int k);
-Token * peek_tk(Lexer *l);
-Token * peek_tk_is(Lexer *l, int k);
-Token * peek2_tk(Lexer *l);
-Token * peek2_tk_is(Lexer *l, int k);
-Token * expect_tk(Lexer *l, int k);
 
 char * tk2str(int t);
 char * token2str(Token *t);

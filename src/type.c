@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "type.h"
-#include "parse/parse.h"
+#include "parse.h"
 
 Type * t_new() {
     Type *t = calloc(1, sizeof(Type));
