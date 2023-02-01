@@ -39,9 +39,9 @@ static Token * new_tk(Lexer *l, int k) {
 }
 
 Token * copy_tk(Token *t) {
-    Token *copy = calloc(1, sizeof(Token));
+    Token *copy = malloc(sizeof(Token));
     *copy = *t;
-    return t;
+    return copy;
 }
 
 
@@ -349,7 +349,7 @@ char * token2str(Token *t) {
         case TK_NUM:   buf_printf(b, "number '%s'", t->s); break;
         case TK_CH:    buf_printf(b, "character '%c'", quote_ch((char) t->ch)); break;
         case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->s, t->len)); break;
-        case TK_IDENT: buf_printf(b, "identifier '%s'", t->s); break;
+        case TK_IDENT: buf_printf(b, "'%s'", t->s); break;
         default:       return tk2str(t->k);
     }
     return b->data;

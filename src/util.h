@@ -16,6 +16,7 @@ typedef struct {
 Vec *  vec_new();
 void   vec_push(Vec *v, void *elem);
 void * vec_pop(Vec *v);
+void   vec_remove(Vec *v, size_t i);
 size_t vec_len(Vec *v);
 void * vec_get(Vec *v, size_t i);
 
@@ -43,10 +44,11 @@ void   map_remove(Map *m, char *k);
 typedef Vec Set;
 
 Set * set_new();
+Set * set_copy(Set *s);
 int   set_has(Set *s, char *v);
-void  set_put(Set *s, char *v);
-Set * set_union(Set *a, Set *b);
-Set * set_intersection(Set *a, Set *b);
+void  set_put(Set **s, char *v);
+void  set_union(Set **dst, Set *src);
+void  set_intersection(Set **dst, Set *src);
 
 char * quote_ch(char ch);
 char * quote_str(char *s, size_t len);

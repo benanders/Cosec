@@ -46,9 +46,13 @@ void vec_push(Vec *v, void *elem) {
 void * vec_pop(Vec *v) {
     if (v && v->len > 0) {
         return v->data[--v->len];
-    } else {
-        return NULL;
     }
+    return NULL;
+}
+
+void vec_remove(Vec *v, size_t i) {
+    memcpy(&v->data[i], &v->data[i + 1], sizeof(void *) * (v->len - i - 1));
+    v->len--;
 }
 
 size_t vec_len(Vec *v) {
@@ -59,6 +63,10 @@ size_t vec_len(Vec *v) {
 void * vec_get(Vec *v, size_t i) {
     if (!v) return NULL;
     return v->data[i];
+}
+
+static void vec_empty(Vec *v) {
+    v->len = 0;
 }
 
 
@@ -217,6 +225,11 @@ Set * set_new() {
     return vec_new();
 }
 
+Set * set_copy(Set *s) {
+    if (!s) return NULL;
+    return vec_copy(s);
+}
+
 int set_has(Set *s, char *v) {
     if (!s) return 0;
     for (size_t i = 0; i < vec_len(s); i++) {
@@ -228,32 +241,32 @@ int set_has(Set *s, char *v) {
     return 0;
 }
 
-void set_put(Set *s, char *v) {
-    if (s && !set_has(s, v)) {
-        vec_push(s, v);
+void set_put(Set **s, char *v) {
+    if (!s) return;
+    if (!*s) *s = set_new();
+    if (!set_has(*s, v)) {
+        vec_push(*s, v);
     }
 }
 
-Set * set_union(Set *a, Set *b) {
-    if (!a || !b) return NULL;
-    Set *s = vec_copy(a);
-    for (size_t i = 0; i < vec_len(b); i++) {
-        char *v = vec_get(b, i);
-        set_put(s, v);
+void set_union(Set **dst, Set *src) {
+    if (!dst || !src) return;
+    for (size_t i = 0; i < vec_len(src); i++) {
+        char *v = vec_get(src, i);
+        set_put(dst, v);
     }
-    return s;
 }
 
-Set * set_intersection(Set *a, Set *b) {
-    if (!a || !b) return NULL;
-    Set *s = set_new();
-    for (size_t i = 0; i < vec_len(a); i++) {
-        char *v = vec_get(a, i);
-        if (set_has(b, v)) {
-            vec_push(s, v);
+void set_intersection(Set **dst, Set *src) {
+    if (!dst) return;
+    if (!src) { vec_empty(*dst); return; }
+    if (!*dst) return;
+    for (size_t i = 0; i < vec_len(*dst); i++) {
+        char *v = vec_get(*dst, i);
+        if (!set_has(src, v)) {
+            vec_remove(*dst, i);
         }
     }
-    return s;
 }
 
 
