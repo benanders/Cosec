@@ -38,6 +38,12 @@ static Token * new_tk(Lexer *l, int k) {
     return t;
 }
 
+Token * copy_tk(Token *t) {
+    Token *copy = calloc(1, sizeof(Token));
+    *copy = *t;
+    return t;
+}
+
 
 // ---- Comments and Spaces ---------------------------------------------------
 
@@ -290,9 +296,8 @@ Token * lex_tk(Lexer *l) {
         t = lex_raw(l);
         while (t->k == TK_SPACE) {
             t = lex_raw(l);
-            t->has_space = 1;
+            t->has_preceding_space = 1;
         }
-        t->is_line_start = (t->col == 1);
     }
     return t;
 }
@@ -302,6 +307,12 @@ void undo_tk(Lexer *l, Token *t) {
         return;
     }
     vec_push(l->buf, t);
+}
+
+void undo_tks(Lexer *l, Vec *tks) {
+    for (size_t i = 0; i < vec_len(tks); i++) {
+        undo_tk(l, vec_get(tks, vec_len(tks) - i - 1));
+    }
 }
 
 static char *TKS[TK_LAST - TK_SHL] = {

@@ -8,13 +8,23 @@
 
 #include "util.h"
 
-#define MAP_TOMBSTONE ((void *) (-1))
+
+// ---- Vector ----------------------------------------------------------------
 
 Vec * vec_new() {
     Vec *v = malloc(sizeof(Vec));
     v->len = 0;
     v->max = 8;
     v->data = malloc(sizeof(void *) * v->max);
+    return v;
+}
+
+static Vec * vec_copy(Vec *v) {
+    Vec *copy = malloc(sizeof(Vec));
+    copy->len = v->len;
+    copy->max = v->max;
+    copy->data = malloc(sizeof(void *) * v->max);
+    memcpy(copy->data, v->data, v->len * sizeof(void *));
     return v;
 }
 
@@ -50,6 +60,9 @@ void * vec_get(Vec *v, size_t i) {
     if (!v) return NULL;
     return v->data[i];
 }
+
+
+// ---- String Buffer ---------------------------------------------------------
 
 Buf * buf_new() {
     Buf *b = malloc(sizeof(Buf));
@@ -95,6 +108,11 @@ void buf_printf(Buf *b, char *fmt, ...) {
         break;
     }
 }
+
+
+// ---- Map -------------------------------------------------------------------
+
+#define MAP_TOMBSTONE ((void *) (-1))
 
 static uint32_t hash(char *p) { // FNV hash
     uint32_t r = 2166136261;
@@ -191,6 +209,55 @@ void map_remove(Map *m, char *k) {
     m->v[h] = NULL;
     m->num--;
 }
+
+
+// ---- Set -------------------------------------------------------------------
+
+Set * set_new() {
+    return vec_new();
+}
+
+int set_has(Set *s, char *v) {
+    if (!s) return 0;
+    for (size_t i = 0; i < vec_len(s); i++) {
+        char *vv = vec_get(s, i);
+        if (strcmp(v, vv) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void set_put(Set *s, char *v) {
+    if (s && !set_has(s, v)) {
+        vec_push(s, v);
+    }
+}
+
+Set * set_union(Set *a, Set *b) {
+    if (!a || !b) return NULL;
+    Set *s = vec_copy(a);
+    for (size_t i = 0; i < vec_len(b); i++) {
+        char *v = vec_get(b, i);
+        set_put(s, v);
+    }
+    return s;
+}
+
+Set * set_intersection(Set *a, Set *b) {
+    if (!a || !b) return NULL;
+    Set *s = set_new();
+    for (size_t i = 0; i < vec_len(a); i++) {
+        char *v = vec_get(a, i);
+        if (set_has(b, v)) {
+            vec_push(s, v);
+        }
+    }
+    return s;
+}
+
+
+// ---- Character and String Output -------------------------------------------
 
 static void quote_ch_to_buf(Buf *b, char ch) {
     switch (ch) {

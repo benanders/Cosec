@@ -4,7 +4,7 @@
 #include <limits.h>
 
 #include "parse.h"
-#include "cpp.h"
+#include "pp.h"
 #include "err.h"
 
 enum {
@@ -17,7 +17,7 @@ enum {
 typedef struct Scope {
     struct Scope *outer;
     int k;
-    Lexer *l;
+    PP *pp;
     Map *vars;  // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
     Map *tags;  // of 'Type *'
     Node *fn;   // NULL in file scope
@@ -34,7 +34,7 @@ static Node * node(int k, Token *tk) {
 static void enter_scope(Scope *inner, Scope *outer, int k) {
     *inner = (Scope) {0};
     inner->k = k;
-    inner->l = outer->l;
+    inner->pp = outer->pp;
     inner->vars = map_new();
     inner->tags = map_new();
     inner->fn = outer->fn;
@@ -280,24 +280,24 @@ static size_t pad(size_t offset, size_t align) {
 }
 
 static void parse_struct_fields(Scope *s, Type *t) {
-    expect_tk(s->l, '{');
+    expect_tk(s->pp, '{');
     size_t align = 0;
     size_t offset = 0;
     Vec *fields = vec_new();
-    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
-        Token *tk = peek_tk(s->l);
+    while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
+        Token *tk = peek_tk(s->pp);
         int sclass;
         Type *base = parse_decl_specs(s, &sclass);
         if (sclass != S_NONE) {
             error_at(tk, "illegal storage class specifier in %s field",
                      t->k == T_STRUCT ? "struct" : "union");
         }
-        if (peek_tk_is(s->l, ';')) {
+        if (peek_tk_is(s->pp, ';')) {
             if (t->k == T_STRUCT) offset = pad(offset, base->align);
             vec_push(fields, new_field(base, NULL, offset));
             if (t->k == T_STRUCT) offset += base->size;
         }
-        while (!peek_tk_is(s->l, ';') && !peek_tk_is(s->l, TK_EOF)) {
+        while (!peek_tk_is(s->pp, ';') && !peek_tk_is(s->pp, TK_EOF)) {
             Token *name;
             Type *ft = parse_declarator(s, base, &name, NULL);
             if (is_incomplete(ft)) {
@@ -312,26 +312,26 @@ static void parse_struct_fields(Scope *s, Type *t) {
             if (t->k == T_STRUCT) offset = pad(offset, ft->align);
             vec_push(fields, new_field(ft, name->s, offset));
             if (t->k == T_STRUCT) offset += ft->size;
-            if (!next_tk_is(s->l, ',')) {
+            if (!next_tk_is(s->pp, ',')) {
                 break;
             }
         }
-        expect_tk(s->l, ';');
+        expect_tk(s->pp, ';');
     }
-    expect_tk(s->l, '}');
+    expect_tk(s->pp, '}');
     t->align = align;
     t->size = pad(offset, align);
     t->fields = fields;
 }
 
 static void parse_enum_consts(Scope *s, Type *enum_t) {
-    expect_tk(s->l, '{');
+    expect_tk(s->pp, '{');
     Type *t = t_num(T_INT, 0);
     Vec *fields = vec_new();
     int64_t val = 0;
-    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
-        Token *name = expect_tk(s->l, TK_IDENT);
-        if (next_tk_is(s->l, '=')) {
+    while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
+        Token *name = expect_tk(s->pp, TK_IDENT);
+        if (next_tk_is(s->pp, '=')) {
             Node *e = parse_expr_no_commas(s);
             val = calc_int_expr(e);
         }
@@ -342,11 +342,11 @@ static void parse_enum_consts(Scope *s, Type *enum_t) {
         vec_push(fields, new_field(t, name->s, val));
         def_enum_const(s, name, t, val);
         val++;
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_is(s->pp, ',')) {
             break;
         }
     }
-    expect_tk(s->l, '}');
+    expect_tk(s->pp, '}');
     enum_t->fields = fields;
     enum_t->size = t->size;
     enum_t->align = t->align;
@@ -361,13 +361,13 @@ static void parse_fields(Scope *s, Type *t) {
 }
 
 static void parse_struct_union_enum_def(Scope *s, Type *t) {
-    if (!peek_tk_is(s->l, TK_IDENT)) { // Anonymous
+    if (!peek_tk_is(s->pp, TK_IDENT)) { // Anonymous
         parse_fields(s, t);
         return;
     }
-    Token *tag = next_tk(s->l);
+    Token *tag = next_tk(s->pp);
     Type *tt = find_tag(s, tag->s);
-    if (peek_tk_is(s->l, '{')) { // Definition
+    if (peek_tk_is(s->pp, '{')) { // Definition
         def_tag(s, tag, t);
         parse_fields(s, t);
     } else if (tt && t->k != tt->k) {
@@ -398,8 +398,8 @@ static Type * parse_enum_def(Scope *s) {
 }
 
 static Type * parse_decl_specs(Scope *s, int *sclass) {
-    if (!is_type(s, peek_tk(s->l))) {
-        error_at(peek_tk(s->l), "expected type name");
+    if (!is_type(s, peek_tk(s->pp))) {
+        error_at(peek_tk(s->pp), "expected type name");
     }
     int sc = 0, tq = 0, fs = 0;
     enum { tnone, tvoid, tchar, tint, tfloat, tdouble } kind = 0;
@@ -408,7 +408,7 @@ static Type * parse_decl_specs(Scope *s, int *sclass) {
     Type *t = NULL;
     Token *tk;
     while (1) {
-        tk = next_tk(s->l);
+        tk = next_tk(s->pp);
         switch (tk->k) {
         case TK_TYPEDEF:  if (sc) { goto sc_err; } sc = S_TYPEDEF; break;
         case TK_AUTO:     if (sc) { goto sc_err; } sc = S_AUTO; break;
@@ -444,8 +444,8 @@ static Type * parse_decl_specs(Scope *s, int *sclass) {
         if (t && (kind || size || sign)) goto t_err;
     }
 done:
-    (void) tq; // unused
-    undo_tk(s->l, tk);
+    (void) tq; // Unused
+    undo_tk(s->pp->l, tk);
     if (sclass) *sclass = sc;
     if (t) {
         return t;
@@ -480,9 +480,9 @@ static Node * parse_expr(Scope *s);
 static int try_calc_int_expr(Node *e, int64_t *val);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {
-    expect_tk(s->l, '[');
+    expect_tk(s->pp, '[');
     Node *len = NULL;
-    if (!next_tk_is(s->l, ']')) {
+    if (!next_tk_is(s->pp, ']')) {
         Node *n = parse_expr(s);
         int64_t i;
         if (!try_calc_int_expr(n, &i)) {
@@ -494,9 +494,9 @@ static Type * parse_array_declarator(Scope *s, Type *base) {
             len->t = t_num(T_LLONG, 1);
             len->imm = i;
         }
-        expect_tk(s->l, ']');
+        expect_tk(s->pp, ']');
     }
-    Token *err = peek_tk(s->l);
+    Token *err = peek_tk(s->pp);
     Type *t = parse_declarator_tail(s, base, NULL);
     if (t->k == T_FN) {
         error_at(err, "cannot have array of functions");
@@ -508,9 +508,9 @@ static Type * parse_array_declarator(Scope *s, Type *base) {
 }
 
 static Type * parse_fn_declarator_param(Scope *s, Token **name) {
-    Token *err = peek_tk(s->l);
+    Token *err = peek_tk(s->pp);
     Type *base = t_num(T_INT, 0); // Parameter types default to 'int'
-    if (is_type(s, peek_tk(s->l))) {
+    if (is_type(s, peek_tk(s->pp))) {
         base = parse_decl_specs(s, NULL);
     }
     Type *t = parse_declarator(s, base, name, NULL);
@@ -527,35 +527,35 @@ static Type * parse_fn_declarator_param(Scope *s, Token **name) {
 
 static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
     if (ret->k == T_FN) {
-        error_at(peek_tk(s->l), "function cannot return a function");
+        error_at(peek_tk(s->pp), "function cannot return a function");
     } else if (ret->k == T_ARR) {
-        error_at(peek_tk(s->l), "function cannot return an array");
+        error_at(peek_tk(s->pp), "function cannot return an array");
     }
-    expect_tk(s->l, '(');
-    if (peek_tk_is(s->l, TK_VOID) && peek2_tk_is(s->l, ')')) {
-        next_tk(s->l); next_tk(s->l); // 'void' ')'
+    expect_tk(s->pp, '(');
+    if (peek_tk_is(s->pp, TK_VOID) && peek2_tk_is(s->pp, ')')) {
+        next_tk(s->pp); next_tk(s->pp); // 'void' ')'
         return t_fn(ret, vec_new());
     }
     Vec *param_types = vec_new();
-    while (!peek_tk_is(s->l, ')') && !peek_tk_is(s->l, TK_EOF)) {
+    while (!peek_tk_is(s->pp, ')') && !peek_tk_is(s->pp, TK_EOF)) {
         Token *name;
         Type *param = parse_fn_declarator_param(s, &name);
         vec_push(param_types, param);
         if (param_names) {
             vec_push(param_names, name); // Name may be NULL
         }
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_is(s->pp, ',')) {
             break;
         }
     }
-    expect_tk(s->l, ')');
+    expect_tk(s->pp, ')');
     return t_fn(ret, param_types);
 }
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names) {
-    if (peek_tk_is(s->l, '[')) {
+    if (peek_tk_is(s->pp, '[')) {
         return parse_array_declarator(s, base);
-    } else if (peek_tk_is(s->l, '(')) {
+    } else if (peek_tk_is(s->pp, '(')) {
         return parse_fn_declarator(s, base, param_names);
     } else {
         return base;
@@ -563,39 +563,39 @@ static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names) {
 }
 
 static void skip_type_quals(Scope *s) {
-    while (next_tk_is(s->l, TK_CONST) ||
-           next_tk_is(s->l, TK_RESTRICT) ||
-           next_tk_is(s->l, TK_VOLATILE));
+    while (next_tk_is(s->pp, TK_CONST) ||
+           next_tk_is(s->pp, TK_RESTRICT) ||
+           next_tk_is(s->pp, TK_VOLATILE));
 }
 
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names) {
-    if (next_tk_is(s->l, '*')) {
+    if (next_tk_is(s->pp, '*')) {
         skip_type_quals(s);
         return parse_declarator(s, t_ptr(base), name, param_names);
     }
-    if (next_tk_is(s->l, '(')) { // Either sub-declarator or fn parameters
-        if (is_type(s, peek_tk(s->l)) || peek_tk_is(s->l, ')')) { // Function
+    if (next_tk_is(s->pp, '(')) { // Either sub-declarator or fn parameters
+        if (is_type(s, peek_tk(s->pp)) || peek_tk_is(s->pp, ')')) { // Function
             // An empty '()' is a function pointer, not a no-op sub-declarator
             return parse_fn_declarator(s, base, param_names);
         } else { // Sub-declarator
             Type *inner = t_new();
             Type *decl = parse_declarator(s, inner, name, param_names);
-            expect_tk(s->l, ')');
+            expect_tk(s->pp, ')');
             *inner = *parse_declarator_tail(s, base, param_names);
             return decl;
         }
     }
-    Token *t = peek_tk(s->l);
+    Token *t = peek_tk(s->pp);
     if (t->k == TK_IDENT) {
         *name = t;
-        next_tk(s->l);
+        next_tk(s->pp);
     }
     return parse_declarator_tail(s, base, param_names);
 }
 
 static Type * parse_named_declarator(Scope *s, Type *base, Token **name, Vec *param_names) {
     Token *name_copy = NULL;
-    Token *err = peek_tk(s->l);
+    Token *err = peek_tk(s->pp);
     Type *t = parse_declarator(s, base, &name_copy, param_names);
     if (!name_copy) {
         error_at(err, "expected named declarator");
@@ -696,7 +696,7 @@ static Node * discharge(Node *l) {
 
 static Node * parse_operand(Scope *s) {
     Node *n;
-    Token *tk = next_tk(s->l);
+    Token *tk = next_tk(s->pp);
     switch (tk->k) {
     case TK_NUM:
         n = parse_num(tk);
@@ -721,7 +721,7 @@ static Node * parse_operand(Scope *s) {
         break;
     case '(':
         n = parse_subexpr(s, PREC_MIN);
-        expect_tk(s->l, ')');
+        expect_tk(s->pp, ')');
         break;
     default: error_at(tk, "expected expression");
     }
@@ -754,7 +754,8 @@ static int is_null_ptr(Node *n) {
     return n->k == N_IMM && n->imm == 0;
 }
 
-static Node * parse_array_access(Scope *s, Node *l, Token *op) {
+static Node * parse_array_access(Scope *s, Node *l) {
+    Token *op = expect_tk(s->pp, '[');
     l = discharge(l);
     if (l->t->k != T_PTR) {
         error_at(op, "expected pointer or array type");
@@ -762,7 +763,7 @@ static Node * parse_array_access(Scope *s, Node *l, Token *op) {
     Node *idx = parse_subexpr(s, PREC_MIN);
     ensure_int(idx);
     idx = conv_to(idx, t_num(T_LLONG, 1));
-    expect_tk(s->l, ']');
+    expect_tk(s->pp, ']');
     Node *n = node(N_IDX, op);
     n->t = l->t->elem;
     n->arr = l;
@@ -770,14 +771,15 @@ static Node * parse_array_access(Scope *s, Node *l, Token *op) {
     return n;
 }
 
-static Node * parse_call(Scope *s, Node *l, Token *op) {
+static Node * parse_call(Scope *s, Node *l) {
+    Token *op = expect_tk(s->pp, '(');
     l = discharge(l);
     if (l->t->k != T_PTR || l->t->ptr->k != T_FN) {
         error_at(l->tk, "expected function type");
     }
     Type *fn_t = l->t->ptr;
     Vec *args = vec_new();
-    while (!peek_tk_is(s->l, ')') && !peek_tk_is(s->l, TK_EOF)) {
+    while (!peek_tk_is(s->pp, ')') && !peek_tk_is(s->pp, TK_EOF)) {
         Node *arg = parse_subexpr(s, PREC_COMMA);
         arg = discharge(arg);
         if (vec_len(args) >= vec_len(fn_t->params)) {
@@ -786,14 +788,14 @@ static Node * parse_call(Scope *s, Node *l, Token *op) {
         Type *expected = vec_get(fn_t->params, vec_len(args));
         arg = conv_to(arg, expected);
         vec_push(args, arg);
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_is(s->pp, ',')) {
             break;
         }
     }
     if (vec_len(args) < vec_len(fn_t->params)) {
-        error_at(peek_tk(s->l), "too few arguments to function call");
+        error_at(peek_tk(s->pp), "too few arguments to function call");
     }
-    expect_tk(s->l, ')');
+    expect_tk(s->pp, ')');
     Node *n = node(N_CALL, op);
     n->t = fn_t->ret;
     n->fn = l;
@@ -801,11 +803,12 @@ static Node * parse_call(Scope *s, Node *l, Token *op) {
     return n;
 }
 
-static Node * parse_struct_field_access(Scope *s, Node *l, Token *op) {
+static Node * parse_struct_field_access(Scope *s, Node *l) {
+    Token *op = next_tk(s->pp);
     if (l->t->k != T_STRUCT && l->t->k != T_UNION) {
         error_at(op, "expected struct or union type");
     }
-    Token *name = expect_tk(s->l, TK_IDENT);
+    Token *name = expect_tk(s->pp, TK_IDENT);
     size_t f_idx = find_field(l->t, name->s);
     if (f_idx == NOT_FOUND) {
         error_at(name, "no field named '%s' in %s", name->s,
@@ -819,15 +822,16 @@ static Node * parse_struct_field_access(Scope *s, Node *l, Token *op) {
     return n;
 }
 
-static Node * parse_struct_field_deref(Scope *s, Node *l, Token *op) {
+static Node * parse_struct_field_deref(Scope *s, Node *l) {
     ensure_ptr(l);
-    Node *n = node(N_DEREF, op);
+    Node *n = node(N_DEREF, peek_tk(s->pp));
     n->t = l->t->ptr;
     n->l = l;
-    return parse_struct_field_access(s, n, op);
+    return parse_struct_field_access(s, n);
 }
 
-static Node * parse_post_inc_dec(Node *l, Token *op) {
+static Node * parse_post_inc_dec(Scope *s, Node *l) {
+    Token *op = next_tk(s->pp);
     ensure_lvalue(l);
     l = discharge(l);
     Node *n = node(op->k == TK_INC ? N_POST_INC : N_POST_DEC, op);
@@ -838,21 +842,19 @@ static Node * parse_post_inc_dec(Node *l, Token *op) {
 
 static Node * parse_postfix(Scope *s, Node *l) {
     while (1) {
-        Token *op = next_tk(s->l);
-        switch (op->k) {
-        case '[': l = parse_array_access(s, l, op); break;
-        case '(': l = parse_call(s, l, op); break;
-        case '.': l = parse_struct_field_access(s, l, op); break;
-        case TK_ARROW: l = parse_struct_field_deref(s, l, op); break;
-        case TK_INC: case TK_DEC: l = parse_post_inc_dec(l, op); break;
-        default:
-            undo_tk(s->l, op);
-            return l;
+        switch (peek_tk(s->pp)->k) {
+        case '[': l = parse_array_access(s, l); break;
+        case '(': l = parse_call(s, l); break;
+        case '.': l = parse_struct_field_access(s, l); break;
+        case TK_ARROW: l = parse_struct_field_deref(s, l); break;
+        case TK_INC: case TK_DEC: l = parse_post_inc_dec(s, l); break;
+        default: return l;
         }
     }
 }
 
-static Node * parse_neg(Scope *s, Token *op) {
+static Node * parse_neg(Scope *s) {
+    Token *op = expect_tk(s->pp, '-');
     Node *l = parse_subexpr(s, PREC_UNARY);
     ensure_arith(l);
     l = discharge(l);
@@ -863,11 +865,13 @@ static Node * parse_neg(Scope *s, Token *op) {
 }
 
 static Node * parse_plus(Scope *s) {
+    expect_tk(s->pp, '+');
     Node *l = parse_subexpr(s, PREC_UNARY);
     return discharge(l); // Type promotion
 }
 
-static Node * parse_bit_not(Scope *s, Token *op) {
+static Node * parse_bit_not(Scope *s) {
+    Token *op = expect_tk(s->pp, '~');
     Node *l = parse_subexpr(s, PREC_UNARY);
     ensure_int(l);
     l = discharge(l);
@@ -877,7 +881,8 @@ static Node * parse_bit_not(Scope *s, Token *op) {
     return unop;
 }
 
-static Node * parse_log_not(Scope *s, Token *op) {
+static Node * parse_log_not(Scope *s) {
+    Token *op = expect_tk(s->pp, '!');
     Node *l = parse_subexpr(s, PREC_UNARY);
     l = discharge(l);
     Node *unop = node(N_LOG_NOT, op);
@@ -886,7 +891,8 @@ static Node * parse_log_not(Scope *s, Token *op) {
     return unop;
 }
 
-static Node * parse_pre_inc_dec(Scope *s, Token *op) {
+static Node * parse_pre_inc_dec(Scope *s) {
+    Token *op = next_tk(s->pp);
     Node *l = parse_subexpr(s, PREC_UNARY);
     ensure_lvalue(l);
     l = discharge(l);
@@ -896,7 +902,8 @@ static Node * parse_pre_inc_dec(Scope *s, Token *op) {
     return unop;
 }
 
-static Node * parse_deref(Scope *s, Token *op) {
+static Node * parse_deref(Scope *s) {
+    Token *op = expect_tk(s->pp, '*');
     Node *l = parse_subexpr(s, PREC_UNARY);
     l = discharge(l);
     ensure_ptr(l);
@@ -907,7 +914,8 @@ static Node * parse_deref(Scope *s, Token *op) {
     return unop;
 }
 
-static Node * parse_addr(Scope *s, Token *op) {
+static Node * parse_addr(Scope *s) {
+    Token *op = expect_tk(s->pp, '&');
     Node *l = parse_subexpr(s, PREC_UNARY);
     ensure_lvalue(l);
     Node *unop = node(N_ADDR, op);
@@ -916,13 +924,14 @@ static Node * parse_addr(Scope *s, Token *op) {
     return unop;
 }
 
-static Node * parse_sizeof(Scope *s, Token *op) {
+static Node * parse_sizeof(Scope *s) {
+    Token *op = expect_tk(s->pp, TK_SIZEOF);
     Type *t;
-    if (peek_tk_is(s->l, '(') && is_type(s, peek2_tk(s->l))) {
-        next_tk(s->l);
+    if (peek_tk_is(s->pp, '(') && is_type(s, peek2_tk(s->pp))) {
+        next_tk(s->pp);
         t = parse_decl_specs(s, NULL);
         t = parse_abstract_declarator(s, t);
-        expect_tk(s->l, ')');
+        expect_tk(s->pp, ')');
     } else {
         Node *l = parse_subexpr(s, PREC_UNARY);
         t = l->t;
@@ -934,10 +943,11 @@ static Node * parse_sizeof(Scope *s, Token *op) {
 }
 
 static Node * parse_cast(Scope *s) {
+    expect_tk(s->pp, '(');
     Type *t = parse_decl_specs(s, NULL);
     t = parse_abstract_declarator(s, t);
-    expect_tk(s->l, ')');
-    if (peek_tk_is(s->l, '{')) { // Compound literal
+    expect_tk(s->pp, ')');
+    if (peek_tk_is(s->pp, '{')) { // Compound literal
         return parse_decl_init(s, t);
     } else {
         Node *l = parse_subexpr(s, PREC_UNARY);
@@ -946,25 +956,23 @@ static Node * parse_cast(Scope *s) {
 }
 
 static Node * parse_unop(Scope *s) {
-    Token *op = next_tk(s->l);
-    switch (op->k) {
-    case '-': return parse_neg(s, op);
+    switch (peek_tk(s->pp)->k) {
+    case '-': return parse_neg(s);
     case '+': return parse_plus(s);
-    case '~': return parse_bit_not(s, op);
-    case '!': return parse_log_not(s, op);
-    case TK_INC: case TK_DEC: return parse_pre_inc_dec(s, op);
-    case '*': return parse_deref(s, op);
-    case '&': return parse_addr(s, op);
-    case TK_SIZEOF: return parse_sizeof(s, op);
+    case '~': return parse_bit_not(s);
+    case '!': return parse_log_not(s);
+    case TK_INC: case TK_DEC: return parse_pre_inc_dec(s);
+    case '*': return parse_deref(s);
+    case '&': return parse_addr(s);
+    case TK_SIZEOF: return parse_sizeof(s);
     case '(':
-        if (is_type(s, peek_tk(s->l))) {
+        if (is_type(s, peek2_tk(s->pp))) {
             return parse_cast(s);
         } // Fall through otherwise...
-    default:
-        undo_tk(s->l, op);
-        Node *l = parse_operand(s);
-        return parse_postfix(s, l);
+    default: break;
     }
+    Node *l = parse_operand(s);
+    return parse_postfix(s, l);
 }
 
 static Type * promote(Type *l, Type *r) { // Implicit arithmetic conversions
@@ -1060,7 +1068,7 @@ static Node * parse_binop(Scope *s, Token *op, Node *l) {
         n->t = n->r->t;
         return n;
     case '?':
-        expect_tk(s->l, ':');
+        expect_tk(s->pp, ':');
         Node *els = parse_subexpr(s, PREC_TERNARY + IS_RASSOC['?']);
         Node *binop = emit_binop(N_TERNARY, r, els, op);
         n = node(N_TERNARY, op);
@@ -1075,8 +1083,8 @@ static Node * parse_binop(Scope *s, Token *op, Node *l) {
 
 static Node * parse_subexpr(Scope *s, int min_prec) {
     Node *l = parse_unop(s);
-    while (BINOP_PREC[peek_tk(s->l)->k] > min_prec) {
-        Token *op = next_tk(s->l);
+    while (BINOP_PREC[peek_tk(s->pp)->k] > min_prec) {
+        Token *op = next_tk(s->pp);
         l = parse_binop(s, op, l);
     }
     return l;
@@ -1385,15 +1393,15 @@ static Node * parse_block(Scope *s);
 static Node * parse_stmt(Scope *s);
 
 static Node * parse_if(Scope *s) {
-    Token *if_tk = expect_tk(s->l, TK_IF);
-    expect_tk(s->l, '(');
+    Token *if_tk = expect_tk(s->pp, TK_IF);
+    expect_tk(s->pp, '(');
     Node *cond = parse_expr(s);
-    expect_tk(s->l, ')');
+    expect_tk(s->pp, ')');
     Node *body = parse_stmt(s);
     Node *els = NULL;
-    if (peek_tk_is(s->l, TK_ELSE)) {
-        Token *else_tk = next_tk(s->l);
-        if (peek_tk_is(s->l, TK_IF)) { // else if
+    if (peek_tk_is(s->pp, TK_ELSE)) {
+        Token *else_tk = next_tk(s->pp);
+        if (peek_tk_is(s->pp, TK_IF)) { // else if
             els = parse_stmt(s);
         } else { // else
             Node *else_body = parse_stmt(s);
@@ -1411,10 +1419,10 @@ static Node * parse_if(Scope *s) {
 }
 
 static Node * parse_while(Scope *s) {
-    Token *while_tk = expect_tk(s->l, TK_WHILE);
-    expect_tk(s->l, '(');
+    Token *while_tk = expect_tk(s->pp, TK_WHILE);
+    expect_tk(s->pp, '(');
     Node *cond = parse_expr(s);
-    expect_tk(s->l, ')');
+    expect_tk(s->pp, ')');
     Scope loop;
     enter_scope(&loop, s, SCOPE_LOOP);
     Node *body = parse_stmt(&loop);
@@ -1425,15 +1433,15 @@ static Node * parse_while(Scope *s) {
 }
 
 static Node * parse_do_while(Scope *s) {
-    Token *do_tk = expect_tk(s->l, TK_DO);
+    Token *do_tk = expect_tk(s->pp, TK_DO);
     Scope loop;
     enter_scope(&loop, s, SCOPE_LOOP);
     Node *body = parse_stmt(&loop);
-    expect_tk(s->l, TK_WHILE);
-    expect_tk(s->l, '(');
+    expect_tk(s->pp, TK_WHILE);
+    expect_tk(s->pp, '(');
     Node *cond = parse_expr(s);
-    expect_tk(s->l, ')');
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ')');
+    expect_tk(s->pp, ';');
     Node *n = node(N_DO_WHILE, do_tk);
     n->loop_cond = cond;
     n->loop_body = body;
@@ -1441,30 +1449,30 @@ static Node * parse_do_while(Scope *s) {
 }
 
 static Node * parse_for(Scope *s) {
-    Token *for_tk = expect_tk(s->l, TK_FOR);
-    expect_tk(s->l, '(');
+    Token *for_tk = expect_tk(s->pp, TK_FOR);
+    expect_tk(s->pp, '(');
     Scope loop;
     enter_scope(&loop, s, SCOPE_LOOP);
 
     Node *init = NULL;
-    if (is_type(&loop, peek_tk(s->l))) {
+    if (is_type(&loop, peek_tk(s->pp))) {
         init = parse_decl(&loop);
-    } else if (!peek_tk_is(s->l, ';')) {
+    } else if (!peek_tk_is(s->pp, ';')) {
         init = parse_expr(&loop);
-        expect_tk(s->l, ';');
+        expect_tk(s->pp, ';');
     }
 
     Node *cond = NULL;
-    if (!peek_tk_is(s->l, ';')) {
+    if (!peek_tk_is(s->pp, ';')) {
         cond = parse_expr(&loop);
     }
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ';');
 
     Node *inc = NULL;
-    if (!peek_tk_is(s->l, ')')) {
+    if (!peek_tk_is(s->pp, ')')) {
         inc = parse_expr(&loop);
     }
-    expect_tk(s->l, ')');
+    expect_tk(s->pp, ')');
 
     Node *body = parse_stmt(&loop);
     Node *n = node(N_FOR, for_tk);
@@ -1476,10 +1484,10 @@ static Node * parse_for(Scope *s) {
 }
 
 static Node * parse_switch(Scope *s) {
-    Token *switch_tk = expect_tk(s->l, TK_SWITCH);
-    expect_tk(s->l, '(');
+    Token *switch_tk = expect_tk(s->pp, TK_SWITCH);
+    expect_tk(s->pp, '(');
     Node *cond = parse_expr(s);
-    expect_tk(s->l, ')');
+    expect_tk(s->pp, ')');
 
     Scope switch_s;
     enter_scope(&switch_s, s, SCOPE_SWITCH);
@@ -1492,13 +1500,13 @@ static Node * parse_switch(Scope *s) {
 }
 
 static Node * parse_case(Scope *s) {
-    Token *case_tk = expect_tk(s->l, TK_CASE);
+    Token *case_tk = expect_tk(s->pp, TK_CASE);
     Scope *switch_s = find_scope(s, SCOPE_SWITCH);
     if (!switch_s) {
         error_at(case_tk, "'case' not allowed here");
     }
     Node *cond = parse_expr(s);
-    expect_tk(s->l, ':');
+    expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
     Node *n = node(N_CASE, case_tk);
     n->case_cond = cond;
@@ -1508,7 +1516,7 @@ static Node * parse_case(Scope *s) {
 }
 
 static Node * parse_default(Scope *s) {
-    Token *default_tk = expect_tk(s->l, TK_DEFAULT);
+    Token *default_tk = expect_tk(s->pp, TK_DEFAULT);
     Scope *switch_s = find_scope(s, SCOPE_SWITCH);
     if (!switch_s) {
         error_at(default_tk, "'default' not allowed here");
@@ -1519,7 +1527,7 @@ static Node * parse_default(Scope *s) {
             error_at(default_tk, "cannot have more than one 'default' in a switch");
         }
     }
-    expect_tk(s->l, ':');
+    expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
     Node *n = node(N_DEFAULT, default_tk);
     n->case_body = body;
@@ -1528,37 +1536,37 @@ static Node * parse_default(Scope *s) {
 }
 
 static Node * parse_break(Scope *s) {
-    Token *break_tk = expect_tk(s->l, TK_BREAK);
+    Token *break_tk = expect_tk(s->pp, TK_BREAK);
     if (!find_scope(s, SCOPE_LOOP) && !find_scope(s, SCOPE_SWITCH)) {
         error_at(break_tk, "'break' not allowed here");
     }
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ';');
     Node *n = node(N_BREAK, break_tk);
     return n;
 }
 
 static Node * parse_continue(Scope *s) {
-    Token *continue_tk = expect_tk(s->l, TK_CONTINUE);
+    Token *continue_tk = expect_tk(s->pp, TK_CONTINUE);
     if (!find_scope(s, SCOPE_LOOP)) {
         error_at(continue_tk, "'break' not allowed here");
     }
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ';');
     Node *n = node(N_CONTINUE, continue_tk);
     return n;
 }
 
 static Node * parse_goto(Scope *s) {
-    Token *goto_tk = expect_tk(s->l, TK_GOTO);
-    Token *label = expect_tk(s->l, TK_IDENT);
-    expect_tk(s->l, ';');
+    Token *goto_tk = expect_tk(s->pp, TK_GOTO);
+    Token *label = expect_tk(s->pp, TK_IDENT);
+    expect_tk(s->pp, ';');
     Node *n = node(N_GOTO, goto_tk);
     n->label = label->s;
     return n;
 }
 
 static Node * parse_label(Scope *s) {
-    Token *label = expect_tk(s->l, TK_IDENT);
-    expect_tk(s->l, ':');
+    Token *label = expect_tk(s->pp, TK_IDENT);
+    expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
     Node *n = node(N_LABEL, label);
     n->label = label->s;
@@ -1567,16 +1575,16 @@ static Node * parse_label(Scope *s) {
 }
 
 static Node * parse_ret(Scope *s) {
-    Token *ret_tk = expect_tk(s->l, TK_RETURN);
+    Token *ret_tk = expect_tk(s->pp, TK_RETURN);
     Node *val = NULL;
-    if (!peek_tk_is(s->l, ';')) {
+    if (!peek_tk_is(s->pp, ';')) {
         if (s->fn->t->ret->k == T_VOID) {
-            error_at(peek_tk(s->l), "cannot return value from void function");
+            error_at(peek_tk(s->pp), "cannot return value from void function");
         }
         val = parse_expr(s);
         val = conv_to(val, s->fn->t->ret);
     }
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ';');
     Node *n = node(N_RET, ret_tk);
     n->ret_val = val;
     return n;
@@ -1584,14 +1592,14 @@ static Node * parse_ret(Scope *s) {
 
 static Node * parse_expr_stmt(Scope *s) {
     Node *n = parse_expr(s);
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ';');
     return n;
 }
 
 static Node * parse_stmt(Scope *s) {
-    Token *t = peek_tk(s->l);
+    Token *t = peek_tk(s->pp);
     switch (t->k) {
-    case ';':         next_tk(s->l); return NULL;
+    case ';':         next_tk(s->pp); return NULL;
     case '{':         return parse_block(s);
     case TK_IF:       return parse_if(s);
     case TK_WHILE:    return parse_while(s);
@@ -1605,7 +1613,7 @@ static Node * parse_stmt(Scope *s) {
     case TK_GOTO:     return parse_goto(s);
     case TK_RETURN:   return parse_ret(s);
     case TK_IDENT:
-        if (peek2_tk_is(s->l, ':')) {
+        if (peek2_tk_is(s->pp, ':')) {
             return parse_label(s);
         } // Fall through...
     default: return parse_expr_stmt(s);
@@ -1613,7 +1621,7 @@ static Node * parse_stmt(Scope *s) {
 }
 
 static Node * parse_stmt_or_decl(Scope *s) {
-    if (is_type(s, peek_tk(s->l))) {
+    if (is_type(s, peek_tk(s->pp))) {
         return parse_decl(s);
     } else {
         return parse_stmt(s);
@@ -1621,16 +1629,16 @@ static Node * parse_stmt_or_decl(Scope *s) {
 }
 
 static Node * parse_block(Scope *s) {
-    expect_tk(s->l, '{');
+    expect_tk(s->pp, '{');
     Scope block;
     enter_scope(&block, s, SCOPE_BLOCK);
     Node *head = NULL;
     Node **cur = &head;
-    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+    while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
         *cur = parse_stmt_or_decl(&block);
         while (*cur) cur = &(*cur)->next;
     }
-    expect_tk(s->l, '}');
+    expect_tk(s->pp, '}');
     return head;
 }
 
@@ -1655,11 +1663,11 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
 static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
     assert(is_char_arr(t));
     assert(!is_vla(t));
-    Token *str = next_tk_is(s->l, TK_STR);
-    if (!str && peek_tk_is(s->l, '{') && peek2_tk_is(s->l, TK_STR)) {
-        next_tk(s->l);
-        str = next_tk(s->l);
-        expect_tk(s->l, '}');
+    Token *str = next_tk_is(s->pp, TK_STR);
+    if (!str && peek_tk_is(s->pp, '{') && peek2_tk_is(s->pp, TK_STR)) {
+        next_tk(s->pp);
+        str = next_tk(s->pp);
+        expect_tk(s->pp, '}');
     }
     if (!str) {
         return; // Parse as normal array
@@ -1687,7 +1695,7 @@ static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
 static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, int designated);
 
 static void parse_init_elem(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
-    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION || peek_tk_is(s->l, '{')) {
+    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION || peek_tk_is(s->pp, '{')) {
         parse_init_list_raw(s, inits, t, offset, designated);
     } else {
         Node *e = parse_expr_no_commas(s);
@@ -1697,42 +1705,42 @@ static void parse_init_elem(Scope *s, Vec *inits, Type *t, size_t offset, int de
         n->init_val = e;
         vec_push(inits, n);
     }
-    if (!peek_tk_is(s->l, '}')) {
-        expect_tk(s->l, ',');
+    if (!peek_tk_is(s->pp, '}')) {
+        expect_tk(s->pp, ',');
     }
 }
 
 static size_t parse_array_designator(Scope *s, Type *t) {
-    expect_tk(s->l, '[');
+    expect_tk(s->pp, '[');
     Node *e = parse_expr(s);
     int64_t desg = calc_int_expr(e);
     if (desg < 0 || (t->len && (uint64_t) desg >= t->len->imm)) {
         error_at(e->tk, "array designator index '%llu' exceeds array bounds", desg);
     }
-    expect_tk(s->l, ']');
-    expect_tk(s->l, '=');
+    expect_tk(s->pp, ']');
+    expect_tk(s->pp, '=');
     return desg;
 }
 
 static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     assert(t->k == T_ARR);
     assert(!is_vla(t));
-    int has_brace = next_tk_is(s->l, '{') != NULL;
+    int has_brace = next_tk_is(s->pp, '{') != NULL;
     size_t idx = 0;
-    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+    while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
         if (!has_brace && t->len && idx >= t->len->imm) {
             break;
         }
-        if (peek_tk_is(s->l, '[') && !has_brace && !designated) {
+        if (peek_tk_is(s->pp, '[') && !has_brace && !designated) {
             break; // e.g., int a[3][3] = {3 /* RETURN HERE */, [2] = 1}
         }
-        if (peek_tk_is(s->l, '[')) {
+        if (peek_tk_is(s->pp, '[')) {
             idx = parse_array_designator(s, t);
             designated = 1;
         }
         int excess = t->len && idx >= t->len->imm;
         if (excess) {
-            warning_at(peek_tk(s->l), "excess elements in array initializer");
+            warning_at(peek_tk(s->pp), "excess elements in array initializer");
         }
         size_t elem_offset = offset + idx * t->elem->size;
         parse_init_elem(s, excess ? NULL : inits, t->elem, elem_offset, designated);
@@ -1740,7 +1748,7 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
         designated = 0;
     }
     if (has_brace) {
-        expect_tk(s->l, '}');
+        expect_tk(s->pp, '}');
     }
     if (!t->len) {
         t->len = node(N_IMM, NULL);
@@ -1751,35 +1759,35 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
 }
 
 static size_t parse_struct_designator(Scope *s, Type *t) {
-    expect_tk(s->l, '.');
-    Token *name = expect_tk(s->l, TK_IDENT);
+    expect_tk(s->pp, '.');
+    Token *name = expect_tk(s->pp, TK_IDENT);
     size_t f_idx = find_field(t, name->s);
     if (f_idx == NOT_FOUND) {
         error_at(name, "designator '%s' does not refer to any field in the %s",
                  name->s, t->k == T_STRUCT ? "struct" : "union");
     }
-    expect_tk(s->l, '=');
+    expect_tk(s->pp, '=');
     return f_idx;
 }
 
 static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
-    int has_brace = next_tk_is(s->l, '{') != NULL;
+    int has_brace = next_tk_is(s->pp, '{') != NULL;
     size_t idx = 0;
-    while (!peek_tk_is(s->l, '}') && !peek_tk_is(s->l, TK_EOF)) {
+    while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
         if (!has_brace && idx >= vec_len(t->fields)) {
             break;
         }
-        if (peek_tk_is(s->l, '.') && !has_brace && !designated) {
+        if (peek_tk_is(s->pp, '.') && !has_brace && !designated) {
             break;
         }
-        if (peek_tk_is(s->l, '.')) {
+        if (peek_tk_is(s->pp, '.')) {
             idx = parse_struct_designator(s, t);
             designated = 1;
         }
         int excess = idx >= vec_len(t->fields);
         if (excess) {
-            warning_at(peek_tk(s->l), "excess elements in %s initializer",
+            warning_at(peek_tk(s->pp), "excess elements in %s initializer",
                        t->k == T_STRUCT ? "struct" : "union");
         }
         Field *f = vec_get(t->fields, excess ? vec_len(t->fields) - 1 : idx);
@@ -1789,7 +1797,7 @@ static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int 
         designated = 0;
     }
     if (has_brace) {
-        expect_tk(s->l, '}');
+        expect_tk(s->pp, '}');
     }
 }
 
@@ -1803,7 +1811,7 @@ static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, in
     } else if (t->k == T_STRUCT || t->k == T_UNION) {
         parse_struct_init(s, inits, t, offset, designated);
     } else { // Everything else, e.g., int a = {3}
-        Node *len = node(N_IMM, peek_tk(s->l));
+        Node *len = node(N_IMM, peek_tk(s->pp));
         len->t = t_num(T_LLONG, 1);
         len->imm = 1;
         Type *arr_t = t_arr(t, len);
@@ -1812,7 +1820,7 @@ static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, in
 }
 
 static Node * parse_init_list(Scope *s, Type *t) {
-    Node *n = node(N_ARR, peek_tk(s->l));
+    Node *n = node(N_ARR, peek_tk(s->pp));
     n->t = t;
     n->inits = vec_new();
     parse_init_list_raw(s, n->inits, t, 0, 0);
@@ -1821,13 +1829,13 @@ static Node * parse_init_list(Scope *s, Type *t) {
 
 static Node * parse_decl_init(Scope *s, Type *t) {
     if (t->linkage == L_EXTERN || t->k == T_FN) {
-        error_at(peek_tk(s->l), "illegal initializer");
+        error_at(peek_tk(s->pp), "illegal initializer");
     }
     if (is_vla(t)) {
-        error_at(peek_tk(s->l), "cannot initialize variable-length array");
+        error_at(peek_tk(s->pp), "cannot initialize variable-length array");
     }
     Node *init;
-    if (peek_tk_is(s->l, '{') || is_char_arr(t)) {
+    if (peek_tk_is(s->pp, '{') || is_char_arr(t)) {
         init = parse_init_list(s, t);
     } else {
         init = parse_expr_no_commas(s);
@@ -1842,7 +1850,7 @@ static Node * parse_decl_init(Scope *s, Type *t) {
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     Node *var = def_var(s, name, t);
     Node *init = NULL;
-    if (next_tk_is(s->l, '=')) {
+    if (next_tk_is(s->pp, '=')) {
         init = parse_decl_init(s, t);
     }
     if (is_incomplete(t)) {
@@ -1871,7 +1879,7 @@ static Node * parse_init_decl(Scope *s, Type *base, int sclass) {
         }
         break;
     }
-    if (s->k == SCOPE_FILE && peek_tk_is(s->l, '{')) {
+    if (s->k == SCOPE_FILE && peek_tk_is(s->pp, '{')) {
         return parse_fn_def(s, t, name, param_names);
     }
     return parse_decl_var(s, t, name);
@@ -1880,7 +1888,7 @@ static Node * parse_init_decl(Scope *s, Type *base, int sclass) {
 static Node * parse_decl(Scope *s) {
     int sclass;
     Type *base = parse_decl_specs(s, &sclass);
-    if (next_tk_is(s->l, ';')) {
+    if (next_tk_is(s->pp, ';')) {
         return NULL;
     }
     Node *head = NULL;
@@ -1891,25 +1899,26 @@ static Node * parse_decl(Scope *s) {
             return head;
         }
         while (*cur) cur = &(*cur)->next;
-        if (!next_tk_is(s->l, ',')) {
+        if (!next_tk_is(s->pp, ',')) {
             break;
         }
     }
-    expect_tk(s->l, ';');
+    expect_tk(s->pp, ';');
     return head;
 }
 
 Node * parse(char *path) {
     File *f = new_file(path);
     Lexer *l = new_lexer(f);
+    PP *pp = new_pp(l);
     Scope file_scope = {0};
     file_scope.k = SCOPE_FILE;
-    file_scope.l = l;
+    file_scope.pp = pp;
     file_scope.vars = map_new();
     file_scope.tags = map_new();
     Node *head = NULL;
     Node **cur = &head;
-    while (!next_tk_is(l, TK_EOF)) {
+    while (!next_tk_is(pp, TK_EOF)) {
         *cur = parse_decl(&file_scope);
         while (*cur) cur = &(*cur)->next;
     }

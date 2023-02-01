@@ -12,7 +12,7 @@ add_executable(Cosec
         src/type.c src/type.h
         src/file.c src/file.h
         src/lex.c src/lex.h
-        src/cpp.c src/cpp.h
+        src/pp.c src/pp.h
         src/parse.c src/parse.h
         src/err.c src/err.h
         src/util.c src/util.h

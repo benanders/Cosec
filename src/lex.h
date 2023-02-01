@@ -84,6 +84,7 @@ enum {
     TK_SPACE,
     TK_NEWLINE,
 
+    TK_MACRO_PARAM, // For preprocessor only
     TK_LAST, // For tables indexed by token
 };
 
@@ -91,11 +92,12 @@ typedef struct {
     int k;
     File *f;
     int line, col;
-    int is_line_start, has_space;
+    int has_preceding_space;
     union {
         struct { char *s; size_t len; }; // TK_IDENT, TK_STR, TK_NUM
         int ch; // TK_CH
     };
+    Set *hide_set; // For the preprocessor
 } Token;
 
 typedef struct {
@@ -104,8 +106,11 @@ typedef struct {
 } Lexer;
 
 Lexer * new_lexer(File *f);
+Token * copy_tk(Token *t);
+
 Token * lex_tk(Lexer *l);
 void    undo_tk(Lexer *l, Token *t);
+void    undo_tks(Lexer *l, Vec *tks);
 
 char * tk2str(int t);
 char * token2str(Token *t);

@@ -40,6 +40,14 @@ void   map_put(Map *m, char *k, void *v);
 void * map_get(Map *m, char *k);
 void   map_remove(Map *m, char *k);
 
+typedef Vec Set;
+
+Set * set_new();
+int   set_has(Set *s, char *v);
+void  set_put(Set *s, char *v);
+Set * set_union(Set *a, Set *b);
+Set * set_intersection(Set *a, Set *b);
+
 char * quote_ch(char ch);
 char * quote_str(char *s, size_t len);
 
