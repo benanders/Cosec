@@ -5,6 +5,13 @@
 #include "pp.h"
 #include "err.h"
 
+// Preprocessor macro expansion uses Dave Prosser's algorithm, described here:
+// https://www.spinellis.gr/blog/20060626/cpp.algo.pdf
+// Read https://www.math.utah.edu/docs/info/cpp_1.html beforehand to make sure
+// you understand the macro expansion process
+// Read https://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html for an
+// explanation around variadic function-like macros
+
 #define FIRST_KEYWORD TK_VOID
 
 static char *KEYWORDS[] = {
@@ -246,7 +253,9 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
         Token *t = copy_tk(vec_get(m->body, i));
         if (t->k == TK_MACRO_PARAM) {
             Vec *arg = vec_get(args, t->param);
-            vec_push_all(tks, pre_expand_arg(pp, arg));
+            arg = pre_expand_arg(pp, arg);
+            copy_pos_info_to_tks(arg, t); // For leading token's preceding space
+            vec_push_all(tks, arg);
         } else {
             vec_push(tks, t);
         }
