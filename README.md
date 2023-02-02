@@ -20,25 +20,34 @@ Future features will include:
 
 ## Compiler Pipeline
 
-1. **Lexing**: the C source code is read and converted into a sequence of tokens.
-2. **Preprocessing**: resolves things like `#include`s and `#define`s.
-3. **Parsing**: an abstract syntax tree (AST) is constructed from the preprocessed tokens. Several validation steps occur in this process, such as ensuring the syntax is well-formed, variables are defined before use, type checking, etc.
-4. **Compilation**: the static single assignment (SSA) form IR is generated from a well-formed AST.
+1. **Lexing** (`lex.c`): the C source code is read and converted into a sequence of tokens.
+2. **Preprocessing** (`cpp.c`): resolves things like `#include`s and `#define`s.
+3. **Parsing** (`parse.c`): an abstract syntax tree (AST) is constructed from the preprocessed tokens. Several validation steps occur in this process, such as ensuring the syntax is well-formed, variables are defined before use, type checking, etc.
+4. **Compilation** (`compile.c`): the static single assignment (SSA) form IR is generated from a well-formed AST.
 5. **Optimisation and analysis**: various SSA IR analysis and optimisation passes are interleaved to try and generate more efficient assembly.
-6. **Assembling**: the three-address SSA IR is lowered to the two-address target assembly language IR (only x86-64 is supported for now).
-7. **Register allocation**: the assembler generates IR that uses an unlimited number of virtual registers; it's the job of the register allocator to assign physical registers to virtual ones.
-8. **Emission**: the final assembly code is written to an output file (only NASM assembly format is supported for now).
+6. **Assembling** (`asm.c`): the three-address SSA IR is lowered to the two-address target assembly language IR (only x86-64 is supported for now).
+7. **Register allocation** (`regalloc.c`): the assembler generates IR that uses an unlimited number of virtual registers; it's the job of the register allocator to assign physical registers to virtual ones.
+8. **Encoding** (`encode.c`): the final assembly code is written to an output file (only NASM assembly format is supported for now).
 
 
-## Usage
+## Building and Usage
 
-You can compile a C file using Cosec with:
+You can build Cosec with [CMake](https://cmake.org/):
 
 ```bash
-$ Cosec test.c
+$ mkdir build
+$ cd build
+$ cmake -DCMAKE_BUILD_TYPE=Release ..
+$ make
 ```
 
-This generates the output x86-64 assembly file `test.s` in NASM format. You can then assemble and link this file with:
+You can then compile a C file with:
+
+```bash
+$ ./Cosec test.c
+```
+
+This generates the output x86-64 assembly file `out.s` in NASM format. You can assemble and link this file with:
 
 ```bash
 $ nasm -f macho64 test.s
@@ -49,18 +58,6 @@ On macOS Big Sur (my MacBook Pro's operating system), you need to add the follow
 
 ```bash
 $ ld -lSystem -L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib test.o
-```
-
-
-## Building
-
-You can build Cosec with [CMake](https://cmake.org/):
-
-```bash
-$ mkdir build
-$ cd build
-$ cmake -DCMAKE_BUILD_TYPE=Release ..
-$ make
 ```
 
 Hopefully in the future, you'll be able to build Cosec with itself!

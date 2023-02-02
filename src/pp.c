@@ -5,17 +5,21 @@
 #include "pp.h"
 #include "err.h"
 
+static void def_built_in_macros(PP *pp);
+
 PP * new_pp(Lexer *l) {
     PP *pp = calloc(1, sizeof(PP));
     pp->l = l;
     pp->macros = map_new();
+    time_t now = time(NULL);
+    localtime_r(&now, &pp->now);
+    def_built_in_macros(pp);
     return pp;
 }
 
-Macro * new_macro(int k, Vec *body) {
+Macro * new_macro(int k) {
     Macro *m = calloc(1, sizeof(Macro));
     m->k = k;
-    m->body = body;
     return m;
 }
 
@@ -53,7 +57,9 @@ static Macro * parse_obj_macro(PP *pp) {
         t = lex_next(pp->l);
     }
     // TODO: check '##' doesn't appear at start or end of macro body
-    return new_macro(MACRO_OBJ, body);
+    Macro *m = new_macro(MACRO_OBJ);
+    m->body = body;
+    return m;
 }
 
 static Map * parse_params(PP *pp) {
@@ -98,8 +104,9 @@ static Vec * parse_body(PP *pp, Map *params) {
 static Macro * parse_fn_macro(PP *pp) {
     Map *params = parse_params(pp);
     Vec *body = parse_body(pp, params);
-    Macro *m = new_macro(MACRO_FN, body);
+    Macro *m = new_macro(MACRO_FN);
     m->nparams = map_len(params);
+    m->body = body;
     return m;
 }
 
@@ -116,6 +123,55 @@ static void parse_define(PP *pp) {
 }
 
 
+// ---- Built-In Macros -------------------------------------------------------
+
+static void macro_date(PP *pp, Token *t) {
+    char time[20];
+    strftime(time, sizeof(time), "%b %e %Y", &pp->now);
+    t->k = TK_STR;
+    t->len = strlen(time);
+    t->s = malloc(t->len + 1);
+    strcpy(t->s, time);
+}
+
+static void macro_time(PP *pp, Token *t) {
+    char time[20];
+    strftime(time, sizeof(time), "%T", &pp->now);
+    t->k = TK_STR;
+    t->len = strlen(time);
+    t->s = malloc(t->len + 1);
+    strcpy(t->s, time);
+}
+
+static void macro_file(PP *pp, Token *t) {
+    t->k = TK_STR;
+    t->len = strlen(pp->l->f->path);
+    t->s = malloc(t->len + 1);
+    strcpy(t->s, pp->l->f->path);
+}
+
+static void macro_line(PP *pp, Token *t) {
+    (void) pp; // Unused
+    t->k = TK_NUM;
+    t->len = snprintf(NULL, 0, "%d", t->line);
+    t->s = malloc(t->len + 1);
+    sprintf(t->s, "%d", t->line);
+}
+
+static void def_built_in(PP *pp, char *name, BuiltIn fn) {
+    Macro *m = new_macro(MACRO_BUILT_IN);
+    m->build_in = fn;
+    map_put(pp->macros, name, m);
+}
+
+static void def_built_in_macros(PP *pp) {
+    def_built_in(pp, "__DATE__", macro_date);
+    def_built_in(pp, "__TIME__", macro_time);
+    def_built_in(pp, "__FILE__", macro_file);
+    def_built_in(pp, "__LINE__", macro_line);
+}
+
+
 // ---- Macro Expansion -------------------------------------------------------
 
 static void parse_directive(PP *pp);
@@ -123,7 +179,7 @@ static Token * expand_next(PP *pp);
 
 static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     Lexer *prev = pp->l;
-    pp->l = new_lexer(NULL); // Temporary lexer containing the arg's tokens
+    pp->l = new_lexer(NULL); // Temporary lexer containing the arg tokens
     undo_tks(pp->l, arg);
     Vec *expanded = vec_new();
     while (1) {
@@ -206,6 +262,8 @@ static Token * expand_next(PP *pp) {
     case MACRO_OBJ:
         set_put(&t->hide_set, t->s);
         tks = substitute(pp, m, NULL, t->hide_set);
+        copy_pos_info_to_tks(tks, t); // For error messages
+        undo_tks(pp->l, tks);
         break;
     case MACRO_FN:
         if (lex_peek(pp->l)->k != '(') return t;
@@ -219,11 +277,15 @@ static Token * expand_next(PP *pp) {
         set_intersection(&t->hide_set, rparen->hide_set);
         set_put(&t->hide_set, t->s);
         tks = substitute(pp, m, args, t->hide_set);
+        copy_pos_info_to_tks(tks, t); // For error messages
+        undo_tks(pp->l, tks);
         break;
-    case MACRO_PREDEF: TODO();
+    case MACRO_BUILT_IN:
+        t = copy_tk(t);
+        m->build_in(pp, t);
+        undo_tk(pp->l, t);
+        break;
     }
-    copy_pos_info_to_tks(tks, t); // For error messages
-    undo_tks(pp->l, tks);
     return expand_next(pp);
 }
 
