@@ -17,6 +17,7 @@ File * new_file(char *in) {
     f->line = 1;
     f->col = 1;
     f->buf_len = 0;
+    f->last = 0;
     return f;
 }
 
@@ -26,7 +27,10 @@ static int read_ch_raw(File *f) {
         c = f->buf[--f->buf_len];
     } else {
         c = getc(f->f);
-        if (c == '\r') { // Turn '\r' into '\n'
+        if (c == EOF) {
+            // End the file with '\n' (for the preprocessor)
+            c = (f->last == '\n' || f->last == EOF) ? EOF : '\n';
+        } else if (c == '\r') { // Turn '\r' into '\n'
             int c2 = getc(f->f);
             if (c2 != '\n') { // Turn '\r\n' into '\n'
                 ungetc(c2, f->f);
@@ -40,6 +44,7 @@ static int read_ch_raw(File *f) {
     } else if (c != EOF) {
         f->col++;
     }
+    f->last = c;
     return c;
 }
 

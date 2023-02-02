@@ -4,6 +4,7 @@
 #include <ctype.h>
 
 #include "pp.h"
+#include "parse.h"
 #include "err.h"
 
 // Preprocessor macro expansion uses Dave Prosser's algorithm, described here:
@@ -26,12 +27,17 @@ static char *KEYWORDS[] = {
     NULL,
 };
 
+static Token * ZERO_TK = &(Token) { .k = TK_NUM, .s = "0" };
+static Token * ONE_TK  = &(Token) { .k = TK_NUM, .s = "1" };
+
 static void def_built_ins(PP *pp);
+static Token * expand_next(PP *pp);
 
 PP * new_pp(Lexer *l) {
     PP *pp = calloc(1, sizeof(PP));
     pp->l = l;
     pp->macros = map_new();
+    pp->conds = vec_new();
     time_t now = time(NULL);
     localtime_r(&now, &pp->now);
     def_built_ins(pp);
@@ -45,20 +51,12 @@ Macro * new_macro(int k) {
 }
 
 
-// ---- '#pragma' -------------------------------------------------------------
-
-static void parse_pragma(PP *pp) {
-    Token *t = lex_expect(pp->l, TK_IDENT);
-    error_at(t, "unsupported pragma directive '%s'", t->s);
-}
-
-
-// ---- '#define', '#undef' ---------------------------------------------------
+// ---- Macro Definitions -----------------------------------------------------
 
 static Macro * parse_obj_macro(PP *pp) {
     Vec *body = vec_new();
     Token *t = lex_next(pp->l);
-    while (t->k != TK_NEWLINE && t->k != TK_EOF) {
+    while (t->k != TK_NEWLINE) {
         vec_push(body, t);
         t = lex_next(pp->l);
     }
@@ -74,7 +72,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
     int nparams = 0;
     Token *t = lex_peek(pp->l);
     *is_vararg = 0;
-    while (t->k != ')' && t->k != TK_NEWLINE && t->k != TK_EOF) {
+    while (t->k != ')' && t->k != TK_NEWLINE) {
         t = lex_next(pp->l);
         char *name;
         if (t->k == TK_IDENT) {
@@ -107,7 +105,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
 static Vec * parse_body(PP *pp, Map *params) {
     Vec *body = vec_new();
     Token *t = lex_next(pp->l);
-    while (t->k != TK_NEWLINE && t->k != TK_EOF) {
+    while (t->k != TK_NEWLINE) {
         if (t->k == TK_IDENT) {
             Token *param = map_get(params, t->s);
             if (param) {
@@ -152,6 +150,177 @@ static void parse_undef(PP *pp) {
 }
 
 
+// ---- Conditionals ----------------------------------------------------------
+
+static void skip_cond_incl(PP *pp) {
+    int level = 0;
+    Token *t = lex_peek(pp->l);
+    while (t->k != TK_EOF) {
+        Token *hash = t = lex_next(pp->l);
+        if (!(t->k == '#' && t->col == 1)) continue; // Directive
+        t = lex_next(pp->l);
+        if (t->k != TK_IDENT) continue;
+        if (level == 0 && (!strcmp(t->s, "elif") || !strcmp(t->s, "else") || !strcmp(t->s, "endif"))) {
+            undo_tk(pp->l, t);
+            undo_tk(pp->l, hash);
+            break;
+        }
+        if (!strcmp(t->s, "if") || !strcmp(t->s, "ifdef") || !strcmp(t->s, "ifndef")) {
+            level++;
+        }
+        if (level > 0 && !strcmp(t->s, "endif")) {
+            level--;
+        }
+    }
+}
+
+static Token * parse_defined(PP *pp) {
+    Token *t = lex_next(pp->l);
+    if (t->k == '(') {
+        t = lex_next(pp->l);
+        lex_expect(pp->l, ')');
+    }
+    if (t->k != TK_IDENT) {
+        error_at(t, "expected identifier, found %s", token2pretty(t));
+    }
+    return map_get(pp->macros, t->s) ? ONE_TK : ZERO_TK;
+}
+
+static Vec * parse_cond_line(PP *pp) {
+    Vec *tks = vec_new();
+    Token *t = expand_next(pp);
+    while (t->k != TK_NEWLINE) {
+        if (t->k == TK_IDENT && strcmp(t->s, "defined") == 0) {
+            t = parse_defined(pp);
+        } else if (t->k == TK_IDENT) {
+            t = ZERO_TK; // All other idents get replaced with '0'
+        }
+        vec_push(tks, t);
+        t = expand_next(pp);
+    }
+    return tks;
+}
+
+static int parse_cond(PP *pp) {
+    Vec *tks = parse_cond_line(pp);
+    Lexer *prev = pp->l;
+    pp->l = new_lexer(NULL); // Temporary lexer containing the arg tokens
+    undo_tks(pp->l, tks);
+    int64_t v = parse_const_int_expr(pp);
+    pp->l = prev;
+    return v != 0;
+}
+
+static void start_if(PP *pp, int is_true) {
+    Cond *cond = malloc(sizeof(Cond));
+    cond->k = COND_IF;
+    cond->was_true = is_true;
+    vec_push(pp->conds, cond);
+    if (!is_true) {
+        skip_cond_incl(pp);
+    }
+}
+
+static void parse_if(PP *pp) {
+    int is_true = parse_cond(pp);
+    start_if(pp, is_true);
+}
+
+static void parse_ifdef(PP *pp) {
+    Token *t = lex_expect(pp->l, TK_IDENT);
+    lex_expect(pp->l, TK_NEWLINE);
+    int is_true = map_get(pp->macros, t->s) != NULL;
+    start_if(pp, is_true);
+}
+
+static void parse_ifndef(PP *pp) {
+    Token *t = lex_expect(pp->l, TK_IDENT);
+    lex_expect(pp->l, TK_NEWLINE);
+    int is_true = map_get(pp->macros, t->s) == NULL;
+    start_if(pp, is_true);
+}
+
+static void parse_elif(PP *pp, Token *t) {
+    if (vec_len(pp->conds) == 0) {
+        error_at(t, "'#elif' directive without preceding '#if'");
+    }
+    Cond *cond = vec_last(pp->conds);
+    if (cond->k == COND_ELSE) {
+        error_at(t, "'#elif' directive after '#else'");
+    }
+    cond->k = COND_ELIF;
+    int is_true = parse_cond(pp);
+    if (!is_true || cond->was_true) {
+        skip_cond_incl(pp);
+    }
+    cond->was_true |= is_true;
+}
+
+static void parse_else(PP *pp, Token *t) {
+    if (vec_len(pp->conds) == 0) {
+        error_at(t, "'#else' directive without preceding '#if'");
+    }
+    Cond *cond = vec_last(pp->conds);
+    cond->k = COND_ELSE;
+    lex_expect(pp->l, TK_NEWLINE);
+    if (cond->was_true) {
+        skip_cond_incl(pp);
+    }
+}
+
+static void parse_endif(PP *pp, Token *t) {
+    if (vec_len(pp->conds) == 0) {
+        error_at(t, "'#endif' directive without preceding '#if'");
+    }
+    vec_pop(pp->conds);
+    lex_expect(pp->l, TK_NEWLINE);
+}
+
+
+// ---- Other Directives ------------------------------------------------------
+
+static int is_digit_sequence(char *s) {
+    for (; *s; s++) {
+        if (!isdigit(*s)) return 0;
+    }
+    return 1;
+}
+
+static void parse_line(PP *pp) {
+    Token *t = expand_next(pp);
+    if (!(t->k == TK_NUM && is_digit_sequence(t->s))) {
+        error_at(t, "expected number after '#line', found %s", token2pretty(t));
+    }
+    int line = atoi(t->s);
+    t = expand_next(pp);
+    char *file = NULL;
+    if (t->k == TK_STR) {
+        file = t->s;
+        t = lex_next(pp->l);
+    }
+    if (t->k != TK_NEWLINE) {
+        error_at(t, "expected newline, found %s", token2pretty(t));
+    }
+    pp->l->f->line = line;
+    if (file) pp->l->f->path = file;
+}
+
+static void parse_warning(PP *pp, Token *t) {
+    char *msg = lex_read_line(pp->l);
+    warning_at(t, msg);
+}
+
+static void parse_error(PP *pp, Token *t) {
+    char *msg = lex_read_line(pp->l);
+    error_at(t, msg);
+}
+
+static void parse_pragma(PP *pp) {
+    Token *t = lex_expect(pp->l, TK_IDENT);
+    error_at(t, "unsupported pragma directive '%s'", t->s);
+}
+
+
 // ---- Built-In Macros -------------------------------------------------------
 
 static void macro_date(PP *pp, Token *t) {
@@ -159,7 +328,7 @@ static void macro_date(PP *pp, Token *t) {
     strftime(time, sizeof(time), "%b %e %Y", &pp->now);
     t->k = TK_STR;
     t->len = strlen(time);
-    t->s = malloc(t->len + 1);
+    t->s = malloc(sizeof(char) * (t->len + 1));
     strcpy(t->s, time);
 }
 
@@ -168,14 +337,14 @@ static void macro_time(PP *pp, Token *t) {
     strftime(time, sizeof(time), "%T", &pp->now);
     t->k = TK_STR;
     t->len = strlen(time);
-    t->s = malloc(t->len + 1);
+    t->s = malloc(sizeof(char) * (t->len + 1));
     strcpy(t->s, time);
 }
 
 static void macro_file(PP *pp, Token *t) {
     t->k = TK_STR;
     t->len = strlen(pp->l->f->path);
-    t->s = malloc(t->len + 1);
+    t->s = malloc(sizeof(char) * (t->len + 1));
     strcpy(t->s, pp->l->f->path);
 }
 
@@ -183,7 +352,7 @@ static void macro_line(PP *pp, Token *t) {
     (void) pp; // Unused
     t->k = TK_NUM;
     t->len = snprintf(NULL, 0, "%d", t->line);
-    t->s = malloc(t->len + 1);
+    t->s = malloc(sizeof(char) * (t->len + 1));
     sprintf(t->s, "%d", t->line);
 }
 
@@ -221,7 +390,7 @@ static void def_built_ins(PP *pp) {
 // ---- Macro Expansion -------------------------------------------------------
 
 static void parse_directive(PP *pp);
-static Token * expand_ignore_newlines(PP *pp);
+static Token * expand_next_ignore_newlines(PP *pp);
 
 static void copy_pos_info_to_tks(Vec *tks, Token *from) {
     // Copy file, line, column info from [from] to every token in [tks] for
@@ -244,7 +413,7 @@ static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     undo_tks(pp->l, arg);
     Vec *expanded = vec_new();
     while (1) {
-        Token *t = expand_ignore_newlines(pp);
+        Token *t = expand_next_ignore_newlines(pp);
         if (t->k == TK_EOF) {
             break;
         }
@@ -316,7 +485,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
     return args;
 }
 
-static Token * expand(PP *pp) {
+static Token * expand_next(PP *pp) {
     Token *t = lex_next(pp->l);
     if (t->k != TK_IDENT) {
         return t;
@@ -354,55 +523,16 @@ static Token * expand(PP *pp) {
         undo_tk(pp->l, t);
         break;
     }
-    return expand_ignore_newlines(pp);
+    return expand_next_ignore_newlines(pp);
 }
 
-static Token * expand_ignore_newlines(PP *pp) {
-    Token *t = expand(pp);
+static Token * expand_next_ignore_newlines(PP *pp) {
+    Token *t = expand_next(pp);
     while (t->k == TK_NEWLINE) { // Ignore newlines
         t = lex_next(pp->l);
         t->has_preceding_space = 1;
     }
     return t;
-}
-
-
-// ---- Other Directives ------------------------------------------------------
-
-static int is_digit_sequence(char *s) {
-    for (; *s; s++) {
-        if (!isdigit(*s)) return 0;
-    }
-    return 1;
-}
-
-static void parse_line(PP *pp) {
-    Token *t = expand(pp);
-    if (!(t->k == TK_NUM && is_digit_sequence(t->s))) {
-        error_at(t, "expected number after '#line', found %s", token2pretty(t));
-    }
-    int line = atoi(t->s);
-    t = expand(pp);
-    char *file = NULL;
-    if (t->k == TK_STR) {
-        file = t->s;
-        t = lex_next(pp->l);
-    }
-    if (t->k != TK_NEWLINE) {
-        error_at(t, "expected newline, found %s", token2pretty(t));
-    }
-    pp->l->f->line = line;
-    if (file) pp->l->f->path = file;
-}
-
-static void parse_warning(PP *pp, Token *t) {
-    char *msg = lex_read_line(pp->l);
-    warning_at(t, msg);
-}
-
-static void parse_error(PP *pp, Token *t) {
-    char *msg = lex_read_line(pp->l);
-    error_at(t, msg);
 }
 
 
@@ -414,10 +544,16 @@ static void parse_directive(PP *pp) {
     if (t->k != TK_IDENT) goto err;
     if (strcmp(t->s, "define") == 0)        parse_define(pp);
     else if (strcmp(t->s, "undef") == 0)    parse_undef(pp);
-    else if (strcmp(t->s, "pragma") == 0)   parse_pragma(pp);
+    else if (strcmp(t->s, "if") == 0)       parse_if(pp);
+    else if (strcmp(t->s, "ifdef") == 0)    parse_ifdef(pp);
+    else if (strcmp(t->s, "ifndef") == 0)   parse_ifndef(pp);
+    else if (strcmp(t->s, "elif") == 0)     parse_elif(pp, t);
+    else if (strcmp(t->s, "else") == 0)     parse_else(pp, t);
+    else if (strcmp(t->s, "endif") == 0)    parse_endif(pp, t);
     else if (strcmp(t->s, "line") == 0)     parse_line(pp);
     else if (strcmp(t->s, "warning") == 0)  parse_warning(pp, t);
     else if (strcmp(t->s, "error") == 0)    parse_error(pp, t);
+    else if (strcmp(t->s, "pragma") == 0)   parse_pragma(pp);
     else goto err;
     return;
 err:
@@ -425,7 +561,7 @@ err:
 }
 
 Token * next_tk(PP *pp) {
-    Token *t = expand_ignore_newlines(pp);
+    Token *t = expand_next_ignore_newlines(pp);
     if (t->k == '#' && t->col == 1 && !t->hide_set) { // '#' at line start
         parse_directive(pp);
         return next_tk(pp);

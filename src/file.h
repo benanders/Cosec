@@ -12,6 +12,7 @@ typedef struct {
     int line, col;
     int buf[MAX_FILE_PEEK];
     int buf_len;
+    int last;
 } File;
 
 File * new_file(char *in);

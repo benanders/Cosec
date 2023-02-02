@@ -32,6 +32,15 @@ static Node * node(int k, Token *tk) {
     return n;
 }
 
+static Scope new_scope(int k, PP *pp) {
+    Scope s = {0};
+    s.k = k;
+    s.pp = pp;
+    s.vars = map_new();
+    s.tags = map_new();
+    return s;
+}
+
 static void enter_scope(Scope *inner, Scope *outer, int k) {
     *inner = (Scope) {0};
     inner->k = k;
@@ -1385,6 +1394,12 @@ static int try_calc_int_expr(Node *e, int64_t *val) {
     return n != NULL;
 }
 
+int64_t parse_const_int_expr(PP *pp) {
+    Scope s = new_scope(SCOPE_FILE, pp);
+    Node *e = parse_expr(&s);
+    return calc_int_expr(e);
+}
+
 
 // ---- Statements ------------------------------------------------------------
 
@@ -1790,7 +1805,7 @@ static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int 
             warning_at(peek_tk(s->pp), "excess elements in %s initializer",
                        t->k == T_STRUCT ? "struct" : "union");
         }
-        Field *f = vec_get(t->fields, excess ? vec_len(t->fields) - 1 : idx);
+        Field *f = excess ? vec_last(t->fields) : vec_get(t->fields, idx);
         size_t field_offset = offset + f->offset;
         parse_init_elem(s, excess ? NULL : inits, f->t, field_offset, designated);
         idx++;
@@ -1911,11 +1926,7 @@ Node * parse(char *path) {
     File *f = new_file(path);
     Lexer *l = new_lexer(f);
     PP *pp = new_pp(l);
-    Scope file_scope = {0};
-    file_scope.k = SCOPE_FILE;
-    file_scope.pp = pp;
-    file_scope.vars = map_new();
-    file_scope.tags = map_new();
+    Scope file_scope = new_scope(SCOPE_FILE, pp);
     Node *head = NULL;
     Node **cur = &head;
     while (!next_tk_is(pp, TK_EOF)) {

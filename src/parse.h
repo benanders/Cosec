@@ -3,7 +3,7 @@
 #define COSEC_PARSE_H
 
 #include "type.h"
-#include "lex.h"
+#include "pp.h"
 
 enum { // AST nodes
     // Constants and variables
@@ -128,5 +128,8 @@ typedef struct Node {
 } Node;
 
 Node * parse(char *path);
+
+// Used by the preprocessor for '#if', etc. directives
+int64_t parse_const_int_expr(PP *pp);
 
 #endif
