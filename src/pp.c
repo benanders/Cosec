@@ -5,6 +5,19 @@
 #include "pp.h"
 #include "err.h"
 
+#define FIRST_KEYWORD TK_VOID
+
+static char *KEYWORDS[] = {
+    "void", "char", "short", "int", "long", "float", "double",
+    "signed", "unsigned",
+    "struct", "union", "enum", "typedef",
+    "auto", "static", "extern", "register", "inline",
+    "const", "restrict", "volatile",
+    "sizeof", "if", "else", "while", "do", "for", "switch", "case", "default",
+    "break", "continue", "goto", "return",
+    NULL,
+};
+
 static void def_built_in_macros(PP *pp);
 
 PP * new_pp(Lexer *l) {
@@ -21,21 +34,6 @@ Macro * new_macro(int k) {
     Macro *m = calloc(1, sizeof(Macro));
     m->k = k;
     return m;
-}
-
-// Copy file, line, column info from [from] to every token in [tks] for error
-// messages from expanded macros; set [has_preceding_space] for the first
-// token in [tks]
-static void copy_pos_info_to_tks(Vec *tks, Token *from) {
-    for (size_t i = 0; i < vec_len(tks); i++) {
-        Token *to = vec_get(tks, i);
-        to->f = from->f;
-        to->line = from->line;
-        to->col = from->col;
-        if (i == 0) {
-            to->has_preceding_space = from->has_preceding_space;
-        }
-    }
 }
 
 
@@ -194,6 +192,21 @@ static void def_built_in_macros(PP *pp) {
 static void parse_directive(PP *pp);
 static Token * expand_next(PP *pp);
 
+static void copy_pos_info_to_tks(Vec *tks, Token *from) {
+    // Copy file, line, column info from [from] to every token in [tks] for
+    // error messages from expanded macros; set [has_preceding_space] for the
+    // first token in [tks]
+    for (size_t i = 0; i < vec_len(tks); i++) {
+        Token *to = vec_get(tks, i);
+        to->f = from->f;
+        to->line = from->line;
+        to->col = from->col;
+        if (i == 0) {
+            to->has_preceding_space = from->has_preceding_space;
+        }
+    }
+}
+
 static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     Lexer *prev = pp->l;
     pp->l = new_lexer(NULL); // Temporary lexer containing the arg tokens
@@ -319,18 +332,24 @@ static void parse_directive(PP *pp) {
     else goto err;
     return;
 err:
-    error_at(t, "unsupported preprocessor directive %s", token2str(t));
+    error_at(t, "unsupported preprocessor directive '%s'", token2str(t));
 }
 
 Token * next_tk(PP *pp) {
-    while (1) {
-        Token *t = expand_next(pp);
-        if (t->k == '#' && t->col == 1 && !t->hide_set) { // '#' at line start
-            parse_directive(pp);
-            continue;
-        }
-        return t;
+    Token *t = expand_next(pp);
+    if (t->k == '#' && t->col == 1 && !t->hide_set) { // '#' at line start
+        parse_directive(pp);
+        return next_tk(pp);
     }
+    if (t->k == TK_IDENT) { // Check for keywords
+        for (int i = 0; KEYWORDS[i]; i++) {
+            if (strcmp(t->s, KEYWORDS[i]) == 0) {
+                t->k = FIRST_KEYWORD + i;
+                break;
+            }
+        }
+    }
+    return t;
 }
 
 Token * next_tk_is(PP *pp, int k) {

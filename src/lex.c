@@ -6,19 +6,6 @@
 #include "lex.h"
 #include "err.h"
 
-#define FIRST_KEYWORD  TK_VOID
-
-static char *KEYWORDS[] = {
-    "void", "char", "short", "int", "long", "float", "double",
-    "signed", "unsigned",
-    "struct", "union", "enum", "typedef",
-    "auto", "static", "extern", "register", "inline",
-    "const", "restrict", "volatile",
-    "sizeof", "if", "else", "while", "do", "for", "switch", "case", "default",
-    "break", "continue", "goto", "return",
-    NULL,
-};
-
 static Token *SPACE_TK   = &(Token) { .k = TK_SPACE };
 static Token *NEWLINE_TK = &(Token) { .k = TK_NEWLINE };
 static Token *EOF_TK     = &(Token) { .k = TK_EOF };
@@ -106,12 +93,6 @@ static Token * lex_ident(Lexer *l) {
     }
     undo_ch(l->f, c);
     buf_push(b, '\0');
-    for (int i = 0; KEYWORDS[i]; i++) {
-        if (strcmp(b->data, KEYWORDS[i]) == 0) {
-            t->k = FIRST_KEYWORD + i;
-            break;
-        }
-    }
     t->s = b->data;
     return t;
 }
