@@ -25,7 +25,7 @@ static char *KEYWORDS[] = {
     NULL,
 };
 
-static void def_built_in_macros(PP *pp);
+static void def_built_ins(PP *pp);
 
 PP * new_pp(Lexer *l) {
     PP *pp = calloc(1, sizeof(PP));
@@ -33,7 +33,7 @@ PP * new_pp(Lexer *l) {
     pp->macros = map_new();
     time_t now = time(NULL);
     localtime_r(&now, &pp->now);
-    def_built_in_macros(pp);
+    def_built_ins(pp);
     return pp;
 }
 
@@ -200,7 +200,7 @@ static void def_built_in(PP *pp, char *name, BuiltIn fn) {
     map_put(pp->macros, name, m);
 }
 
-static void def_built_in_macros(PP *pp) {
+static void def_built_ins(PP *pp) {
     def_built_in(pp, "__DATE__", macro_date);
     def_built_in(pp, "__TIME__", macro_time);
     def_built_in(pp, "__FILE__", macro_file);

@@ -34,6 +34,7 @@ enum {
 
     TK_ARROW,
     TK_ELLIPSIS,
+    TK_CONCAT, // '##'; for preprocessor only
 
     // Types
     TK_VOID,
