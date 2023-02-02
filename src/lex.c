@@ -239,6 +239,12 @@ static Token * lex_sym(Lexer *l) {
     case '*': if (next_ch_is(l->f, '=')) { t->k = TK_A_MUL; } break;
     case '/': if (next_ch_is(l->f, '=')) { t->k = TK_A_DIV; } break;
     case '%': if (next_ch_is(l->f, '=')) { t->k = TK_A_MOD; } break;
+    case '.':
+        if (peek_ch(l->f) == '.' && peek2_ch(l->f) == '.') {
+            next_ch(l->f); next_ch(l->f);
+            t->k = TK_ELLIPSIS;
+        }
+        break;
     default: break;
     }
     return t;
@@ -314,7 +320,7 @@ Token * lex_expect(Lexer *l, int k) {
 
 static char *TKS[TK_LAST - TK_SHL] = {
     "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
-    "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->",
+    "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->", "...",
     "void", "char", "short", "int", "long", "float", "double", "signed",
     "unsigned", "struct", "union", "enum", "typedef", "auto", "static",
     "extern", "register", "inline", "const", "restrict", "volatile", "sizeof",

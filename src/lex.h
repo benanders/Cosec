@@ -33,6 +33,7 @@ enum {
     TK_DEC,
 
     TK_ARROW,
+    TK_ELLIPSIS,
 
     // Types
     TK_VOID,
