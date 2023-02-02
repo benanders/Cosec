@@ -319,6 +319,17 @@ Token * lex_expect(Lexer *l, int k) {
     return t;
 }
 
+char * lex_read_line(Lexer *l) {
+    skip_spaces(l);
+    Buf *b = buf_new();
+    int c = next_ch(l->f);
+    while (c != '\n' && c != EOF) {
+        buf_push(b, (char) c);
+        c = next_ch(l->f);
+    }
+    return b->data;
+}
+
 static char *TKS[TK_LAST - TK_SHL] = {
     "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
     "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->", "...", "##",

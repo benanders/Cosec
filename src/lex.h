@@ -119,6 +119,7 @@ void undo_tk(Lexer *l, Token *t);
 void undo_tks(Lexer *l, Vec *tks);
 Token * lex_peek(Lexer *l);
 Token * lex_expect(Lexer *l, int k);
+char * lex_read_line(Lexer *l);
 
 char * tk2str(int t);
 char * token2str(Token *t);

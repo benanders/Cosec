@@ -1,6 +1,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "pp.h"
 #include "err.h"
@@ -52,7 +53,7 @@ static void parse_pragma(PP *pp) {
 }
 
 
-// ---- '#define' -------------------------------------------------------------
+// ---- '#define', '#undef' ---------------------------------------------------
 
 static Macro * parse_obj_macro(PP *pp) {
     Vec *body = vec_new();
@@ -144,6 +145,12 @@ static void parse_define(PP *pp) {
     map_put(pp->macros, name->s, m);
 }
 
+static void parse_undef(PP *pp) {
+    Token *name = lex_expect(pp->l, TK_IDENT);
+    lex_expect(pp->l, TK_NEWLINE);
+    map_remove(pp->macros, name->s);
+}
+
 
 // ---- Built-In Macros -------------------------------------------------------
 
@@ -214,7 +221,7 @@ static void def_built_ins(PP *pp) {
 // ---- Macro Expansion -------------------------------------------------------
 
 static void parse_directive(PP *pp);
-static Token * expand_next(PP *pp);
+static Token * expand_ignore_newlines(PP *pp);
 
 static void copy_pos_info_to_tks(Vec *tks, Token *from) {
     // Copy file, line, column info from [from] to every token in [tks] for
@@ -237,7 +244,7 @@ static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     undo_tks(pp->l, arg);
     Vec *expanded = vec_new();
     while (1) {
-        Token *t = expand_next(pp);
+        Token *t = expand_ignore_newlines(pp);
         if (t->k == TK_EOF) {
             break;
         }
@@ -309,12 +316,8 @@ static Vec * parse_args(PP *pp, Macro *m) {
     return args;
 }
 
-static Token * expand_next(PP *pp) {
+static Token * expand(PP *pp) {
     Token *t = lex_next(pp->l);
-    while (t->k == TK_NEWLINE) { // Ignore newlines
-        t = lex_next(pp->l);
-        t->has_preceding_space = 1;
-    }
     if (t->k != TK_IDENT) {
         return t;
     }
@@ -351,7 +354,55 @@ static Token * expand_next(PP *pp) {
         undo_tk(pp->l, t);
         break;
     }
-    return expand_next(pp);
+    return expand_ignore_newlines(pp);
+}
+
+static Token * expand_ignore_newlines(PP *pp) {
+    Token *t = expand(pp);
+    while (t->k == TK_NEWLINE) { // Ignore newlines
+        t = lex_next(pp->l);
+        t->has_preceding_space = 1;
+    }
+    return t;
+}
+
+
+// ---- Other Directives ------------------------------------------------------
+
+static int is_digit_sequence(char *s) {
+    for (; *s; s++) {
+        if (!isdigit(*s)) return 0;
+    }
+    return 1;
+}
+
+static void parse_line(PP *pp) {
+    Token *t = expand(pp);
+    if (!(t->k == TK_NUM && is_digit_sequence(t->s))) {
+        error_at(t, "expected number after '#line', found %s", token2pretty(t));
+    }
+    int line = atoi(t->s);
+    t = expand(pp);
+    char *file = NULL;
+    if (t->k == TK_STR) {
+        file = t->s;
+        t = lex_next(pp->l);
+    }
+    if (t->k != TK_NEWLINE) {
+        error_at(t, "expected newline, found %s", token2pretty(t));
+    }
+    pp->l->f->line = line;
+    if (file) pp->l->f->path = file;
+}
+
+static void parse_warning(PP *pp, Token *t) {
+    char *msg = lex_read_line(pp->l);
+    warning_at(t, msg);
+}
+
+static void parse_error(PP *pp, Token *t) {
+    char *msg = lex_read_line(pp->l);
+    error_at(t, msg);
 }
 
 
@@ -359,11 +410,14 @@ static Token * expand_next(PP *pp) {
 
 static void parse_directive(PP *pp) {
     Token *t = lex_next(pp->l);
-    if (t->k != TK_IDENT) {
-        goto err;
-    }
-    if (strcmp(t->s, "define") == 0)      parse_define(pp);
-    else if (strcmp(t->s, "pragma") == 0) parse_pragma(pp);
+    if (t->k == TK_NEWLINE) return; // Empty directive
+    if (t->k != TK_IDENT) goto err;
+    if (strcmp(t->s, "define") == 0)        parse_define(pp);
+    else if (strcmp(t->s, "undef") == 0)    parse_undef(pp);
+    else if (strcmp(t->s, "pragma") == 0)   parse_pragma(pp);
+    else if (strcmp(t->s, "line") == 0)     parse_line(pp);
+    else if (strcmp(t->s, "warning") == 0)  parse_warning(pp, t);
+    else if (strcmp(t->s, "error") == 0)    parse_error(pp, t);
     else goto err;
     return;
 err:
@@ -371,7 +425,7 @@ err:
 }
 
 Token * next_tk(PP *pp) {
-    Token *t = expand_next(pp);
+    Token *t = expand_ignore_newlines(pp);
     if (t->k == '#' && t->col == 1 && !t->hide_set) { // '#' at line start
         parse_directive(pp);
         return next_tk(pp);
