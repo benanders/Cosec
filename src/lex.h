@@ -98,8 +98,8 @@ typedef struct {
     int has_preceding_space;
     union {
         struct { char *s; size_t len; }; // TK_IDENT, TK_STR, TK_NUM
-        int ch;        // TK_CH
-        int param_pos; // TK_MACRO_PARAM (-1 for vararg)
+        int ch; // TK_CH
+        struct { int param, is_vararg; }; // TK_MACRO_PARAM
     };
     Set *hide_set; // For the preprocessor
 } Token;

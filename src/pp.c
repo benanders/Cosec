@@ -60,19 +60,34 @@ static Macro * parse_obj_macro(PP *pp) {
     return m;
 }
 
-static Map * parse_params(PP *pp) {
+static Map * parse_params(PP *pp, int *is_vararg) {
     lex_expect(pp->l, '(');
     Map *params = map_new();
     int nparams = 0;
     Token *t = lex_peek(pp->l);
+    *is_vararg = 0;
     while (t->k != ')' && t->k != TK_NEWLINE && t->k != TK_EOF) {
-        t = lex_expect(pp->l, TK_IDENT);
-        char *name = t->s;
-        t->k = TK_MACRO_PARAM;
-        t->param_pos = nparams++;
+        t = lex_next(pp->l);
+        char *name;
+        if (t->k == TK_IDENT) {
+            name = t->s;
+            t->k = TK_MACRO_PARAM;
+            t->param = nparams++;
+            if (lex_peek(pp->l)->k == TK_ELLIPSIS) {
+                lex_next(pp->l);
+                t->is_vararg = *is_vararg = 1;
+            }
+        } else if (t->k == TK_ELLIPSIS) { // Vararg
+            name = "__VA_ARGS__";
+            t->k = TK_MACRO_PARAM;
+            t->param = nparams++;
+            t->is_vararg = *is_vararg = 1;
+        } else {
+            error_at(t, "expected identifier, found %s", token2pretty(t));
+        }
         map_put(params, name, t);
         t = lex_next(pp->l); // Skip ','
-        if (t->k != ',') {
+        if (*is_vararg || t->k != ',') {
             break;
         }
     }
@@ -89,7 +104,7 @@ static Vec * parse_body(PP *pp, Map *params) {
             Token *param = map_get(params, t->s);
             if (param) {
                 t->k = TK_MACRO_PARAM;
-                t->param_pos = param->param_pos;
+                t->param = param->param;
             }
         }
         vec_push(body, t);
@@ -100,11 +115,13 @@ static Vec * parse_body(PP *pp, Map *params) {
 }
 
 static Macro * parse_fn_macro(PP *pp) {
-    Map *params = parse_params(pp);
+    int is_vararg;
+    Map *params = parse_params(pp, &is_vararg);
     Vec *body = parse_body(pp, params);
     Macro *m = new_macro(MACRO_FN);
     m->nparams = map_len(params);
     m->body = body;
+    m->is_vararg = is_vararg;
     return m;
 }
 
@@ -228,7 +245,7 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
     for (size_t i = 0; i < vec_len(m->body); i++) {
         Token *t = copy_tk(vec_get(m->body, i));
         if (t->k == TK_MACRO_PARAM) {
-            Vec *arg = vec_get(args, t->param_pos);
+            Vec *arg = vec_get(args, t->param);
             vec_push_all(tks, pre_expand_arg(pp, arg));
         } else {
             vec_push(tks, t);
@@ -254,14 +271,18 @@ static Vec * parse_args(PP *pp, Macro *m) {
         int level = 0;
         while (1) {
             t = lex_next(pp->l);
-            if (t->k == TK_EOF) break;
             if (t->k == TK_NEWLINE) continue;
+            if (t->k == TK_EOF) break;
             if (t->k == '#' && t->col == 1) {
                 parse_directive(pp);
                 continue;
             }
-            if ((t->k == ')' || t->k == ',') && level == 0) {
-                if (t->k == ')') undo_tk(pp->l, t);
+            if (t->k == ')' && level == 0) {
+                undo_tk(pp->l, t);
+                break;
+            }
+            int in_vararg = (m->is_vararg && vec_len(args) == m->nparams - 1);
+            if (t->k == ',' && level == 0 && !in_vararg) {
                 break;
             }
             if (t->k == '(') level++;
@@ -270,6 +291,11 @@ static Vec * parse_args(PP *pp, Macro *m) {
         }
         vec_push(args, arg);
         t = lex_peek(pp->l);
+    }
+    if (m->is_vararg && vec_len(args) == m->nparams - 1) {
+        // Allow not specifying the vararg parameter, e.g.
+        // #define x(a, ...) [...] \\ x(3)
+        vec_push(args, vec_new());
     }
     return args;
 }
