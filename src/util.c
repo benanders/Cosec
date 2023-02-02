@@ -43,6 +43,13 @@ void vec_push(Vec *v, void *elem) {
     v->data[v->len++] = elem;
 }
 
+void vec_push_all(Vec *v, Vec *to_append) {
+    for (size_t i = 0; i < vec_len(to_append); i++) {
+        void *elem = vec_get(to_append, i);
+        vec_push(v, elem);
+    }
+}
+
 void * vec_pop(Vec *v) {
     if (v && v->len > 0) {
         return v->data[--v->len];
@@ -202,6 +209,13 @@ void map_put(Map *m, char *k, void *v) {
     }
 }
 
+void map_remove(Map *m, char *k) {
+    uint32_t h = map_idx(m, k);
+    m->k[h] = MAP_TOMBSTONE;
+    m->v[h] = NULL;
+    m->num--;
+}
+
 void * map_get(Map *m, char *k) {
     uint32_t h = map_idx(m, k);
     if (m->k[h]) {
@@ -211,11 +225,8 @@ void * map_get(Map *m, char *k) {
     }
 }
 
-void map_remove(Map *m, char *k) {
-    uint32_t h = map_idx(m, k);
-    m->k[h] = MAP_TOMBSTONE;
-    m->v[h] = NULL;
-    m->num--;
+size_t map_len(Map *m) {
+    return m->num;
 }
 
 
@@ -258,9 +269,8 @@ void set_union(Set **dst, Set *src) {
 }
 
 void set_intersection(Set **dst, Set *src) {
-    if (!dst) return;
+    if (!dst || !*dst) return;
     if (!src) { vec_empty(*dst); return; }
-    if (!*dst) return;
     for (size_t i = 0; i < vec_len(*dst); i++) {
         char *v = vec_get(*dst, i);
         if (!set_has(src, v)) {

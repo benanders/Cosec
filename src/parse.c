@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <inttypes.h>
 
 #include "parse.h"
 #include "pp.h"
@@ -488,7 +489,7 @@ static Type * parse_array_declarator(Scope *s, Type *base) {
         if (!try_calc_int_expr(n, &i)) {
             len = n; // VLA
         } else if (i < 0) {
-            error_at(n->tk, "cannot have array with negative size ('%ld')", i);
+            error_at(n->tk, "cannot have array with negative size ('" PRId64 "')", i);
         } else {
             len = node(N_IMM, n->tk);
             len->t = t_num(T_LLONG, 1);
@@ -1715,7 +1716,7 @@ static size_t parse_array_designator(Scope *s, Type *t) {
     Node *e = parse_expr(s);
     int64_t desg = calc_int_expr(e);
     if (desg < 0 || (t->len && (uint64_t) desg >= t->len->imm)) {
-        error_at(e->tk, "array designator index '%llu' exceeds array bounds", desg);
+        error_at(e->tk, "array designator index '" PRId64 "' exceeds array bounds", desg);
     }
     expect_tk(s->pp, ']');
     expect_tk(s->pp, '=');

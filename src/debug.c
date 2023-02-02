@@ -1,6 +1,7 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <inttypes.h>
 
 #include "debug.h"
 
@@ -28,7 +29,7 @@ static void print_struct_fields(Type *t) {
         Field *f = vec_get(t->fields, i);
         print_type(f->t);
         if (f->name) printf(" %s", f->name);
-        if (t->k == T_STRUCT) printf(" (%llu)", f->offset);
+        if (t->k == T_STRUCT) printf(" (%" PRIu64 ")", f->offset);
         printf(", ");
     }
     printf("}");
@@ -44,7 +45,7 @@ static void print_enum_consts(Type *t) {
             print_type(f->t);
             printf(") ");
         }
-        printf("%s = %llu, ", f->name, f->offset);
+        printf("%s = %" PRIu64 ", ", f->name, f->offset);
     }
     printf("}");
 }
@@ -65,7 +66,7 @@ static void print_type(Type *t) {
     case T_ARR:
         print_type(t->elem);
         printf("[");
-        if (t->len && t->len->k == N_IMM) printf("%llu", t->len->imm);
+        if (t->len && t->len->k == N_IMM) printf("%" PRIu64, t->len->imm);
         else if (t->len) print_expr(t->len);
         printf("]");
         break;
@@ -95,7 +96,7 @@ static void print_expr(Node *n) {
         if (n->t->k == T_CHAR && n->imm < CHAR_MAX && !iscntrl((char) n->imm)) {
             printf(" '%c'", (char) n->imm);
         } else {
-            printf(" %llu", n->imm);
+            printf(" %" PRId64, n->imm);
         }
         break;
     case N_FP:
@@ -111,7 +112,7 @@ static void print_expr(Node *n) {
         printf(" { ");
         for (size_t i = 0; i < vec_len(n->inits); i++) {
             Node *elem = vec_get(n->inits, i);
-            printf("[%llu] = ", elem->init_offset);
+            printf("[%" PRIu64 "] = ", elem->init_offset);
             print_expr(elem->init_val);
             printf(", ");
         }
@@ -126,9 +127,9 @@ static void print_expr(Node *n) {
         assert(n->global->k == N_GLOBAL);
         printf(" &%s", n->global->var_name);
         if (n->kptr_offset > 0) {
-            printf(" + %llu", n->kptr_offset);
+            printf(" + %" PRIu64, n->kptr_offset);
         } else if (n->kptr_offset < 0) {
-            printf(" - %llu", -n->kptr_offset);
+            printf(" - %" PRIu64, -n->kptr_offset);
         }
         break;
 

@@ -14,6 +14,8 @@ enum {
 typedef struct {
     int k;
     Vec *body; // of 'Token *'
+    size_t nparams; // for MACRO_FN
+    int is_vararg;  // for MACRO_FN
 } Macro;
 
 typedef struct { // C pre-processor
@@ -23,12 +25,12 @@ typedef struct { // C pre-processor
 
 PP * new_pp(Lexer *l);
 
-Token * next_tk(PP *p);
-Token * next_tk_is(PP *p, int k);
-Token * peek_tk(PP *p);
-Token * peek_tk_is(PP *p, int k);
-Token * peek2_tk(PP *p);
-Token * peek2_tk_is(PP *p, int k);
-Token * expect_tk(PP *p, int k);
+Token * next_tk(PP *pp);
+Token * next_tk_is(PP *pp, int k);
+Token * peek_tk(PP *pp);
+Token * peek_tk_is(PP *pp, int k);
+Token * peek2_tk(PP *pp);
+Token * peek2_tk_is(PP *pp, int k);
+Token * expect_tk(PP *pp, int k);
 
 #endif

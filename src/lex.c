@@ -21,6 +21,7 @@ static char *KEYWORDS[] = {
 
 static Token *SPACE_TK = &(Token) { .k = TK_SPACE };
 static Token *NEWLINE_TK = &(Token) { .k = TK_NEWLINE };
+static Token *EOF_TK = &(Token) { .k = TK_EOF };
 
 Lexer * new_lexer(File *f) {
     Lexer *l = calloc(1, sizeof(Lexer));
@@ -29,7 +30,7 @@ Lexer * new_lexer(File *f) {
     return l;
 }
 
-static Token * new_tk(Lexer *l, int k) {
+Token * new_tk(Lexer *l, int k) {
     Token *t = calloc(1, sizeof(Token));
     t->k = k;
     t->f = l->f;
@@ -266,6 +267,7 @@ static Token * lex_sym(Lexer *l) {
 // ---- Tokens ----------------------------------------------------------------
 
 static Token * lex_raw(Lexer *l) {
+    if (!l->f) return EOF_TK;
     if (skip_spaces(l)) {
         return SPACE_TK;
     }
@@ -288,7 +290,7 @@ static Token * lex_raw(Lexer *l) {
     }
 }
 
-Token * lex_tk(Lexer *l) {
+Token * lex_next(Lexer *l) {
     Token *t;
     if (vec_len(l->buf) > 0) {
         t = vec_pop(l->buf);
@@ -315,6 +317,20 @@ void undo_tks(Lexer *l, Vec *tks) {
     }
 }
 
+Token * lex_peek(Lexer *l) {
+    Token *t = lex_next(l);
+    undo_tk(l, t);
+    return t;
+}
+
+Token * lex_expect(Lexer *l, int k) {
+    Token *t = lex_next(l);
+    if (t->k != k) {
+        error_at(t, "expected %s, found %s", tk2pretty_str(k), token2pretty_str(t));
+    }
+    return t;
+}
+
 static char *TKS[TK_LAST - TK_SHL] = {
     "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
     "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->",
@@ -323,21 +339,15 @@ static char *TKS[TK_LAST - TK_SHL] = {
     "extern", "register", "inline", "const", "restrict", "volatile", "sizeof",
     "if", "else", "while", "do", "for", "switch", "case", "default", "break",
     "continue", "goto", "return", "number", "character", "string",
-    "identifier", "end of file", "space", "newline",
+    "identifier", "end of file", "space", "newline", "macro parameter",
 };
 
 char * tk2str(int t) {
     Buf *b = buf_new();
-    if (t < FIRST_KEYWORD) {
-        buf_push(b, '\'');
-    }
     if (t < 256) {
         buf_print(b, quote_ch((char) t));
     } else {
         buf_print(b, TKS[t - TK_SHL]);
-    }
-    if (t < FIRST_KEYWORD) {
-        buf_push(b, '\'');
     }
     buf_push(b, '\0');
     return b->data;
@@ -346,11 +356,35 @@ char * tk2str(int t) {
 char * token2str(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
+        case TK_NUM: case TK_IDENT: buf_printf(b, "%s", t->s); break;
+        case TK_CH:  buf_printf(b, "'%c'", quote_ch((char) t->ch)); break;
+        case TK_STR: buf_printf(b, "\"%s\"", quote_str(t->s, t->len)); break;
+        default:     return tk2str(t->k);
+    }
+    return b->data;
+}
+
+char * tk2pretty_str(int t) {
+    Buf *b = buf_new();
+    if (t < TK_NUM) {
+        buf_push(b, '\'');
+    }
+    buf_print(b, tk2str(t));
+    if (t < TK_NUM) {
+        buf_push(b, '\'');
+    }
+    buf_push(b, '\0');
+    return b->data;
+}
+
+char * token2pretty_str(Token *t) {
+    Buf *b = buf_new();
+    switch (t->k) {
         case TK_NUM:   buf_printf(b, "number '%s'", t->s); break;
         case TK_CH:    buf_printf(b, "character '%c'", quote_ch((char) t->ch)); break;
         case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->s, t->len)); break;
-        case TK_IDENT: buf_printf(b, "'%s'", t->s); break;
-        default:       return tk2str(t->k);
+        case TK_IDENT: buf_printf(b, "identifier '%s'", t->s); break;
+        default:       return tk2pretty_str(t->k);
     }
     return b->data;
 }

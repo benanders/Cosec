@@ -15,6 +15,7 @@ typedef struct {
 
 Vec *  vec_new();
 void   vec_push(Vec *v, void *elem);
+void   vec_push_all(Vec *v, Vec *to_append);
 void * vec_pop(Vec *v);
 void   vec_remove(Vec *v, size_t i);
 size_t vec_len(Vec *v);
@@ -38,8 +39,9 @@ typedef struct {
 
 Map *  map_new();
 void   map_put(Map *m, char *k, void *v);
-void * map_get(Map *m, char *k);
 void   map_remove(Map *m, char *k);
+void * map_get(Map *m, char *k);
+size_t map_len(Map *m);
 
 typedef Vec Set;
 
