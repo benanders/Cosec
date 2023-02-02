@@ -158,6 +158,20 @@ static void macro_line(PP *pp, Token *t) {
     sprintf(t->s, "%d", t->line);
 }
 
+static void macro_one(PP *pp, Token *t) {
+    (void) pp; // Unused
+    t->k = TK_NUM;
+    t->len = 1;
+    t->s = "1";
+}
+
+static void macro_stdc_version(PP *pp, Token *t) {
+    (void) pp; // Unused
+    t->k = TK_NUM;
+    t->s = "199901L"; // C99 standard
+    t->len = strlen(t->s);
+}
+
 static void def_built_in(PP *pp, char *name, BuiltIn fn) {
     Macro *m = new_macro(MACRO_BUILT_IN);
     m->build_in = fn;
@@ -169,6 +183,9 @@ static void def_built_in_macros(PP *pp) {
     def_built_in(pp, "__TIME__", macro_time);
     def_built_in(pp, "__FILE__", macro_file);
     def_built_in(pp, "__LINE__", macro_line);
+    def_built_in(pp, "__STDC__", macro_one);
+    def_built_in(pp, "__STDC_VERSION__", macro_stdc_version);
+    def_built_in(pp, "__STDC_HOSTED__", macro_one);
 }
 
 
@@ -269,8 +286,8 @@ static Token * expand_next(PP *pp) {
         if (lex_peek(pp->l)->k != '(') return t;
         Vec *args = parse_args(pp, m);
         if (vec_len(args) != m->nparams) {
-            error_at(t, "incorrect number of arguments provided to "
-                        "function-like macro (have %zu, expected %zu)",
+            error_at(t, "incorrect number of arguments provided to function-"
+                        "like macro invocation (have %zu, expected %zu)",
                         vec_len(args), m->nparams);
         }
         Token *rparen = lex_expect(pp->l, ')');
