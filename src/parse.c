@@ -265,8 +265,8 @@ static Node * parse_num(Token *tk) {
 static Type * parse_decl_specs(Scope *s, int *sclass);
 static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_names);
 
+static Node * parse_expr_no_commas(Scope *s);
 static int64_t calc_int_expr(Node *e);
-static Node *  parse_expr_no_commas(Scope *s);
 
 static int is_type(Scope *s, Token *t) {
     if (t->k == TK_IDENT) {
@@ -477,7 +477,6 @@ t_err:
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
 static Node * parse_expr(Scope *s);
-
 static int try_calc_int_expr(Node *e, int64_t *val);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {

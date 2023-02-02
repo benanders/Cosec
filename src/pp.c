@@ -122,8 +122,8 @@ static void parse_directive(PP *pp);
 static Token * expand_next(PP *pp);
 
 static Vec * pre_expand_arg(PP *pp, Vec *arg) {
-    Lexer *prev = pp->l; // New temporary lexer containing the arg
-    pp->l = new_lexer(NULL);
+    Lexer *prev = pp->l;
+    pp->l = new_lexer(NULL); // Temporary lexer containing the arg's tokens
     undo_tks(pp->l, arg);
     Vec *expanded = vec_new();
     while (1) {
@@ -137,13 +137,6 @@ static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     return expanded;
 }
 
-static void add_to_hide_sets(Vec *tks, Set *hide_set) {
-    for (size_t i = 0; i < vec_len(tks); i++) {
-        Token *t = vec_get(tks, i);
-        set_union(&t->hide_set, hide_set);
-    }
-}
-
 static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
     Vec *tks = vec_new();
     for (size_t i = 0; i < vec_len(m->body); i++) {
@@ -155,7 +148,10 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
             vec_push(tks, t);
         }
     }
-    add_to_hide_sets(tks, hide_set);
+    for (size_t i = 0; i < vec_len(tks); i++) { // Add [hide_set] to all the tks
+        Token *t = vec_get(tks, i);
+        set_union(&t->hide_set, hide_set);
+    }
     return tks;
 }
 
@@ -293,7 +289,7 @@ Token * peek2_tk_is(PP *pp, int k) {
 Token * expect_tk(PP *pp, int k) {
     Token *t = next_tk(pp);
     if (t->k != k) {
-        error_at(t, "expected %s, found %s", tk2pretty_str(k), token2pretty_str(t));
+        error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));
     }
     return t;
 }

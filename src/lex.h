@@ -113,14 +113,14 @@ Token * new_tk(Lexer *l, int k);
 Token * copy_tk(Token *t);
 
 Token * lex_next(Lexer *l);
-void    undo_tk(Lexer *l, Token *t);
-void    undo_tks(Lexer *l, Vec *tks);
+void undo_tk(Lexer *l, Token *t);
+void undo_tks(Lexer *l, Vec *tks);
 Token * lex_peek(Lexer *l);
 Token * lex_expect(Lexer *l, int k);
 
 char * tk2str(int t);
 char * token2str(Token *t);
-char * tk2pretty_str(int t);
-char * token2pretty_str(Token *t);
+char * tk2pretty(int t);
+char * token2pretty(Token *t);
 
 #endif

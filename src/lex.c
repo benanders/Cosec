@@ -19,9 +19,9 @@ static char *KEYWORDS[] = {
     NULL,
 };
 
-static Token *SPACE_TK = &(Token) { .k = TK_SPACE };
+static Token *SPACE_TK   = &(Token) { .k = TK_SPACE };
 static Token *NEWLINE_TK = &(Token) { .k = TK_NEWLINE };
-static Token *EOF_TK = &(Token) { .k = TK_EOF };
+static Token *EOF_TK     = &(Token) { .k = TK_EOF };
 
 Lexer * new_lexer(File *f) {
     Lexer *l = calloc(1, sizeof(Lexer));
@@ -326,7 +326,7 @@ Token * lex_peek(Lexer *l) {
 Token * lex_expect(Lexer *l, int k) {
     Token *t = lex_next(l);
     if (t->k != k) {
-        error_at(t, "expected %s, found %s", tk2pretty_str(k), token2pretty_str(t));
+        error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));
     }
     return t;
 }
@@ -364,7 +364,7 @@ char * token2str(Token *t) {
     return b->data;
 }
 
-char * tk2pretty_str(int t) {
+char * tk2pretty(int t) {
     Buf *b = buf_new();
     if (t < TK_NUM) {
         buf_push(b, '\'');
@@ -377,14 +377,14 @@ char * tk2pretty_str(int t) {
     return b->data;
 }
 
-char * token2pretty_str(Token *t) {
+char * token2pretty(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
         case TK_NUM:   buf_printf(b, "number '%s'", t->s); break;
         case TK_CH:    buf_printf(b, "character '%c'", quote_ch((char) t->ch)); break;
         case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->s, t->len)); break;
         case TK_IDENT: buf_printf(b, "identifier '%s'", t->s); break;
-        default:       return tk2pretty_str(t->k);
+        default:       return tk2pretty(t->k);
     }
     return b->data;
 }
