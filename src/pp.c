@@ -38,7 +38,7 @@ PP * new_pp(Lexer *l) {
     pp->l = l;
     pp->macros = map_new();
     pp->conds = vec_new();
-    pp->included = map_new();
+    pp->include_once = map_new();
     pp->include_paths = vec_new();
     time_t now = time(NULL);
     localtime_r(&now, &pp->now);
@@ -226,7 +226,7 @@ static char * parse_include_path(PP *pp, int *search_local) {
 
 static int include(PP *pp, char *dir, char *file, int include_once) {
     char *path = full_path(concat_paths(dir, file));
-    if (map_get(pp->included, path)) return 1;
+    if (map_get(pp->include_once, path)) return 1;
     FILE *fp = fopen(path, "r");
     if (!fp) {
         return 0;
@@ -235,7 +235,7 @@ static int include(PP *pp, char *dir, char *file, int include_once) {
     Lexer *l = new_lexer(f);
     push_lexer(pp, l);
     if (include_once) {
-        map_put(pp->included, path, (void *) 1);
+        map_put(pp->include_once, path, (void *) 1);
     }
     return 1;
 }
@@ -258,10 +258,6 @@ static void parse_include(PP *pp, Token *t) {
         }
     }
     error_at(t, "cannot find file '%s'", path);
-}
-
-static void parse_include_next(PP *pp, Token *t) {
-
 }
 
 static void def_default_include_paths(PP *pp) {
@@ -450,9 +446,19 @@ static void parse_error(PP *pp, Token *t) {
     error_at(t, msg);
 }
 
+static void parse_pragma_once(PP *pp) {
+    char *path = full_path(pp->l->f->name);
+    map_put(pp->include_once, path, (void *) 1);
+    lex_expect(pp, TK_NEWLINE);
+}
+
 static void parse_pragma(PP *pp) {
     Token *t = lex_expect(pp, TK_IDENT);
-    error_at(t, "unsupported pragma directive '%s'", t->s);
+    if (strcmp(t->s, "once") == 0) {
+        parse_pragma_once(pp);
+    } else {
+        error_at(t, "unsupported pragma directive '%s'", token2str(t));
+    }
 }
 
 
@@ -683,7 +689,6 @@ static void parse_directive(PP *pp) {
     else if (strcmp(t->s, "undef") == 0)        parse_undef(pp);
     else if (strcmp(t->s, "include") == 0 ||
              strcmp(t->s, "import") == 0)       parse_include(pp, t);
-    else if (strcmp(t->s, "include_next") == 0) parse_include_next(pp, t);
     else if (strcmp(t->s, "if") == 0)           parse_if(pp);
     else if (strcmp(t->s, "ifdef") == 0)        parse_ifdef(pp);
     else if (strcmp(t->s, "ifndef") == 0)       parse_ifndef(pp);

@@ -39,7 +39,7 @@ typedef struct PP { // C pre-processor
     Lexer *l;
     Map *macros;
     Vec *conds;
-    Map *included;
+    Map *include_once;
     Vec *include_paths;
     struct tm now;
 } PP;
