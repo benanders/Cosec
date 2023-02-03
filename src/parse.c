@@ -1922,8 +1922,7 @@ static Node * parse_decl(Scope *s) {
     return head;
 }
 
-Node * parse(char *path) {
-    File *f = new_file(path);
+Node * parse(File *f) {
     Lexer *l = new_lexer(f);
     PP *pp = new_pp(l);
     Scope file_scope = new_scope(SCOPE_FILE, pp);

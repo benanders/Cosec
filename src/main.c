@@ -40,7 +40,12 @@ static void print_help() {
 }
 
 static void pipeline(char *in, char *out) {
-    Node *ast = parse(in);
+    FILE *fp = fopen(in, "r");
+    if (!fp) {
+        error("cannot read input file '%s'", in);
+    }
+    File *f = new_file(fp, in);
+    Node *ast = parse(f);
     print_ast(ast);
 }
 

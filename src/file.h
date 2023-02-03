@@ -8,14 +8,14 @@
 
 typedef struct {
     FILE *f;
-    char *path;
+    char *name;
     int line, col;
     int buf[MAX_FILE_PEEK];
     int buf_len;
     int last;
 } File;
 
-File * new_file(char *in);
+File * new_file(FILE *fp, char *name);
 
 int next_ch(File *f);
 void undo_ch(File *f, int c);

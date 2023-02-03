@@ -127,7 +127,7 @@ typedef struct Node {
     };
 } Node;
 
-Node * parse(char *path);
+Node * parse(File *f);
 
 // Used by the preprocessor for '#if', etc. directives
 int64_t parse_const_int_expr(PP *pp);

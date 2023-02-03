@@ -4,16 +4,13 @@
 #include <string.h>
 
 #include "file.h"
-#include "err.h"
 
-File * new_file(char *in) {
+File * new_file(FILE *fp, char *name) {
+    assert(fp);
     File *f = malloc(sizeof(File));
-    f->f = fopen(in, "r");
-    if (!f->f) {
-        error("can't read file '%s'", in);
-    }
-    f->path = malloc(sizeof(char) * (strlen(in) + 1));
-    strcpy(f->path, in);
+    f->f = fp;
+    f->name = malloc(sizeof(char) * (strlen(name) + 1));
+    strcpy(f->name, name);
     f->line = 1;
     f->col = 1;
     f->buf_len = 0;

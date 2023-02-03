@@ -17,7 +17,7 @@ Lexer * new_lexer(File *f) {
     return l;
 }
 
-Token * new_tk(Lexer *l, int k) {
+static Token * new_tk(Lexer *l, int k) {
     Token *t = calloc(1, sizeof(Token));
     t->k = k;
     t->f = l->f;
@@ -278,7 +278,7 @@ static Token * lex_raw(Lexer *l) {
     }
 }
 
-Token * lex_next(Lexer *l) {
+Token * lex_tk(Lexer *l) {
     Token *t;
     if (vec_len(l->buf) > 0) {
         t = vec_pop(l->buf);
@@ -305,20 +305,6 @@ void undo_tks(Lexer *l, Vec *tks) {
     }
 }
 
-Token * lex_peek(Lexer *l) {
-    Token *t = lex_next(l);
-    undo_tk(l, t);
-    return t;
-}
-
-Token * lex_expect(Lexer *l, int k) {
-    Token *t = lex_next(l);
-    if (t->k != k) {
-        error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));
-    }
-    return t;
-}
-
 char * lex_read_line(Lexer *l) {
     skip_spaces(l);
     Buf *b = buf_new();
@@ -327,6 +313,35 @@ char * lex_read_line(Lexer *l) {
         buf_push(b, (char) c);
         c = next_ch(l->f);
     }
+    return b->data;
+}
+
+char * lex_include_path(Lexer *l, int *search_local) {
+    skip_spaces(l);
+    Token *err = new_tk(l, -1);
+    char close;
+    if (next_ch_is(l->f, '"')) {
+        close = '"';
+        *search_local = 1;
+    } else if (next_ch_is(l->f, '<')) {
+        close = '>';
+        *search_local = 0;
+    } else {
+        return NULL;
+    }
+    Buf *b = buf_new();
+    int c = next_ch(l->f);
+    while (c != close && c != EOF && c != '\n') {
+        buf_push(b, (char) c);
+        c = next_ch(l->f);
+    }
+    if (c != close) {
+        error_at(err, "premature end of '#include' path");
+    }
+    if (b->len == 0) {
+        error_at(err, "cannot have empty '#include' path");
+    }
+    buf_push(b, '\0');
     return b->data;
 }
 

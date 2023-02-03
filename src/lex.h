@@ -99,27 +99,27 @@ typedef struct {
     int has_preceding_space;
     union {
         struct { char *s; size_t len; }; // TK_IDENT, TK_STR, TK_NUM
-        int ch; // TK_CH
-        struct { int param, is_vararg; }; // TK_MACRO_PARAM
+        int ch;    // TK_CH
+        int param; // TK_MACRO_PARAM
     };
     Set *hide_set; // For the preprocessor
 } Token;
 
-typedef struct {
+typedef struct Lexer {
+    struct Lexer *parent; // For '#include's in the preprocessor
     File *f;
     Vec *buf;
 } Lexer;
 
 Lexer * new_lexer(File *f);
-Token * new_tk(Lexer *l, int k);
 Token * copy_tk(Token *t);
 
-Token * lex_next(Lexer *l);
+Token * lex_tk(Lexer *l);
 void undo_tk(Lexer *l, Token *t);
 void undo_tks(Lexer *l, Vec *tks);
-Token * lex_peek(Lexer *l);
-Token * lex_expect(Lexer *l, int k);
+
 char * lex_read_line(Lexer *l);
+char * lex_include_path(Lexer *l, int *search_local);
 
 char * tk2str(int t);
 char * token2str(Token *t);

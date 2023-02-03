@@ -5,8 +5,12 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <limits.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include "util.h"
+#include "err.h"
 
 
 // ---- Vector ----------------------------------------------------------------
@@ -323,4 +327,67 @@ char * quote_str(char *s, size_t len) {
     }
     buf_push(b, '\0');
     return b->data;
+}
+
+
+// ---- Path Manipulation -----------------------------------------------------
+
+char * concat_paths(char *dir, char *file) {
+    size_t dir_len = strlen(dir), file_len = strlen(file);
+    char *concat = malloc(sizeof(char) * (dir_len + file_len + 2));
+    strcpy(concat, dir);
+    concat[dir_len] = '/';
+    strcpy(&concat[dir_len + 1], file);
+    return concat;
+}
+
+char * get_dir(char *path) {
+    size_t len = strlen(path);
+    if (len == 0 || strcmp(path, "/") == 0) return path;
+    if (path[len - 1] == '/') len--;
+    size_t last = 0;
+    for (; last < len && path[last] != '/'; last++);
+    if (last == len) return "."; // No '/'
+    char *dir = malloc(sizeof(char) * (last + 1));
+    strncpy(dir, path, last);
+    dir[last] = '\0';
+    return dir;
+}
+
+static char * simplify_path(char *p) {
+    assert(*p == '/');
+    char *s = malloc(sizeof(char) * (strlen(p) + 1));
+    char *q = s;
+    *q++ = *p++; // '/'
+    while (*p) {
+        if (*p == '/') {
+            p++;
+        } else if (memcmp(p, "./", 2) == 0) {
+            p += 2;
+        } else if (memcmp(p, "../", 3) == 0) {
+            p += 3;
+            if (q == s + 1) continue;
+            for (q--; q[-1] != '/'; q--);
+        } else {
+            while (*p && *p != '/') {
+                *q++ = *p++;
+            }
+            if (*p == '/') {
+                *q++ = *p++;
+            }
+        }
+    }
+    *q = '\0';
+    return s;
+}
+
+char * full_path(char *path) {
+    static char cwd[PATH_MAX];
+    if (path[0] == '/') {
+        return simplify_path(path);
+    }
+    if (!*cwd && !getcwd(cwd, PATH_MAX)) {
+        error("cannot get current working directory: %s", strerror(errno));
+    }
+    return simplify_path(concat_paths(cwd, path));
 }
