@@ -548,6 +548,22 @@ static void copy_pos_info_to_tks(Vec *tks, Token *from) {
     }
 }
 
+static Token * stringize(Vec *tks, Token *hash) {
+    Buf *b = buf_new();
+    for (size_t i = 0; i < vec_len(tks); i++) {
+        Token *t = vec_get(tks, i);
+        if (b->len > 0 && t->has_preceding_space) {
+            buf_push(b, ' ');
+        }
+        buf_print(b, token2str(t));
+    }
+    Token *str = copy_tk(hash);
+    str->k = TK_STR;
+    str->s = b->data;
+    str->len = b->len;
+    return str;
+}
+
 static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     // Create a temporary lexer for the arg; don't use 'push_lexer' because we
     // want the 'TK_EOF' when we're finished pre-expansion
@@ -570,7 +586,13 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
     Vec *tks = vec_new();
     for (size_t i = 0; i < vec_len(m->body); i++) {
         Token *t = copy_tk(vec_get(m->body, i));
-        if (t->k == TK_MACRO_PARAM) {
+        Token *u = i < vec_len(m->body) - 1 ? vec_get(m->body, i + 1) : NULL;
+        if (t->k == '#' && u && u->k == TK_MACRO_PARAM) {
+            Vec *arg = vec_get(args, u->param);
+            Token *str = stringize(arg, t);
+            vec_push(tks, str);
+            i++; // Skip 'u'
+        } else if (t->k == TK_MACRO_PARAM) {
             Vec *arg = vec_get(args, t->param);
             arg = pre_expand_arg(pp, arg);
             copy_pos_info_to_tks(arg, t); // For leading token's preceding space

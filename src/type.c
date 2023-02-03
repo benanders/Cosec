@@ -44,7 +44,7 @@ Type * t_arr(Type *base, struct Node *len) {
     t->k = T_ARR;
     t->elem = base;
     t->len = len;
-    if (len->k == N_IMM) {
+    if (len && len->k == N_IMM) {
         t->size = t->elem->size * len->imm;
     }
     t->align = 8;
