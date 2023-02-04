@@ -119,6 +119,10 @@ char buf_pop(Buf *b) {
 
 void buf_print(Buf *b, char *s) {
     size_t len = strlen(s);
+    buf_nprint(b, s, len);
+}
+
+void buf_nprint(Buf *b, char *s, size_t len) {
     buf_resize(b, len);
     strncpy(&b->data[b->len], s, len);
     b->len += len;

@@ -259,13 +259,33 @@ static Node * parse_float(Token *tk) {
     return n;
 }
 
-static Node * parse_num(Token *tk) {
+static Node * parse_num(Scope *s) {
+    Token *tk = expect_tk(s->pp, TK_NUM);
     if (strpbrk(tk->s, ".pP") ||
             (strncasecmp(tk->s, "0x", 2) != 0 && strpbrk(tk->s, "eE"))) {
         return parse_float(tk);
     } else {
         return parse_int(tk);
     }
+}
+
+static Node * parse_str(Scope *s) {
+    Buf *buf = buf_new();
+    Token *t = peek_tk(s->pp), *first = t;
+    while (t->k == TK_STR) {
+        buf_nprint(buf, t->s, t->len); // Concat consecutive strings
+        next_tk(s->pp);
+        t = peek_tk(s->pp);
+    }
+    buf_push(buf, '\0');
+    Node *n = node(N_STR, first);
+    Node *len = node(N_IMM, first);
+    len->t = t_num(T_LLONG, 1);
+    len->imm = buf->len;
+    n->t = t_arr(t_num(T_CHAR, 0), len);
+    n->str = buf->data;
+    n->len = buf->len;
+    return n;
 }
 
 
@@ -705,30 +725,27 @@ static Node * discharge(Node *l) {
 
 static Node * parse_operand(Scope *s) {
     Node *n;
-    Token *tk = next_tk(s->pp);
+    Token *tk = peek_tk(s->pp);
     switch (tk->k) {
     case TK_NUM:
-        n = parse_num(tk);
+        n = parse_num(s);
         break;
     case TK_CH:
+        next_tk(s->pp);
         n = node(N_IMM, tk);
         n->t = t_num(T_CHAR, 0);
         n->imm = tk->ch;
         break;
     case TK_STR:
-        n = node(N_STR, tk);
-        Node *len = node(N_IMM, tk);
-        len->t = t_num(T_LLONG, 1);
-        len->imm = tk->len;
-        n->t = t_arr(t_num(T_CHAR, 0), len);
-        n->str = tk->s;
-        n->len = tk->len;
+        n = parse_str(s);
         break;
     case TK_IDENT:
+        next_tk(s->pp);
         n = find_var(s, tk->s);
         if (!n) error_at(tk, "undeclared identifier '%s'", tk->s);
         break;
     case '(':
+        next_tk(s->pp);
         n = parse_subexpr(s, PREC_MIN);
         expect_tk(s->pp, ')');
         break;

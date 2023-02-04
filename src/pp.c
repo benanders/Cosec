@@ -410,19 +410,16 @@ static void parse_endif(PP *pp, Token *t) {
 
 // ---- Other Directives ------------------------------------------------------
 
-static int is_digit_sequence(char *s) {
-    for (; *s; s++) {
-        if (!isdigit(*s)) return 0;
-    }
-    return 1;
-}
-
 static void parse_line(PP *pp) {
     Token *t = expand_next(pp);
-    if (!(t->k == TK_NUM && is_digit_sequence(t->s))) {
+    if (t->k != TK_NUM) {
         error_at(t, "expected number after '#line', found %s", token2pretty(t));
     }
-    int line = atoi(t->s);
+    char *end;
+    long line = strtol(t->s, &end, 10);
+    if (*end != '\0' || line < 0) {
+        error_at(t, "invalid line number '%s' after '#line'", token2str(t));
+    }
     t = expand_next(pp);
     char *file = NULL;
     if (t->k == TK_STR) {
@@ -432,8 +429,10 @@ static void parse_line(PP *pp) {
     if (t->k != TK_NEWLINE) {
         error_at(t, "expected newline, found %s", token2pretty(t));
     }
-    pp->l->f->line = line;
-    if (file) pp->l->f->name = file;
+    pp->l->f->line = (int) line;
+    if (file) {
+        pp->l->f->name = file;
+    }
 }
 
 static void parse_warning(PP *pp, Token *t) {

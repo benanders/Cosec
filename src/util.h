@@ -31,6 +31,7 @@ Buf * buf_new();
 void buf_push(Buf *b, char c);
 char buf_pop(Buf *b);
 void buf_print(Buf *b, char *s);
+void buf_nprint(Buf *b, char *s, size_t len);
 void buf_printf(Buf *b, char *fmt, ...);
 
 typedef struct {
