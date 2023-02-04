@@ -169,7 +169,7 @@ static int lex_universal_ch(Lexer *l, int len) { // [len] is 4 or 8
         }
     }
     if (!is_valid_ucn(r)) {
-        error_at(err, "invalid universal character '\\\\%c%0*x'",
+        error_at(err, "invalid universal character '\\%c%0*x'",
                  (len == 4) ? 'u' : 'U', len, r);
     }
     return (int) r;

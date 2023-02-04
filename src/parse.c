@@ -316,6 +316,18 @@ static Node * parse_str(Scope *s) {
     return n;
 }
 
+static Node * parse_ch(Scope *s) {
+    Token *tk = next_tk(s->pp);
+    Node *n = node(N_IMM, tk);
+    switch (tk->ch_enc) {
+        case ENC_NONE: n->t = t_num(T_CHAR, 0); break;
+        case ENC_CHAR16: n->t = t_num(T_SHORT, 1); break;
+        case ENC_CHAR32: case ENC_WCHAR: n->t = t_num(T_INT, 1); break;
+    }
+    n->imm = tk->ch;
+    return n;
+}
+
 
 // ---- Declaration Specifiers ------------------------------------------------
 
@@ -755,18 +767,9 @@ static Node * parse_operand(Scope *s) {
     Node *n;
     Token *tk = peek_tk(s->pp);
     switch (tk->k) {
-    case TK_NUM:
-        n = parse_num(s);
-        break;
-    case TK_CH:
-        next_tk(s->pp);
-        n = node(N_IMM, tk);
-        n->t = t_num(T_CHAR, 0);
-        n->imm = tk->ch;
-        break;
-    case TK_STR:
-        n = parse_str(s);
-        break;
+    case TK_NUM: n = parse_num(s); break;
+    case TK_CH:  n = parse_ch(s); break;
+    case TK_STR: n = parse_str(s); break;
     case TK_IDENT:
         next_tk(s->pp);
         n = find_var(s, tk->ident);
