@@ -105,7 +105,14 @@ static void print_expr(Node *n) {
         break;
     case N_STR:
         print_type(n->t);
-        printf(" \"%s\"", quote_str(n->str, n->len));
+        printf(" ");
+        switch (n->enc) {
+            case ENC_NONE: break;
+            case ENC_CHAR16: printf("u"); break;
+            case ENC_CHAR32: printf("U"); break;
+            case ENC_WCHAR:  printf("L"); break;
+        }
+        printf("\"%s\"", quote_str(n->tk->str, n->tk->len));
         break;
     case N_ARR:
         print_type(n->t);

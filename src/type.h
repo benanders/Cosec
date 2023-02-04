@@ -89,7 +89,7 @@ int is_fp(Type *t);
 int is_arith(Type *t);
 int is_void_ptr(Type *t);
 int is_vla(Type *t);
-int is_char_arr(Type *t);
+int is_string_type(Type *t);
 int is_incomplete(Type *t);
 int are_equal(Type *a, Type *b);
 

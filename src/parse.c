@@ -269,22 +269,50 @@ static Node * parse_num(Scope *s) {
     }
 }
 
-static Node * parse_str(Scope *s) {
+static Token * parse_str_concat(Scope *s) {
     Buf *buf = buf_new();
-    Token *t = peek_tk(s->pp), *first = t;
+    Token *t = peek_tk(s->pp);
+    assert(t->k == TK_STR);
+    Token *str = copy_tk(t);
     while (t->k == TK_STR) {
-        buf_nprint(buf, t->str, t->len); // Concat consecutive strings
-        next_tk(s->pp);
+        t = next_tk(s->pp);
+        if (t->str_enc != str->str_enc) {
+            error_at(t, "cannot concatenate strings with different encodings");
+        }
+        buf_nprint(buf, t->str, t->len);
         t = peek_tk(s->pp);
     }
     buf_push(buf, '\0');
-    Node *n = node(N_STR, first);
-    Node *len = node(N_IMM, first);
+    str->str = buf->data;
+    str->len = buf->len;
+    return str;
+}
+
+static Node * parse_str(Scope *s) {
+    Token *tk = parse_str_concat(s);
+    Node *len = node(N_IMM, tk);
     len->t = t_num(T_LLONG, 1);
-    len->imm = buf->len;
-    n->t = t_arr(t_num(T_CHAR, 0), len);
-    n->str = buf->data;
-    n->len = buf->len;
+    Node *n = node(N_STR, tk);
+    n->enc = tk->str_enc;
+    switch (tk->str_enc) {
+    case ENC_NONE:
+        n->len = tk->len;
+        n->str = tk->str;
+        n->t = t_arr(t_num(T_CHAR, 0), len);
+        break;
+    case ENC_CHAR16:
+        n->str16 = utf8_to_utf16(tk->str, tk->len, &n->len);
+        n->t = t_arr(t_num(T_SHORT, 1), len);
+        break;
+    case ENC_CHAR32: case ENC_WCHAR:
+        n->str32 = utf8_to_utf32(tk->str, tk->len, &n->len);
+        n->t = t_arr(t_num(T_INT, 1), len);
+        break;
+    }
+    if (!n->str) {
+        error_at(tk, "invalid UTF-8 string");
+    }
+    len->imm = n->len;
     return n;
 }
 
@@ -1693,32 +1721,42 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
 }
 
 static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
-    assert(is_char_arr(t));
+    assert(is_string_type(t));
     assert(!is_vla(t));
-    Token *str = next_tk_is(s->pp, TK_STR);
-    if (!str && peek_tk_is(s->pp, '{') && peek2_tk_is(s->pp, TK_STR)) {
-        next_tk(s->pp);
-        str = next_tk(s->pp);
+    Node *str;
+    if (peek_tk_is(s->pp, TK_STR)) {
+        str = parse_str(s);
+    } else if (peek_tk_is(s->pp, '{') && peek2_tk_is(s->pp, TK_STR)) {
+        next_tk(s->pp); // Skip '{'
+        str = parse_str(s);
         expect_tk(s->pp, '}');
-    }
-    if (!str) {
+    } else {
         return; // Parse as normal array
     }
+    if (!are_equal(t->elem, str->t->elem)) {
+        warning_at(str->tk, "initializing string with literal of different type");
+    }
     if (!t->len) {
-        t->len = node(N_IMM, NULL);
-        t->len->t = t_num(T_LLONG, 1);
-        t->len->imm = str->len;
+        t->len = str->t->len;
         t->size = t->len->imm * t->elem->size;
     }
     if (t->len->imm < str->len) {
-        warning_at(str, "initializer string is too long");
+        warning_at(str->tk, "initializer string is too long");
     }
     for (size_t i = 0; i < t->len->imm || i < str->len; i++) {
-        Node *ch = node(N_IMM, str);
+        Node *ch = node(N_IMM, str->tk);
         ch->t = t->elem;
-        ch->imm = i < str->len ? (uint64_t) str->str[i] : 0;
-        Node *n = node(N_INIT, str);
-        n->init_offset = offset + i;
+        if (i < str->len) {
+            switch (str->enc) {
+                case ENC_NONE: ch->imm = (uint64_t) str->str[i]; break;
+                case ENC_CHAR16: ch->imm = str->str16[i]; break;
+                case ENC_CHAR32: case ENC_WCHAR: ch->imm = str->str32[i]; break;
+            }
+        } else {
+            ch->imm = 0;
+        }
+        Node *n = node(N_INIT, str->tk);
+        n->init_offset = offset + i * t->elem->size;
         n->init_val = ch;
         vec_push(inits, n);
     }
@@ -1834,7 +1872,7 @@ static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int 
 }
 
 static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
-    if (is_char_arr(t)) {
+    if (is_string_type(t)) {
         parse_string_init(s, inits, t, offset);
         return;
     } // Fall through if no string literal...
@@ -1867,7 +1905,7 @@ static Node * parse_decl_init(Scope *s, Type *t) {
         error_at(peek_tk(s->pp), "cannot initialize variable-length array");
     }
     Node *init;
-    if (peek_tk_is(s->pp, '{') || is_char_arr(t)) {
+    if (peek_tk_is(s->pp, '{') || is_string_type(t)) {
         init = parse_init_list(s, t);
     } else {
         init = parse_expr_no_commas(s);

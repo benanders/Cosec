@@ -114,8 +114,10 @@ int is_void_ptr(Type *t) {
     return t->k == T_PTR && t->ptr->k == T_VOID;
 }
 
-int is_char_arr(Type *t) {
-    return t->k == T_ARR && t->elem->k == T_CHAR;
+int is_string_type(Type *t) {
+    return t->k == T_ARR && ((t->elem->k == T_CHAR && !t->elem->is_unsigned) ||
+           (t->elem->k == T_SHORT && t->elem->is_unsigned) ||
+           (t->elem->k == T_INT && t->elem->is_unsigned));
 }
 
 int is_vla(Type *t) {

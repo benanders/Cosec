@@ -150,10 +150,10 @@ static int lex_oct_esc_seq(Lexer *l) {
 
 static int is_valid_ucn(unsigned int c) {
     // U+D800 to U+DFFF are reserved for surrogate pairs.
-    if (0xD800 <= c && c <= 0xDFFF) return 0;
+    if (0xd800 <= c && c <= 0xdfff) return 0;
     // It's not allowed to encode ASCII characters using \U or \u. Some
     // characters not in the basic character set (C11 5.2.1p3) are excepted.
-    return 0xA0 <= c || c == '$' || c == '@' || c == '`';
+    return 0xa0 <= c || c == '$' || c == '@' || c == '`';
 }
 
 static int lex_universal_ch(Lexer *l, int len) { // [len] is 4 or 8
@@ -312,8 +312,6 @@ static Token * lex_raw(Lexer *l) {
     } else if (c == '\n') {
         next_ch(l->f);
         return NEWLINE_TK;
-    } else if (isalpha(c) || c == '_') {
-        return lex_ident(l);
     } else if (isdigit(c) || (c == '.' && isdigit(peek2_ch(l->f)))) {
         return lex_num(l);
     } else if (c == '\'' ||
@@ -322,6 +320,8 @@ static Token * lex_raw(Lexer *l) {
     } else if (c == '"' ||
             ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '"')) {
         return lex_str(l, lex_str_encoding(l));
+    } else if (isalpha(c) || c == '_') {
+        return lex_ident(l);
     } else {
         return lex_sym(l);
     }

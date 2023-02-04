@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stddef.h>
 
 #include "util.h"
 #include "err.h"
@@ -105,17 +106,17 @@ void buf_push_utf8(Buf *b, uint32_t c) {
     if (c < 0x80) {
         buf_push(b, (int8_t) c);
     } else if (c < 0x800) {
-        buf_push(b, (int8_t) (0xC0 | (c >> 6)));
-        buf_push(b, (int8_t) (0x80 | (c & 0x3F)));
+        buf_push(b, (int8_t) (0xc0 | (c >> 6)));
+        buf_push(b, (int8_t) (0x80 | (c & 0x3f)));
     } else if (c < 0x10000) {
-        buf_push(b, (int8_t) (0xE0 | (c >> 12)));
-        buf_push(b, (int8_t) (0x80 | ((c >> 6) & 0x3F)));
-        buf_push(b, (int8_t) (0x80 | (c & 0x3F)));
+        buf_push(b, (int8_t) (0xe0 | (c >> 12)));
+        buf_push(b, (int8_t) (0x80 | ((c >> 6) & 0x3f)));
+        buf_push(b, (int8_t) (0x80 | (c & 0x3f)));
     } else if (c < 0x200000) {
-        buf_push(b, (int8_t) (0xF0 | (c >> 18)));
-        buf_push(b, (int8_t) (0x80 | ((c >> 12) & 0x3F)));
-        buf_push(b, (int8_t) (0x80 | ((c >> 6) & 0x3F)));
-        buf_push(b, (int8_t) (0x80 | (c & 0x3F)));
+        buf_push(b, (int8_t) (0xf0 | (c >> 18)));
+        buf_push(b, (int8_t) (0x80 | ((c >> 12) & 0x3f)));
+        buf_push(b, (int8_t) (0x80 | ((c >> 6) & 0x3f)));
+        buf_push(b, (int8_t) (0x80 | (c & 0x3f)));
     } else {
         UNREACHABLE();
     }
@@ -304,7 +305,19 @@ void set_intersection(Set **dst, Set *src) {
 }
 
 
-// ---- Character and String Output -------------------------------------------
+// ---- String Manipulation ---------------------------------------------------
+
+char * str_copy(char *s) {
+    size_t len = strlen(s);
+    return str_ncopy(s, len);
+}
+
+char * str_ncopy(char *s, size_t len) {
+    char *r = malloc(sizeof(char) * (len + 1));
+    strncpy(r, s, len);
+    s[len] = '\0';
+    return r;
+}
 
 static void quote_ch_to_buf(Buf *b, char ch) {
     switch (ch) {
@@ -344,20 +357,84 @@ char * quote_str(char *s, size_t len) {
     return b->data;
 }
 
+static int count_leading_ones(char c) {
+    for (int i = 7; i >= 0; i--) {
+        if ((c & (1 << i)) == 0) {
+            return 7 - i;
+        }
+    }
+    return 8;
+}
+
+static int read_rune(char *s, const char *end, uint32_t *rune) {
+    int ones = count_leading_ones(s[0]);
+    if (ones == 0) {
+        *rune = (uint32_t) s[0];
+        return 1;
+    }
+    if (s + ones >= end) {
+        return -1;
+    }
+    for (int i = 1; i < ones; i++) {
+        if ((s[i] & 0xC0) != 0x80) {
+            return -1;
+        }
+    }
+    switch (ones) {
+    case 2:
+        *rune = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
+        return 2;
+    case 3:
+        *rune = ((s[0] & 0xF) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        return 3;
+    case 4:
+        *rune = ((s[0] & 0x7) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+        return 4;
+    default: return -1;
+    }
+}
+
+uint16_t * utf8_to_utf16(char *s, size_t len, size_t *buf_len) {
+    uint16_t *b = malloc(sizeof(uint16_t) * len);
+    size_t n = 0;
+    char *p = s, *end = s + len;
+    while (p < end) {
+        uint32_t rune;
+        int bytes = read_rune(p, end, &rune);
+        if (bytes < 0) {
+            return NULL;
+        }
+        p += bytes;
+        if (rune < 0x10000) {
+            b[n++] = rune;
+        } else {
+            b[n++] = (rune >> 10) + 0xd7c0;
+            b[n++] = (rune & 0x3ff) + 0xdc00;
+        }
+    }
+    *buf_len = n;
+    return b;
+}
+
+uint32_t * utf8_to_utf32(char *s, size_t len, size_t *buf_len) {
+    uint32_t *b = malloc(sizeof(uint32_t) * len);
+    size_t n = 0;
+    char *p = s, *end = s + len;
+    while (p < end) {
+        uint32_t rune;
+        int bytes = read_rune(p, end, &rune);
+        if (bytes < 0) {
+            return NULL;
+        }
+        p += bytes;
+        b[n++] = rune;
+    }
+    *buf_len = n;
+    return b;
+}
+
 
 // ---- Path Manipulation -----------------------------------------------------
-
-char * str_copy(char *s) {
-    size_t len = strlen(s);
-    return str_ncopy(s, len);
-}
-
-char * str_ncopy(char *s, size_t len) {
-    char *r = malloc(sizeof(char) * (len + 1));
-    strncpy(r, s, len);
-    s[len] = '\0';
-    return r;
-}
 
 char * concat_paths(char *dir, char *file) {
     size_t dir_len = strlen(dir), file_len = strlen(file);

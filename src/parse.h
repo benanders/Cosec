@@ -102,7 +102,11 @@ typedef struct Node {
         // Constants and variables
         uint64_t imm; // N_IMM
         double fp;    // N_FP
-        struct { char *str; size_t len; }; // N_STR
+        struct {      // N_STR
+            union { char *str; uint16_t *str16; uint32_t *str32; };
+            size_t len;
+            int enc;
+        };
         Vec *inits; /* of N_INIT */ // N_ARR
         struct { struct Node *init_val; uint64_t init_offset; }; // N_INIT
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
