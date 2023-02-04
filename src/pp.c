@@ -15,7 +15,6 @@
 // explanation around variadic function-like macros
 
 #define FIRST_KEYWORD TK_VOID
-
 static char *KEYWORDS[] = {
     "void", "char", "short", "int", "long", "float", "double",
     "signed", "unsigned",

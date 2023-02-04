@@ -6,6 +6,8 @@
 #include "lex.h"
 #include "err.h"
 
+#define TK_FIRST TK_SHL
+
 static Token *SPACE_TK   = &(Token) { .k = TK_SPACE };
 static Token *NEWLINE_TK = &(Token) { .k = TK_NEWLINE };
 static Token *EOF_TK     = &(Token) { .k = TK_EOF };
@@ -146,7 +148,35 @@ static int lex_oct_esc_seq(Lexer *l) {
     return (int) strtol(b->data, NULL, 8);
 }
 
-static int lex_esc_seq(Lexer *l) {
+static int is_valid_ucn(unsigned int c) {
+    // U+D800 to U+DFFF are reserved for surrogate pairs.
+    if (0xD800 <= c && c <= 0xDFFF) return 0;
+    // It's not allowed to encode ASCII characters using \U or \u. Some
+    // characters not in the basic character set (C11 5.2.1p3) are excepted.
+    return 0xA0 <= c || c == '$' || c == '@' || c == '`';
+}
+
+static int lex_universal_ch(Lexer *l, int len) { // [len] is 4 or 8
+    Token *err = new_tk(l, -1);
+    uint32_t r = 0;
+    for (int i = 0; i < len; i++) {
+        char c = (char) next_ch(l->f);
+        switch (c) {
+            case '0' ... '9': r = (r << 4) | (c - '0'); continue;
+            case 'a' ... 'f': r = (r << 4) | (c - 'a' + 10); continue;
+            case 'A' ... 'F': r = (r << 4) | (c - 'A' + 10); continue;
+            default: error_at(err, "invalid universal character '%c'", c);
+        }
+    }
+    if (!is_valid_ucn(r)) {
+        error_at(err, "invalid universal character '\\\\%c%0*x'",
+                 (len == 4) ? 'u' : 'U', len, r);
+    }
+    return (int) r;
+}
+
+static int lex_esc_seq(Lexer *l, int *is_utf8) {
+    *is_utf8 = 0;
     Token *err = new_tk(l, -1);
     int c = next_ch(l->f);
     switch (c) {
@@ -158,35 +188,44 @@ static int lex_esc_seq(Lexer *l) {
         case 'r': return '\r';
         case 't': return '\t';
         case 'v': return '\v';
+        case 'u': *is_utf8 = 1; return lex_universal_ch(l, 4);
+        case 'U': *is_utf8 = 1; return lex_universal_ch(l, 8);
         case 'x': return lex_hex_esc_seq(l);
         case '0' ... '7': undo_ch(l->f, c); return lex_oct_esc_seq(l);
         default: error_at(err, "unknown escape sequence");
     }
 }
 
-static Token * lex_ch(Lexer *l) {
+static Token * lex_ch(Lexer *l, int enc) {
     Token *t = new_tk(l, TK_CH);
     next_ch(l->f); // Skip '
     t->ch = next_ch(l->f);
     if (t->ch == '\\') {
-        t->ch = lex_esc_seq(l);
+        int is_utf8;
+        t->ch = lex_esc_seq(l, &is_utf8);
     }
     if (!next_ch_is(l->f, '\'')) {
         error_at(t, "unterminated character literal");
     }
+    t->ch_enc = enc;
     return t;
 }
 
-static Token * lex_str(Lexer *l) {
+static Token * lex_str(Lexer *l, int enc) {
     Token *t = new_tk(l, TK_STR);
     next_ch(l->f); // Skip "
     Buf *b = buf_new();
     int c = next_ch(l->f);
     while (c != EOF && c != '\"') {
+        int is_utf8 = 0;
         if (c == '\\') {
-            c = lex_esc_seq(l);
+            c = lex_esc_seq(l, &is_utf8);
         }
-        buf_push(b, (char) c);
+        if (is_utf8) {
+            buf_push_utf8(b, c);
+        } else {
+            buf_push(b, (char) c);
+        }
         c = next_ch(l->f);
     }
     if (c == EOF) {
@@ -194,7 +233,7 @@ static Token * lex_str(Lexer *l) {
     }
     t->str = b->data;
     t->len = b->len; // NOT null terminated
-    t->enc = ENC_NONE;
+    t->str_enc = enc;
     return t;
 }
 
@@ -271,9 +310,9 @@ static Token * lex_raw(Lexer *l) {
     } else if (isdigit(c) || (c == '.' && isdigit(peek2_ch(l->f)))) {
         return lex_num(l);
     } else if (c == '\'') {
-        return lex_ch(l);
+        return lex_ch(l, ENC_NONE);
     } else if (c == '"') {
-        return lex_str(l);
+        return lex_str(l, ENC_NONE);
     } else {
         return lex_sym(l);
     }
@@ -360,7 +399,7 @@ Token * glue_tks(Lexer *l, Token *t, Token *u) {
     return glued;
 }
 
-static char *TKS[TK_LAST - TK_SHL] = {
+static char *TK_NAMES[TK_LAST - TK_FIRST] = {
     "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
     "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--", "->", "...", "##",
     "void", "char", "short", "int", "long", "float", "double", "signed",
@@ -376,7 +415,7 @@ char * tk2str(int t) {
     if (t < 256) {
         buf_print(b, quote_ch((char) t));
     } else {
-        buf_print(b, TKS[t - TK_SHL]);
+        buf_print(b, TK_NAMES[t - TK_FIRST]);
     }
     buf_push(b, '\0');
     return b->data;

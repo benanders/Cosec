@@ -23,15 +23,6 @@ Vec * vec_new() {
     return v;
 }
 
-static Vec * vec_copy(Vec *v) {
-    Vec *copy = malloc(sizeof(Vec));
-    copy->len = v->len;
-    copy->max = v->max;
-    copy->data = malloc(sizeof(void *) * v->max);
-    memcpy(copy->data, v->data, v->len * sizeof(void *));
-    return v;
-}
-
 static void vec_resize(Vec *v, size_t by) {
     if (v->len + by >= v->max) {
         while (v->max <= v->len + by) {
@@ -112,6 +103,26 @@ void buf_push(Buf *b, char c) {
     b->data[b->len++] = c;
 }
 
+void buf_push_utf8(Buf *b, uint32_t c) {
+    if (c < 0x80) {
+        buf_push(b, (int8_t) c);
+    } else if (c < 0x800) {
+        buf_push(b, (int8_t) (0xC0 | (c >> 6)));
+        buf_push(b, (int8_t) (0x80 | (c & 0x3F)));
+    } else if (c < 0x10000) {
+        buf_push(b, (int8_t) (0xE0 | (c >> 12)));
+        buf_push(b, (int8_t) (0x80 | ((c >> 6) & 0x3F)));
+        buf_push(b, (int8_t) (0x80 | (c & 0x3F)));
+    } else if (c < 0x200000) {
+        buf_push(b, (int8_t) (0xF0 | (c >> 18)));
+        buf_push(b, (int8_t) (0x80 | ((c >> 12) & 0x3F)));
+        buf_push(b, (int8_t) (0x80 | ((c >> 6) & 0x3F)));
+        buf_push(b, (int8_t) (0x80 | (c & 0x3F)));
+    } else {
+        UNREACHABLE();
+    }
+}
+
 char buf_pop(Buf *b) {
     assert(b->len > 0);
     return b->data[--b->len];
@@ -169,7 +180,7 @@ Map * map_new() {
 }
 
 static void map_rehash(Map *m) {
-    if (m->used < (uint64_t) (m->size * 0.7)) {
+    if (m->used < m->size * 0.7) {
         return;
     }
     size_t new_size = (m->num < m->size * 0.35) ? m->size : m->size * 2;
@@ -254,11 +265,6 @@ size_t map_len(Map *m) {
 
 Set * set_new() {
     return vec_new();
-}
-
-Set * set_copy(Set *s) {
-    if (!s) return NULL;
-    return vec_copy(s);
 }
 
 int set_has(Set *s, char *v) {

@@ -107,9 +107,9 @@ typedef struct {
     union {
         char *ident; // TK_IDENT
         char *num;   // TK_NUM
-        struct { char *str; size_t len; int enc; }; // TK_STR
-        int ch;    // TK_CH
-        int param; // TK_MACRO_PARAM
+        struct { char *str; size_t len; int str_enc; }; // TK_STR
+        struct { int ch; int ch_enc; }; // TK_CH
+        int param;   // TK_MACRO_PARAM
     };
     Set *hide_set; // For the preprocessor
 } Token;

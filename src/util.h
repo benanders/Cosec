@@ -2,7 +2,7 @@
 #ifndef COSEC_UTIL_H
 #define COSEC_UTIL_H
 
-#include <stddef.h>
+#include <stdint.h>
 #include <assert.h>
 
 #define UNREACHABLE() (assert(0))
@@ -29,6 +29,7 @@ typedef struct {
 
 Buf * buf_new();
 void buf_push(Buf *b, char c);
+void buf_push_utf8(Buf *b, uint32_t c);
 char buf_pop(Buf *b);
 void buf_print(Buf *b, char *s);
 void buf_nprint(Buf *b, char *s, size_t len);
@@ -49,7 +50,6 @@ size_t map_len(Map *m);
 typedef Vec Set;
 
 Set * set_new();
-Set * set_copy(Set *s);
 int set_has(Set *s, char *v);
 void set_put(Set **s, char *v);
 void set_union(Set **dst, Set *src);
