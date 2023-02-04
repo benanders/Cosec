@@ -133,7 +133,7 @@ static Node * def_var(Scope *s, Token *name, Type *t) {
     int is_global = s->k == SCOPE_FILE || t->linkage == L_STATIC || t->linkage == L_EXTERN;
     Node *n = node(is_global ? N_GLOBAL : N_LOCAL, name);
     n->t = t;
-    n->var_name = name->s;
+    n->var_name = name->ident;
     def_symbol(s, n);
     return n;
 }
@@ -142,31 +142,31 @@ static Node * def_typedef(Scope *s, Token *name, Type *t) {
     assert(t->linkage == L_NONE);
     Node *n = node(N_TYPEDEF, name);
     n->t = t;
-    n->var_name = name->s;
+    n->var_name = name->ident;
     def_symbol(s, n);
     return n;
 }
 
 static void def_tag(Scope *s, Token *tag, Type *t) {
-    Type *v = map_get(s->tags, tag->s);
+    Type *v = map_get(s->tags, tag->ident);
     if (v && v->fields) {
         char *name = t->k == T_STRUCT ? "struct" : t->k == T_UNION ? "union" : "enum";
-        error_at(tag, "redefinition of %s '%s'", name, tag->s);
+        error_at(tag, "redefinition of %s '%s'", name, tag->ident);
     }
-    map_put(s->tags, tag->s, t);
+    map_put(s->tags, tag->ident, t);
 }
 
 static void def_enum_const(Scope *s, Token *name, Type *t, int64_t val) {
-    Node *v = map_get(s->vars, name->s);
+    Node *v = map_get(s->vars, name->ident);
     if (v && v->k != t->k) {
-        error_at(name, "redefinition of '%s' as a different kind of symbol", name->s);
+        error_at(name, "redefinition of '%s' as a different kind of symbol", name->ident);
     } else if (v) {
-        error_at(name, "redefinition of enum tag '%s'", name->s);
+        error_at(name, "redefinition of enum tag '%s'", name->ident);
     }
     Node *n = node(N_IMM, name);
     n->t = t;
     n->imm = val;
-    map_put(s->vars, name->s, n);
+    map_put(s->vars, name->ident, n);
 }
 
 
@@ -206,14 +206,14 @@ static Type * smallest_type_for_int(uint64_t num, int signed_only) {
 static Node * parse_int(Token *tk) {
     char *suffix;
     uint64_t num;
-    if (strncasecmp(tk->s, "0b", 2) == 0) { // strotoul can't read '0b' prefix
-        num = strtoul(tk->s + 2, &suffix, 2);
+    if (strncasecmp(tk->num, "0b", 2) == 0) { // strotoul can't read '0b' prefix
+        num = strtoul(tk->num + 2, &suffix, 2);
     } else { // strtoul can read '0x' and '0' prefix
-        num = strtoul(tk->s, &suffix, 0);
+        num = strtoul(tk->num, &suffix, 0);
     }
     Type *t;
     if (*suffix == '\0') { // No suffix; select type based on how large 'num' is
-        int is_base_10 = (*tk->s != '0');
+        int is_base_10 = (*tk->num != '0');
         t = smallest_type_for_int(num, is_base_10);
     } else { // Type specified by suffix
         t = parse_int_suffix(suffix);
@@ -222,7 +222,7 @@ static Node * parse_int(Token *tk) {
         }
         uint64_t invalid_bits = ~((1 << t->size) - 1);
         if ((num & invalid_bits) != 0) {
-            warning_at(tk, "integer '%s' too large for specified type", tk->s);
+            warning_at(tk, "integer '%s' too large for specified type", tk->num);
         }
     }
     Node *n = node(N_IMM, tk);
@@ -243,7 +243,7 @@ static Type * parse_float_suffix(char *s) {
 
 static Node * parse_float(Token *tk) {
     char *suffix;
-    double num = strtod(tk->s, &suffix);
+    double num = strtod(tk->num, &suffix);
     Type *t;
     if (*suffix == '\0') { // No suffix; always a double
         t = t_num(T_DOUBLE, 0);
@@ -261,8 +261,8 @@ static Node * parse_float(Token *tk) {
 
 static Node * parse_num(Scope *s) {
     Token *tk = expect_tk(s->pp, TK_NUM);
-    if (strpbrk(tk->s, ".pP") ||
-            (strncasecmp(tk->s, "0x", 2) != 0 && strpbrk(tk->s, "eE"))) {
+    if (strpbrk(tk->num, ".pP") ||
+            (strncasecmp(tk->num, "0x", 2) != 0 && strpbrk(tk->num, "eE"))) {
         return parse_float(tk);
     } else {
         return parse_int(tk);
@@ -273,7 +273,7 @@ static Node * parse_str(Scope *s) {
     Buf *buf = buf_new();
     Token *t = peek_tk(s->pp), *first = t;
     while (t->k == TK_STR) {
-        buf_nprint(buf, t->s, t->len); // Concat consecutive strings
+        buf_nprint(buf, t->str, t->len); // Concat consecutive strings
         next_tk(s->pp);
         t = peek_tk(s->pp);
     }
@@ -299,7 +299,7 @@ static int64_t calc_int_expr(Node *e);
 
 static int is_type(Scope *s, Token *t) {
     if (t->k == TK_IDENT) {
-        return find_typedef(s, t->s) != NULL;
+        return find_typedef(s, t->ident) != NULL;
     } else {
         return t->k >= TK_VOID && t->k <= TK_VOLATILE;
     }
@@ -334,13 +334,13 @@ static void parse_struct_fields(Scope *s, Type *t) {
                 error_at(name, "%s field cannot have incomplete type",
                          t->k == T_STRUCT ? "struct" : "union");
             }
-            if (find_field(t, name->s) != NOT_FOUND) {
-                error_at(name, "duplicate field '%s' in %s", name->s,
+            if (find_field(t, name->ident) != NOT_FOUND) {
+                error_at(name, "duplicate field '%s' in %s", name->ident,
                          t->k == T_STRUCT ? "struct" : "union");
             }
             align = ft->align > align ? ft->align : align;
             if (t->k == T_STRUCT) offset = pad(offset, ft->align);
-            vec_push(fields, new_field(ft, name->s, offset));
+            vec_push(fields, new_field(ft, name->ident, offset));
             if (t->k == T_STRUCT) offset += ft->size;
             if (!next_tk_is(s->pp, ',')) {
                 break;
@@ -369,7 +369,7 @@ static void parse_enum_consts(Scope *s, Type *enum_t) {
         if (min->k > t->k || (min->k == t->k && min->is_unsigned)) {
             *t = *min;
         }
-        vec_push(fields, new_field(t, name->s, val));
+        vec_push(fields, new_field(t, name->ident, val));
         def_enum_const(s, name, t, val);
         val++;
         if (!next_tk_is(s->pp, ',')) {
@@ -396,12 +396,12 @@ static void parse_struct_union_enum_def(Scope *s, Type *t) {
         return;
     }
     Token *tag = next_tk(s->pp);
-    Type *tt = find_tag(s, tag->s);
+    Type *tt = find_tag(s, tag->ident);
     if (peek_tk_is(s->pp, '{')) { // Definition
         def_tag(s, tag, t);
         parse_fields(s, t);
     } else if (tt && t->k != tt->k) {
-        error_at(tag, "use of tag '%s' does not match previous declaration", tag->s);
+        error_at(tag, "use of tag '%s' does not match previous declaration", tag->ident);
     } else if (tt) { // Use
         t->fields = tt->fields;
     } else { // Forward declaration
@@ -462,9 +462,9 @@ static Type * parse_decl_specs(Scope *s, int *sclass) {
         case TK_UNION:    if (t) { goto t_err; } t = parse_union_def(s); break;
         case TK_ENUM:     if (t) { goto t_err; } t = parse_enum_def(s); break;
         case TK_IDENT:
-            if (!find_typedef(s, tk->s)) goto done;
+            if (!find_typedef(s, tk->ident)) goto done;
             if (t) goto t_err;
-            t = find_typedef(s, tk->s);
+            t = find_typedef(s, tk->ident);
             break;
         default: goto done;
         }
@@ -741,8 +741,8 @@ static Node * parse_operand(Scope *s) {
         break;
     case TK_IDENT:
         next_tk(s->pp);
-        n = find_var(s, tk->s);
-        if (!n) error_at(tk, "undeclared identifier '%s'", tk->s);
+        n = find_var(s, tk->ident);
+        if (!n) error_at(tk, "undeclared identifier '%s'", tk->ident);
         break;
     case '(':
         next_tk(s->pp);
@@ -835,16 +835,16 @@ static Node * parse_struct_field_access(Scope *s, Node *l) {
         error_at(op, "expected struct or union type");
     }
     Token *name = expect_tk(s->pp, TK_IDENT);
-    size_t f_idx = find_field(l->t, name->s);
+    size_t f_idx = find_field(l->t, name->ident);
     if (f_idx == NOT_FOUND) {
-        error_at(name, "no field named '%s' in %s", name->s,
+        error_at(name, "no field named '%s' in %s", name->ident,
                  l->t->k == T_STRUCT ? "struct" : "union");
     }
     Field *f = vec_get(l->t->fields, f_idx);
     Node *n = node(N_FIELD, op);
     n->t = f->t;
     n->strct = l;
-    n->field_name = name->s;
+    n->field_name = name->ident;
     return n;
 }
 
@@ -1592,7 +1592,7 @@ static Node * parse_goto(Scope *s) {
     Token *label = expect_tk(s->pp, TK_IDENT);
     expect_tk(s->pp, ';');
     Node *n = node(N_GOTO, goto_tk);
-    n->label = label->s;
+    n->label = label->ident;
     return n;
 }
 
@@ -1601,7 +1601,7 @@ static Node * parse_label(Scope *s) {
     expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
     Node *n = node(N_LABEL, label);
-    n->label = label->s;
+    n->label = label->ident;
     n->label_body = body;
     return n;
 }
@@ -1684,7 +1684,7 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
     def_var(s, name, t);
     Node *fn = node(N_FN_DEF, name);
     fn->t = t;
-    fn->fn_name = name->s;
+    fn->fn_name = name->ident;
     fn->param_names = param_names;
     Scope fn_scope;
     enter_scope(&fn_scope, s, SCOPE_BLOCK);
@@ -1716,7 +1716,7 @@ static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
     for (size_t i = 0; i < t->len->imm || i < str->len; i++) {
         Node *ch = node(N_IMM, str);
         ch->t = t->elem;
-        ch->imm = i < str->len ? (uint64_t) str->s[i] : 0;
+        ch->imm = i < str->len ? (uint64_t) str->str[i] : 0;
         Node *n = node(N_INIT, str);
         n->init_offset = offset + i;
         n->init_val = ch;
@@ -1793,10 +1793,10 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
 static size_t parse_struct_designator(Scope *s, Type *t) {
     expect_tk(s->pp, '.');
     Token *name = expect_tk(s->pp, TK_IDENT);
-    size_t f_idx = find_field(t, name->s);
+    size_t f_idx = find_field(t, name->ident);
     if (f_idx == NOT_FOUND) {
         error_at(name, "designator '%s' does not refer to any field in the %s",
-                 name->s, t->k == T_STRUCT ? "struct" : "union");
+                 name->ident, t->k == T_STRUCT ? "struct" : "union");
     }
     expect_tk(s->pp, '=');
     return f_idx;

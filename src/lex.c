@@ -93,7 +93,7 @@ static Token * lex_ident(Lexer *l) {
     }
     undo_ch(l->f, c);
     buf_push(b, '\0');
-    t->s = b->data;
+    t->ident = b->data;
     return t;
 }
 
@@ -108,7 +108,7 @@ static Token * lex_num(Lexer *l) {
     }
     undo_ch(l->f, c);
     buf_push(b, '\0');
-    t->s = b->data;
+    t->num = b->data;
     return t;
 }
 
@@ -192,8 +192,9 @@ static Token * lex_str(Lexer *l) {
     if (c == EOF) {
         error_at(t, "unterminated string literal");
     }
-    t->s = b->data;
+    t->str = b->data;
     t->len = b->len; // NOT null terminated
+    t->enc = ENC_NONE;
     return t;
 }
 
@@ -384,10 +385,11 @@ char * tk2str(int t) {
 char * token2str(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
-        case TK_NUM: case TK_IDENT: buf_printf(b, "%s", t->s); break;
-        case TK_CH:  buf_printf(b, "'%c'", quote_ch((char) t->ch)); break;
-        case TK_STR: buf_printf(b, "\"%s\"", quote_str(t->s, t->len)); break;
-        default:     return tk2str(t->k);
+        case TK_NUM:   buf_printf(b, "%s", t->num); break;
+        case TK_IDENT: buf_printf(b, "%s", t->ident); break;
+        case TK_CH:    buf_printf(b, "'%c'", quote_ch((char) t->ch)); break;
+        case TK_STR:   buf_printf(b, "\"%s\"", quote_str(t->str, t->len)); break; // TODO: print encoding
+        default:       return tk2str(t->k);
     }
     return b->data;
 }
@@ -408,10 +410,10 @@ char * tk2pretty(int t) {
 char * token2pretty(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
-        case TK_NUM:   buf_printf(b, "number '%s'", t->s); break;
+        case TK_NUM:   buf_printf(b, "number '%s'", t->num); break;
         case TK_CH:    buf_printf(b, "character '%c'", quote_ch((char) t->ch)); break;
-        case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->s, t->len)); break;
-        case TK_IDENT: buf_printf(b, "identifier '%s'", t->s); break;
+        case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->str, t->len)); break; // TODO: print encoding
+        case TK_IDENT: buf_printf(b, "identifier '%s'", t->ident); break;
         default:       return tk2pretty(t->k);
     }
     return b->data;

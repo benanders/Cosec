@@ -343,6 +343,18 @@ char * quote_str(char *s, size_t len) {
 
 // ---- Path Manipulation -----------------------------------------------------
 
+char * str_copy(char *s) {
+    size_t len = strlen(s);
+    return str_ncopy(s, len);
+}
+
+char * str_ncopy(char *s, size_t len) {
+    char *r = malloc(sizeof(char) * (len + 1));
+    strncpy(r, s, len);
+    s[len] = '\0';
+    return r;
+}
+
 char * concat_paths(char *dir, char *file) {
     size_t dir_len = strlen(dir), file_len = strlen(file);
     char *concat = malloc(sizeof(char) * (dir_len + file_len + 2));
@@ -359,10 +371,7 @@ char * get_dir(char *path) {
     size_t last = 0;
     for (; last < len && path[last] != '/'; last++);
     if (last == len) return "."; // No '/'
-    char *dir = malloc(sizeof(char) * (last + 1));
-    strncpy(dir, path, last);
-    dir[last] = '\0';
-    return dir;
+    return str_ncopy(path, last);
 }
 
 static char * simplify_path(char *p) {

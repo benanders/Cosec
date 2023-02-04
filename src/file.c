@@ -9,8 +9,7 @@ File * new_file(FILE *fp, char *name) {
     assert(fp);
     File *f = malloc(sizeof(File));
     f->f = fp;
-    f->name = malloc(sizeof(char) * (strlen(name) + 1));
-    strcpy(f->name, name);
+    f->name = str_copy(name);
     f->line = 1;
     f->col = 1;
     f->buf = buf_new();

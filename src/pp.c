@@ -27,8 +27,8 @@ static char *KEYWORDS[] = {
     NULL,
 };
 
-static Token * ZERO_TK = &(Token) { .k = TK_NUM, .s = "0" };
-static Token * ONE_TK  = &(Token) { .k = TK_NUM, .s = "1" };
+static Token * ZERO_TK = &(Token) { .k = TK_NUM, .num = "0" };
+static Token * ONE_TK  = &(Token) { .k = TK_NUM, .num = "1" };
 
 static void def_built_ins(PP *pp);
 static void def_default_include_paths(PP *pp);
@@ -114,7 +114,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
         t = lex_next(pp);
         char *name;
         if (t->k == TK_IDENT) {
-            name = t->s;
+            name = t->ident;
             t->k = TK_MACRO_PARAM;
             t->param = nparams++;
             if (lex_peek(pp)->k == TK_ELLIPSIS) {
@@ -145,7 +145,7 @@ static Vec * parse_body(PP *pp, Map *params) {
     Token *t = lex_next(pp);
     while (t->k != TK_NEWLINE) {
         if (t->k == TK_IDENT) {
-            Token *param = map_get(params, t->s);
+            Token *param = map_get(params, t->ident);
             if (param) {
                 t->k = TK_MACRO_PARAM;
                 t->param = param->param;
@@ -178,13 +178,13 @@ static void parse_define(PP *pp) {
     } else {
         m = parse_obj_macro(pp);
     }
-    map_put(pp->macros, name->s, m);
+    map_put(pp->macros, name->ident, m);
 }
 
 static void parse_undef(PP *pp) {
     Token *name = lex_expect(pp, TK_IDENT);
     lex_expect(pp, TK_NEWLINE);
-    map_remove(pp->macros, name->s);
+    map_remove(pp->macros, name->ident);
 }
 
 
@@ -207,7 +207,7 @@ static char * parse_include_path(PP *pp, int *search_local) {
     Token *t = expand_next(pp); // Otherwise, might be a macro expansion
     if (t->k == TK_STR) {
         *search_local = 1;
-        return t->s;
+        return str_ncopy(t->str, t->len);
     } else if (t->k == '<') {
         *search_local = 0;
         Vec *tks = vec_new();
@@ -241,7 +241,7 @@ static int include(PP *pp, char *dir, char *file, int include_once) {
 }
 
 static void parse_include(PP *pp, Token *t) {
-    int is_import = strcmp(t->s, "import") == 0;
+    int is_import = strcmp(t->ident, "import") == 0;
     int search_local;
     char *path = parse_include_path(pp, &search_local);
     lex_expect(pp, TK_NEWLINE);
@@ -272,17 +272,17 @@ static void def_default_include_paths(PP *pp) {
 // ---- Conditionals ----------------------------------------------------------
 
 static int is_skip_end(Token *t) {
-    return strcmp(t->s, "elif") == 0 || strcmp(t->s, "else") == 0 ||
-           strcmp(t->s, "endif") == 0;
+    return strcmp(t->ident, "elif") == 0 || strcmp(t->ident, "else") == 0 ||
+           strcmp(t->ident, "endif") == 0;
 }
 
 static int is_level_start(Token *t) {
-    return strcmp(t->s, "if") == 0 || strcmp(t->s, "ifdef") == 0 ||
-           strcmp(t->s, "ifndef") == 0;
+    return strcmp(t->ident, "if") == 0 || strcmp(t->ident, "ifdef") == 0 ||
+           strcmp(t->ident, "ifndef") == 0;
 }
 
 static int is_level_end(Token *t) {
-    return strcmp(t->s, "endif") == 0;
+    return strcmp(t->ident, "endif") == 0;
 }
 
 static void skip_cond_incl(PP *pp) {
@@ -312,14 +312,14 @@ static Token * parse_defined(PP *pp) {
     if (t->k != TK_IDENT) {
         error_at(t, "expected identifier, found %s", token2pretty(t));
     }
-    return map_get(pp->macros, t->s) ? ONE_TK : ZERO_TK;
+    return map_get(pp->macros, t->ident) ? ONE_TK : ZERO_TK;
 }
 
 static Vec * parse_cond_line(PP *pp) {
     Vec *tks = vec_new();
     Token *t = expand_next(pp);
     while (t->k != TK_NEWLINE) {
-        if (t->k == TK_IDENT && strcmp(t->s, "defined") == 0) {
+        if (t->k == TK_IDENT && strcmp(t->ident, "defined") == 0) {
             t = parse_defined(pp);
         } else if (t->k == TK_IDENT) {
             t = ZERO_TK; // All other idents get replaced with '0'
@@ -360,14 +360,14 @@ static void parse_if(PP *pp) {
 static void parse_ifdef(PP *pp) {
     Token *t = lex_expect(pp, TK_IDENT);
     lex_expect(pp, TK_NEWLINE);
-    int is_true = map_get(pp->macros, t->s) != NULL;
+    int is_true = map_get(pp->macros, t->ident) != NULL;
     start_if(pp, is_true);
 }
 
 static void parse_ifndef(PP *pp) {
     Token *t = lex_expect(pp, TK_IDENT);
     lex_expect(pp, TK_NEWLINE);
-    int is_true = map_get(pp->macros, t->s) == NULL;
+    int is_true = map_get(pp->macros, t->ident) == NULL;
     start_if(pp, is_true);
 }
 
@@ -416,14 +416,14 @@ static void parse_line(PP *pp) {
         error_at(t, "expected number after '#line', found %s", token2pretty(t));
     }
     char *end;
-    long line = strtol(t->s, &end, 10);
+    long line = strtol(t->num, &end, 10);
     if (*end != '\0' || line < 0) {
         error_at(t, "invalid line number '%s' after '#line'", token2str(t));
     }
     t = expand_next(pp);
     char *file = NULL;
     if (t->k == TK_STR) {
-        file = t->s;
+        file = str_ncopy(t->str, t->len); // TK_STR is not NULL terminated
         t = lex_next(pp);
     }
     if (t->k != TK_NEWLINE) {
@@ -453,7 +453,7 @@ static void parse_pragma_once(PP *pp) {
 
 static void parse_pragma(PP *pp) {
     Token *t = lex_expect(pp, TK_IDENT);
-    if (strcmp(t->s, "once") == 0) {
+    if (strcmp(t->ident, "once") == 0) {
         parse_pragma_once(pp);
     } else {
         error_at(t, "unsupported pragma directive '%s'", token2str(t));
@@ -468,8 +468,7 @@ static void macro_date(PP *pp, Token *t) {
     strftime(time, sizeof(time), "%b %e %Y", &pp->now);
     t->k = TK_STR;
     t->len = strlen(time);
-    t->s = malloc(sizeof(char) * (t->len + 1));
-    strcpy(t->s, time);
+    t->str = str_ncopy(time, t->len);
 }
 
 static void macro_time(PP *pp, Token *t) {
@@ -477,37 +476,33 @@ static void macro_time(PP *pp, Token *t) {
     strftime(time, sizeof(time), "%T", &pp->now);
     t->k = TK_STR;
     t->len = strlen(time);
-    t->s = malloc(sizeof(char) * (t->len + 1));
-    strcpy(t->s, time);
+    t->str = str_ncopy(time, t->len);
 }
 
 static void macro_file(PP *pp, Token *t) {
     t->k = TK_STR;
     t->len = strlen(pp->l->f->name);
-    t->s = malloc(sizeof(char) * (t->len + 1));
-    strcpy(t->s, pp->l->f->name);
+    t->str = str_ncopy(pp->l->f->name, t->len);
 }
 
 static void macro_line(PP *pp, Token *t) {
     (void) pp; // Unused
     t->k = TK_NUM;
-    t->len = snprintf(NULL, 0, "%d", t->line);
-    t->s = malloc(sizeof(char) * (t->len + 1));
-    sprintf(t->s, "%d", t->line);
+    size_t len = snprintf(NULL, 0, "%d", t->line);
+    t->num = malloc(sizeof(char) * (len + 1));
+    sprintf(t->num, "%d", t->line);
 }
 
 static void macro_one(PP *pp, Token *t) {
     (void) pp; // Unused
     t->k = TK_NUM;
-    t->len = 1;
-    t->s = "1";
+    t->num = "1";
 }
 
 static void macro_stdc_version(PP *pp, Token *t) {
     (void) pp; // Unused
     t->k = TK_NUM;
-    t->s = "199901L"; // C99 standard
-    t->len = strlen(t->s);
+    t->num = "199901L"; // C99 standard
 }
 
 static void def_built_in(PP *pp, char *name, BuiltIn fn) {
@@ -558,7 +553,7 @@ static Token * stringize(Vec *tks, Token *hash) {
     }
     Token *str = copy_tk(hash);
     str->k = TK_STR;
-    str->s = b->data;
+    str->str = b->data;
     str->len = b->len;
     return str;
 }
@@ -681,14 +676,14 @@ static Token * expand_next(PP *pp) {
     if (t->k != TK_IDENT) {
         return t;
     }
-    Macro *m = map_get(pp->macros, t->s);
-    if (!m || set_has(t->hide_set, t->s)) {
+    Macro *m = map_get(pp->macros, t->ident);
+    if (!m || set_has(t->hide_set, t->ident)) {
         return t; // No macro, or macro self-reference
     }
     Vec *tks;
     switch (m->k) {
     case MACRO_OBJ:
-        set_put(&t->hide_set, t->s);
+        set_put(&t->hide_set, t->ident);
         tks = substitute(pp, m, NULL, t->hide_set);
         copy_pos_info_to_tks(tks, t); // For error messages
         undo_tks(pp->l, tks);
@@ -703,7 +698,7 @@ static Token * expand_next(PP *pp) {
         }
         Token *rparen = lex_expect(pp, ')');
         set_intersection(&t->hide_set, rparen->hide_set);
-        set_put(&t->hide_set, t->s);
+        set_put(&t->hide_set, t->ident);
         tks = substitute(pp, m, args, t->hide_set);
         copy_pos_info_to_tks(tks, t); // For error messages
         undo_tks(pp->l, tks);
@@ -733,20 +728,20 @@ static void parse_directive(PP *pp) {
     Token *t = lex_next(pp);
     if (t->k == TK_NEWLINE) return; // Empty directive
     if (t->k != TK_IDENT) goto err;
-    if (strcmp(t->s, "define") == 0)            parse_define(pp);
-    else if (strcmp(t->s, "undef") == 0)        parse_undef(pp);
-    else if (strcmp(t->s, "include") == 0 ||
-             strcmp(t->s, "import") == 0)       parse_include(pp, t);
-    else if (strcmp(t->s, "if") == 0)           parse_if(pp);
-    else if (strcmp(t->s, "ifdef") == 0)        parse_ifdef(pp);
-    else if (strcmp(t->s, "ifndef") == 0)       parse_ifndef(pp);
-    else if (strcmp(t->s, "elif") == 0)         parse_elif(pp, t);
-    else if (strcmp(t->s, "else") == 0)         parse_else(pp, t);
-    else if (strcmp(t->s, "endif") == 0)        parse_endif(pp, t);
-    else if (strcmp(t->s, "line") == 0)         parse_line(pp);
-    else if (strcmp(t->s, "warning") == 0)      parse_warning(pp, t);
-    else if (strcmp(t->s, "error") == 0)        parse_error(pp, t);
-    else if (strcmp(t->s, "pragma") == 0)       parse_pragma(pp);
+    if (strcmp(t->ident, "define") == 0)         parse_define(pp);
+    else if (strcmp(t->ident, "undef") == 0)     parse_undef(pp);
+    else if (strcmp(t->ident, "include") == 0 ||
+             strcmp(t->ident, "import") == 0)    parse_include(pp, t);
+    else if (strcmp(t->ident, "if") == 0)        parse_if(pp);
+    else if (strcmp(t->ident, "ifdef") == 0)     parse_ifdef(pp);
+    else if (strcmp(t->ident, "ifndef") == 0)    parse_ifndef(pp);
+    else if (strcmp(t->ident, "elif") == 0)      parse_elif(pp, t);
+    else if (strcmp(t->ident, "else") == 0)      parse_else(pp, t);
+    else if (strcmp(t->ident, "endif") == 0)     parse_endif(pp, t);
+    else if (strcmp(t->ident, "line") == 0)      parse_line(pp);
+    else if (strcmp(t->ident, "warning") == 0)   parse_warning(pp, t);
+    else if (strcmp(t->ident, "error") == 0)     parse_error(pp, t);
+    else if (strcmp(t->ident, "pragma") == 0)    parse_pragma(pp);
     else goto err;
     return;
 err:
@@ -761,7 +756,7 @@ Token * next_tk(PP *pp) {
     }
     if (t->k == TK_IDENT) { // Check for keywords
         for (int i = 0; KEYWORDS[i]; i++) {
-            if (strcmp(t->s, KEYWORDS[i]) == 0) {
+            if (strcmp(t->ident, KEYWORDS[i]) == 0) {
                 t->k = FIRST_KEYWORD + i;
                 break;
             }

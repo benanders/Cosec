@@ -92,13 +92,22 @@ enum {
     TK_LAST, // For tables indexed by token
 };
 
+enum {
+    ENC_NONE,   // (UTF-8)
+    ENC_WCHAR,  // L"..."
+    ENC_CHAR16, // u"..."
+    ENC_CHAR32, // U"..."
+};
+
 typedef struct {
     int k;
     File *f;
     int line, col;
     int has_preceding_space;
     union {
-        struct { char *s; size_t len; }; // TK_IDENT, TK_STR, TK_NUM
+        char *ident; // TK_IDENT
+        char *num;   // TK_NUM
+        struct { char *str; size_t len; int enc; }; // TK_STR
         int ch;    // TK_CH
         int param; // TK_MACRO_PARAM
     };

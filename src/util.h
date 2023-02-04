@@ -58,6 +58,8 @@ void set_intersection(Set **dst, Set *src);
 char * quote_ch(char ch);
 char * quote_str(char *s, size_t len);
 
+char * str_copy(char *s);
+char * str_ncopy(char *s, size_t len);
 char * concat_paths(char *dir, char *file);
 char * get_dir(char *path);
 char * full_path(char *path);
