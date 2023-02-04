@@ -237,6 +237,15 @@ static Token * lex_str(Lexer *l, int enc) {
     return t;
 }
 
+static int lex_str_encoding(Lexer *l) {
+    switch (peek_ch(l->f)) {
+        case 'L': next_ch(l->f); return ENC_WCHAR;
+        case 'u': next_ch(l->f); return ENC_CHAR16;
+        case 'U': next_ch(l->f); return ENC_CHAR32;
+        default: return ENC_NONE;
+    }
+}
+
 static Token * lex_sym(Lexer *l) {
     Token *t = new_tk(l, -1);
     int c = next_ch(l->f);
@@ -296,9 +305,7 @@ static Token * lex_sym(Lexer *l) {
 
 static Token * lex_raw(Lexer *l) {
     if (!l->f) return EOF_TK;
-    if (skip_spaces(l)) {
-        return SPACE_TK;
-    }
+    if (skip_spaces(l)) return SPACE_TK;
     int c = peek_ch(l->f);
     if (c == EOF) {
         return new_tk(l, TK_EOF);
@@ -309,10 +316,12 @@ static Token * lex_raw(Lexer *l) {
         return lex_ident(l);
     } else if (isdigit(c) || (c == '.' && isdigit(peek2_ch(l->f)))) {
         return lex_num(l);
-    } else if (c == '\'') {
-        return lex_ch(l, ENC_NONE);
-    } else if (c == '"') {
-        return lex_str(l, ENC_NONE);
+    } else if (c == '\'' ||
+            ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '\'')) {
+        return lex_ch(l, lex_str_encoding(l));
+    } else if (c == '"' ||
+            ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '"')) {
+        return lex_str(l, lex_str_encoding(l));
     } else {
         return lex_sym(l);
     }

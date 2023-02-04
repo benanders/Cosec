@@ -2,10 +2,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "parse.h"
+
 #include "err.h"
 #include "debug.h"
-
-#include "parse.h"
 
 // Compile the generated assembly with (on my macOS machine):
 //   nasm -f macho64 out.s

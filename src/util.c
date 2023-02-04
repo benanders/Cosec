@@ -3,8 +3,6 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <stdio.h>
-#include <stdint.h>
 #include <limits.h>
 #include <unistd.h>
 #include <errno.h>

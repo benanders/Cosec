@@ -1,7 +1,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
 #include "pp.h"
 #include "parse.h"
