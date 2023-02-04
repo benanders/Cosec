@@ -305,7 +305,7 @@ void undo_tks(Lexer *l, Vec *tks) {
     }
 }
 
-char * lex_read_line(Lexer *l) {
+char * lex_rest_of_line(Lexer *l) {
     skip_spaces(l);
     Buf *b = buf_new();
     int c = next_ch(l->f);
@@ -343,6 +343,20 @@ char * lex_include_path(Lexer *l, int *search_local) {
     }
     buf_push(b, '\0');
     return b->data;
+}
+
+Token * glue_tks(Lexer *l, Token *t, Token *u) {
+    Buf *b = buf_new();
+    buf_print(b, token2str(t));
+    buf_print(b, token2str(u));
+    buf_push(b, '\0');
+    undo_chs(l->f, b->data, b->len);
+    Token *glued = lex_tk(l);
+    glued->has_preceding_space = t->has_preceding_space;
+    if (next_ch(l->f) != '\0') {
+        error_at(t, "macro token concatenation formed invalid token '%s'", b->data);
+    }
+    return glued;
 }
 
 static char *TKS[TK_LAST - TK_SHL] = {

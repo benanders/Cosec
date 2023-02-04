@@ -13,15 +13,15 @@ File * new_file(FILE *fp, char *name) {
     strcpy(f->name, name);
     f->line = 1;
     f->col = 1;
-    f->buf_len = 0;
+    f->buf = buf_new();
     f->last = 0;
     return f;
 }
 
 static int read_ch_raw(File *f) {
     int c;
-    if (f->buf_len > 0) {
-        c = f->buf[--f->buf_len];
+    if (f->buf->len > 0) {
+        c = (int) buf_pop(f->buf);
     } else {
         c = getc(f->f);
         if (c == EOF) {
@@ -64,13 +64,19 @@ void undo_ch(File *f, int c) {
     if (c == EOF) {
         return;
     }
-    assert(f->buf_len < MAX_FILE_PEEK);
-    f->buf[f->buf_len++] = c;
+    assert(c >= 0 && c <= 255);
+    buf_push(f->buf, (char) c);
     if (c == '\n') { // Undo line and column update
         f->col = 1;
         f->line--;
     } else {
         f->col--;
+    }
+}
+
+void undo_chs(File *f, char *s, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        buf_push(f->buf, s[len - i - 1]);
     }
 }
 

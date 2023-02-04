@@ -118,8 +118,9 @@ Token * lex_tk(Lexer *l);
 void undo_tk(Lexer *l, Token *t);
 void undo_tks(Lexer *l, Vec *tks);
 
-char * lex_read_line(Lexer *l);
+char * lex_rest_of_line(Lexer *l);
 char * lex_include_path(Lexer *l, int *search_local);
+Token * glue_tks(Lexer *l, Token *t, Token *u);
 
 char * tk2str(int t);
 char * token2str(Token *t);

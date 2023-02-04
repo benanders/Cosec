@@ -437,12 +437,12 @@ static void parse_line(PP *pp) {
 }
 
 static void parse_warning(PP *pp, Token *t) {
-    char *msg = lex_read_line(pp->l);
+    char *msg = lex_rest_of_line(pp->l);
     warning_at(t, msg);
 }
 
 static void parse_error(PP *pp, Token *t) {
-    char *msg = lex_read_line(pp->l);
+    char *msg = lex_rest_of_line(pp->l);
     error_at(t, msg);
 }
 
@@ -564,6 +564,12 @@ static Token * stringize(Vec *tks, Token *hash) {
     return str;
 }
 
+static void glue(PP *pp, Vec *tks, Token *t) {
+    Token *last = vec_pop(tks);
+    Token *glued = glue_tks(pp->l, last, t);
+    vec_push(tks, glued);
+}
+
 static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     // Create a temporary lexer for the arg; don't use 'push_lexer' because we
     // want the 'TK_EOF' when we're finished pre-expansion
@@ -592,6 +598,28 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
             Token *str = stringize(arg, t);
             vec_push(tks, str);
             i++; // Skip 'u'
+        } else if (t->k == TK_CONCAT && u && u->k == TK_MACRO_PARAM) {
+            // <anything> ## <macro param>
+            Vec *arg = vec_get(args, u->param);
+            if (vec_len(arg) > 0) { // TODO: if 'arg' is the vararg...
+                Token *first = vec_remove(arg, 0);
+                glue(pp, tks, first);
+                vec_push_all(tks, arg); // Don't pre-expand
+            }
+            i++; // Skip 'u'
+        } else if (t->k == TK_CONCAT && u) {
+            // <anything> ## <token>
+            hide_set = u->hide_set;
+            glue(pp, tks, u);
+            i++; // Skip 'u'
+        } else if (t->k == TK_MACRO_PARAM && u && u->k == TK_CONCAT) {
+            // <macro param> ## <anything>
+            Vec *arg = vec_get(args, t->param);
+            if (vec_len(arg) == 0) {
+                i++; // Skip '##' if nothing to glue to
+            } else {
+                vec_push_all(tks, arg); // Don't pre-expand
+            }
         } else if (t->k == TK_MACRO_PARAM) {
             Vec *arg = vec_get(args, t->param);
             arg = pre_expand_arg(pp, arg);
@@ -601,7 +629,7 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
             vec_push(tks, t);
         }
     }
-    for (size_t i = 0; i < vec_len(tks); i++) { // Add [hide_set] to all the tks
+    for (size_t i = 0; i < vec_len(tks); i++) { // Add 'hide_set' to all the tks
         Token *t = vec_get(tks, i);
         set_union(&t->hide_set, hide_set);
     }
@@ -611,11 +639,11 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
 static Vec * parse_args(PP *pp, Macro *m) {
     lex_expect(pp, '(');
     Vec *args = vec_new();
-    if (m->nparams == 1 && lex_peek(pp)->k == ')') {
+    Token *t = lex_peek(pp);
+    if (m->nparams == 1 && t->k == ')') {
         vec_push(args, vec_new());
         return args; // Empty single argument
     }
-    Token *t = lex_peek(pp);
     while (t->k != ')' && t->k != TK_EOF) {
         Vec *arg = vec_new();
         int level = 0;
@@ -640,7 +668,6 @@ static Vec * parse_args(PP *pp, Macro *m) {
             vec_push(arg, t);
         }
         vec_push(args, arg);
-        t = lex_peek(pp);
     }
     if (m->is_vararg && vec_len(args) == m->nparams - 1) {
         // Allow not specifying the vararg parameter, e.g.

@@ -61,9 +61,11 @@ void * vec_pop(Vec *v) {
     return NULL;
 }
 
-void vec_remove(Vec *v, size_t i) {
+void * vec_remove(Vec *v, size_t i) {
+    void *elem = v->data[i];
     memcpy(&v->data[i], &v->data[i + 1], sizeof(void *) * (v->len - i - 1));
     v->len--;
+    return elem;
 }
 
 size_t vec_len(Vec *v) {
@@ -108,6 +110,11 @@ void buf_resize(Buf *b, size_t by) {
 void buf_push(Buf *b, char c) {
     buf_resize(b, 1);
     b->data[b->len++] = c;
+}
+
+char buf_pop(Buf *b) {
+    assert(b->len > 0);
+    return b->data[--b->len];
 }
 
 void buf_print(Buf *b, char *s) {

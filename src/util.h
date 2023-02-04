@@ -17,7 +17,7 @@ Vec * vec_new();
 void vec_push(Vec *v, void *elem);
 void vec_push_all(Vec *v, Vec *to_append);
 void * vec_pop(Vec *v);
-void vec_remove(Vec *v, size_t i);
+void * vec_remove(Vec *v, size_t i);
 size_t vec_len(Vec *v);
 void * vec_get(Vec *v, size_t i);
 void * vec_last(Vec *v);
@@ -29,6 +29,7 @@ typedef struct {
 
 Buf * buf_new();
 void buf_push(Buf *b, char c);
+char buf_pop(Buf *b);
 void buf_print(Buf *b, char *s);
 void buf_printf(Buf *b, char *fmt, ...);
 
