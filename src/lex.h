@@ -109,7 +109,7 @@ typedef struct {
         char *num;   // TK_NUM
         struct { char *str; size_t len; int str_enc; }; // TK_STR
         struct { int ch, ch_enc; }; // TK_CH
-        int param_idx; // TK_MACRO_PARAM
+        size_t param_idx; // TK_MACRO_PARAM
     };
     Set *hide_set; // For macro expansion in the preprocessor
 } Token;

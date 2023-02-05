@@ -205,9 +205,10 @@ static void print_fn_def(Node *n) {
     }
     printf(" (");
     for (size_t i = 0; i < vec_len(n->param_names); i++) {
-        char *name = vec_get(n->param_names, i);
+        Token *name = vec_get(n->param_names, i);
         if (name) {
-            printf("%s", name);
+            assert(name->k == TK_IDENT);
+            printf("%s", name->ident);
         }
         if (i < vec_len(n->param_names) - 1) {
             printf(", ");

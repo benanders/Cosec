@@ -1254,7 +1254,7 @@ static Node * parse_expr_no_commas(Scope *s) {
     } else if ((l->k == N_KPTR && r->k == N_IMM && r->imm == 0) || \
                (r->k == N_KPTR && l->k == N_IMM && l->imm == 0)) { \
         n->k = N_IMM;                                              \
-        n->imm = op 0;                                             \
+        n->imm = op (0);                                           \
     } else {                                                       \
         goto err;                                                  \
     }                                                              \

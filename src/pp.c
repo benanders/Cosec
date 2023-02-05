@@ -605,7 +605,16 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
         } else if (t->k == TK_CONCAT && u && u->k == TK_MACRO_PARAM) {
             // <anything> ## <macro param>
             Vec *arg = vec_get(args, u->param_idx);
-            if (vec_len(arg) > 0) { // TODO: if 'arg' is the vararg...
+            // ',' ## __VA_ARGS__ is expanded to empty token sequence if
+            // __VA_ARGS__ is empty, or to ',' [tokens in __VA_ARGS__] otherwise
+            if (m->is_vararg && u->param_idx == m->nparams - 1 && // Is vararg?
+                    vec_len(tks) > 0 && ((Token *) vec_tail(tks))->k == ',') {
+                if (vec_len(arg) > 0) {
+                    vec_push_all(tks, arg); // ',' [tokens in __VA_ARGS__]
+                } else {
+                    vec_pop(tks); // Remove ','
+                }
+            } else if (vec_len(arg) > 0) {
                 Token *first = vec_remove(arg, 0);
                 glue(pp, tks, first);
                 vec_push_all(tks, arg); // Don't pre-expand
@@ -618,6 +627,7 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
             i++; // Skip 'u'
         } else if (t->k == TK_MACRO_PARAM && u && u->k == TK_CONCAT) {
             // <macro param> ## <anything>
+            hide_set = u->hide_set;
             Vec *arg = vec_get(args, t->param_idx);
             if (vec_len(arg) == 0) {
                 i++; // Skip '##' if nothing to glue to
