@@ -1863,7 +1863,7 @@ static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int 
             warning_at(peek_tk(s->pp), "excess elements in %s initializer",
                        t->k == T_STRUCT ? "struct" : "union");
         }
-        Field *f = excess ? vec_last(t->fields) : vec_get(t->fields, idx);
+        Field *f = excess ? vec_tail(t->fields) : vec_get(t->fields, idx);
         size_t field_offset = offset + f->offset;
         parse_init_elem(s, excess ? NULL : inits, f->t, field_offset, designated);
         idx++;

@@ -68,7 +68,12 @@ void * vec_get(Vec *v, size_t i) {
     return v->data[i];
 }
 
-void * vec_last(Vec *v) {
+void * vec_head(Vec *v) {
+    if (!v || v->len == 0) return NULL;
+    return vec_get(v, 0);
+}
+
+void * vec_tail(Vec *v) {
     if (!v || v->len == 0) return NULL;
     return vec_get(v, v->len - 1);
 }

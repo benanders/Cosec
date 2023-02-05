@@ -89,6 +89,18 @@ static Token * lex_expect(PP *pp, int k) {
 
 static Token * expand_next(PP *pp);
 
+static void check_no_concat_at_start_or_end(Vec *tks) {
+    if (vec_len(tks) == 0) return;
+    Token *t = vec_head(tks);
+    if (t->k == TK_CONCAT) {
+        error_at(t, "'##' cannot appear at start of macro");
+    }
+    t = vec_tail(tks);
+    if (t->k == TK_CONCAT) {
+        error_at(t, "'##' cannot appear at end of macro");
+    }
+}
+
 static Macro * parse_obj_macro(PP *pp) {
     Vec *body = vec_new();
     Token *t = lex_next(pp);
@@ -96,7 +108,7 @@ static Macro * parse_obj_macro(PP *pp) {
         vec_push(body, t);
         t = lex_next(pp);
     }
-    // TODO: check '##' doesn't appear at start or end of macro body
+    check_no_concat_at_start_or_end(body);
     Macro *m = new_macro(MACRO_OBJ);
     m->body = body;
     return m;
@@ -152,7 +164,7 @@ static Vec * parse_body(PP *pp, Map *params) {
         vec_push(body, t);
         t = lex_next(pp);
     }
-    // TODO: check '##' doesn't appear at start or end of macro body
+    check_no_concat_at_start_or_end(body);
     return body;
 }
 
@@ -373,7 +385,7 @@ static void parse_elif(PP *pp, Token *t) {
     if (vec_len(pp->conds) == 0) {
         error_at(t, "'#elif' directive without preceding '#if'");
     }
-    Cond *cond = vec_last(pp->conds);
+    Cond *cond = vec_tail(pp->conds);
     if (cond->k == COND_ELSE) {
         error_at(t, "'#elif' directive after '#else'");
     }
@@ -389,7 +401,7 @@ static void parse_else(PP *pp, Token *t) {
     if (vec_len(pp->conds) == 0) {
         error_at(t, "'#else' directive without preceding '#if'");
     }
-    Cond *cond = vec_last(pp->conds);
+    Cond *cond = vec_tail(pp->conds);
     cond->k = COND_ELSE;
     lex_expect(pp, TK_NEWLINE);
     if (cond->was_true) {
