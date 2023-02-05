@@ -114,7 +114,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
         if (t->k == TK_IDENT) {
             name = t->ident;
             t->k = TK_MACRO_PARAM;
-            t->param = nparams++;
+            t->param_idx = nparams++;
             if (lex_peek(pp)->k == TK_ELLIPSIS) {
                 lex_next(pp);
                 *is_vararg = 1;
@@ -122,7 +122,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
         } else if (t->k == TK_ELLIPSIS) { // Vararg
             name = "__VA_ARGS__";
             t->k = TK_MACRO_PARAM;
-            t->param = nparams++;
+            t->param_idx = nparams++;
             *is_vararg = 1;
         } else {
             error_at(t, "expected identifier, found %s", token2pretty(t));
@@ -146,7 +146,7 @@ static Vec * parse_body(PP *pp, Map *params) {
             Token *param = map_get(params, t->ident);
             if (param) {
                 t->k = TK_MACRO_PARAM;
-                t->param = param->param;
+                t->param_idx = param->param_idx;
             }
         }
         vec_push(body, t);
@@ -586,13 +586,13 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
         Token *t = copy_tk(vec_get(m->body, i));
         Token *u = i < vec_len(m->body) - 1 ? vec_get(m->body, i + 1) : NULL;
         if (t->k == '#' && u && u->k == TK_MACRO_PARAM) {
-            Vec *arg = vec_get(args, u->param);
+            Vec *arg = vec_get(args, u->param_idx);
             Token *str = stringize(arg, t);
             vec_push(tks, str);
             i++; // Skip 'u'
         } else if (t->k == TK_CONCAT && u && u->k == TK_MACRO_PARAM) {
             // <anything> ## <macro param>
-            Vec *arg = vec_get(args, u->param);
+            Vec *arg = vec_get(args, u->param_idx);
             if (vec_len(arg) > 0) { // TODO: if 'arg' is the vararg...
                 Token *first = vec_remove(arg, 0);
                 glue(pp, tks, first);
@@ -606,14 +606,14 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
             i++; // Skip 'u'
         } else if (t->k == TK_MACRO_PARAM && u && u->k == TK_CONCAT) {
             // <macro param> ## <anything>
-            Vec *arg = vec_get(args, t->param);
+            Vec *arg = vec_get(args, t->param_idx);
             if (vec_len(arg) == 0) {
                 i++; // Skip '##' if nothing to glue to
             } else {
                 vec_push_all(tks, arg); // Don't pre-expand
             }
         } else if (t->k == TK_MACRO_PARAM) {
-            Vec *arg = vec_get(args, t->param);
+            Vec *arg = vec_get(args, t->param_idx);
             arg = pre_expand_arg(pp, arg);
             copy_pos_info_to_tks(arg, t); // For leading token's preceding space
             vec_push_all(tks, arg);

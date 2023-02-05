@@ -44,7 +44,7 @@ static void skip_line_comment(Lexer *l) {
 }
 
 static void skip_block_comment(Lexer *l) {
-    Token *err = new_tk(l, EOF);
+    Token *err = new_tk(l, -1);
     int c = next_ch(l->f);
     while (c != EOF && !(c == '*' && peek_ch(l->f) == '/')) {
         c = next_ch(l->f);
@@ -57,28 +57,22 @@ static void skip_block_comment(Lexer *l) {
 
 static int skip_space(Lexer *l) {
     int c = peek_ch(l->f);
-    if (c == EOF) {
-        return 0;
-    } else if (isspace(c) && c != '\n') {
+    if (isspace(c) && c != '\n') { // Handle newlines separately
         next_ch(l->f);
         return 1;
-    } else if (c == '/') {
-        if (peek2_ch(l->f) == '/') {
-            skip_line_comment(l);
-            return 1;
-        } else if (peek2_ch(l->f) == '*') {
-            skip_block_comment(l);
-            return 1;
-        }
+    } else if (c == '/' && peek2_ch(l->f) == '/') {
+        skip_line_comment(l);
+        return 1;
+    } else if (c == '/' && peek2_ch(l->f) == '*') {
+        skip_block_comment(l);
+        return 1;
     }
     return 0;
 }
 
 static int skip_spaces(Lexer *l) {
-    int r = 0;
-    while (skip_space(l)) {
-        r = 1;
-    }
+    int r = skip_space(l);
+    while (skip_space(l));
     return r;
 }
 
@@ -156,18 +150,21 @@ static int is_valid_ucn(unsigned int c) {
     return 0xa0 <= c || c == '$' || c == '@' || c == '`';
 }
 
-static int lex_universal_ch(Lexer *l, int len) { // [len] is 4 or 8
+static int lex_universal_ch(Lexer *l, size_t len) { // [len] is 4 or 8
     Token *err = new_tk(l, -1);
-    uint32_t r = 0;
-    for (int i = 0; i < len; i++) {
-        char c = (char) next_ch(l->f);
-        switch (c) {
-            case '0' ... '9': r = (r << 4) | (c - '0'); continue;
-            case 'a' ... 'f': r = (r << 4) | (c - 'a' + 10); continue;
-            case 'A' ... 'F': r = (r << 4) | (c - 'A' + 10); continue;
-            default: error_at(err, "expected hexadecimal digit in universal character sequence", c);
-        }
+    Buf *b = buf_new();
+    int c = next_ch(l->f);
+    while (isxdigit(c) && b->len < len) {
+        buf_push(b, (char) c);
+        c = next_ch(l->f);
     }
+    if (b->len != len) {
+        error_at(err, "expected %zu hexadecimal digits in '\\%c' escape sequence",
+                 len, (len == 4 ? 'u' : 'U'));
+    }
+    undo_ch(l->f, c);
+    buf_push(b, '\0');
+    uint32_t r = strtol(b->data, NULL, 16);
     if (!is_valid_ucn(r)) {
         error_at(err, "invalid universal character '\\%c%0*x'",
                  (len == 4) ? 'u' : 'U', len, r);
@@ -304,8 +301,12 @@ static Token * lex_sym(Lexer *l) {
 // ---- Tokens ----------------------------------------------------------------
 
 static Token * lex_raw(Lexer *l) {
-    if (!l->f) return EOF_TK;
-    if (skip_spaces(l)) return SPACE_TK;
+    if (!l->f) {
+        return EOF_TK;
+    }
+    if (skip_spaces(l)) {
+        return SPACE_TK;
+    }
     int c = peek_ch(l->f);
     if (c == EOF) {
         return new_tk(l, TK_EOF);
@@ -315,10 +316,10 @@ static Token * lex_raw(Lexer *l) {
     } else if (isdigit(c) || (c == '.' && isdigit(peek2_ch(l->f)))) {
         return lex_num(l);
     } else if (c == '\'' ||
-            ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '\'')) {
+               ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '\'')) {
         return lex_ch(l, lex_str_encoding(l));
     } else if (c == '"' ||
-            ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '"')) {
+               ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '"')) {
         return lex_str(l, lex_str_encoding(l));
     } else if (isalpha(c) || c == '_') {
         return lex_ident(l);
@@ -362,6 +363,7 @@ char * lex_rest_of_line(Lexer *l) {
         buf_push(b, (char) c);
         c = next_ch(l->f);
     }
+    buf_push(b, '\0');
     return b->data;
 }
 
@@ -376,7 +378,7 @@ char * lex_include_path(Lexer *l, int *search_local) {
         close = '>';
         *search_local = 0;
     } else {
-        return NULL;
+        return NULL; // No include path
     }
     Buf *b = buf_new();
     int c = next_ch(l->f);
@@ -430,14 +432,29 @@ char * tk2str(int t) {
     return b->data;
 }
 
+static void write_encoding(Buf *b, int enc) {
+    switch (enc) {
+        case ENC_NONE: break;
+        case ENC_CHAR16: buf_push(b, 'u'); break;
+        case ENC_CHAR32: buf_push(b, 'U'); break;
+        case ENC_WCHAR:  buf_push(b, 'L'); break;
+    }
+}
+
 char * token2str(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
-        case TK_NUM:   buf_printf(b, "%s", t->num); break;
-        case TK_IDENT: buf_printf(b, "%s", t->ident); break;
-        case TK_CH:    buf_printf(b, "'%c'", quote_ch((char) t->ch)); break;
-        case TK_STR:   buf_printf(b, "\"%s\"", quote_str(t->str, t->len)); break; // TODO: print encoding
-        default:       return tk2str(t->k);
+    case TK_NUM:   buf_printf(b, "%s", t->num); break;
+    case TK_IDENT: buf_printf(b, "%s", t->ident); break;
+    case TK_CH:
+        write_encoding(b, t->ch_enc);
+        buf_printf(b, "'%c'", quote_ch((char) t->ch));
+        break;
+    case TK_STR:
+        write_encoding(b, t->str_enc);
+        buf_printf(b, "\"%s\"", quote_str(t->str, t->len));
+        break;
+    default: return tk2str(t->k);
     }
     return b->data;
 }
@@ -458,11 +475,19 @@ char * tk2pretty(int t) {
 char * token2pretty(Token *t) {
     Buf *b = buf_new();
     switch (t->k) {
-        case TK_NUM:   buf_printf(b, "number '%s'", t->num); break;
-        case TK_CH:    buf_printf(b, "character '%c'", quote_ch((char) t->ch)); break;
-        case TK_STR:   buf_printf(b, "string \"%s\"", quote_str(t->str, t->len)); break; // TODO: print encoding
-        case TK_IDENT: buf_printf(b, "identifier '%s'", t->ident); break;
-        default:       return tk2pretty(t->k);
+    case TK_NUM:   buf_printf(b, "number '%s'", t->num); break;
+    case TK_IDENT: buf_printf(b, "identifier '%s'", t->ident); break;
+    case TK_CH:
+        buf_print(b, "character ");
+        write_encoding(b, t->ch_enc);
+        buf_printf(b, "'%c'", quote_ch((char) t->ch));
+        break;
+    case TK_STR:
+        buf_print(b, "string ");
+        write_encoding(b, t->str_enc);
+        buf_printf(b, "\"%s\"", quote_str(t->str, t->len));
+        break;
+    default: return tk2pretty(t->k);
     }
     return b->data;
 }

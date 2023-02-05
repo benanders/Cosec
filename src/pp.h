@@ -45,7 +45,6 @@ typedef struct PP { // C pre-processor
 } PP;
 
 PP * new_pp(Lexer *l);
-
 Token * next_tk(PP *pp);
 Token * next_tk_is(PP *pp, int k);
 Token * peek_tk(PP *pp);

@@ -84,7 +84,7 @@ enum {
     TK_IDENT,
     TK_EOF,
 
-    // For preprocessor only
+    // Preprocessor only
     TK_SPACE,
     TK_NEWLINE,
     TK_MACRO_PARAM,
@@ -92,8 +92,8 @@ enum {
     TK_LAST, // For tables indexed by token
 };
 
-enum { // In order of size
-    ENC_NONE,   // (UTF-8)
+enum { // In order of element size
+    ENC_NONE,   // UTF-8 (default)
     ENC_CHAR16, // u"..."
     ENC_WCHAR,  // L"..."
     ENC_CHAR32, // U"..."
@@ -108,10 +108,10 @@ typedef struct {
         char *ident; // TK_IDENT
         char *num;   // TK_NUM
         struct { char *str; size_t len; int str_enc; }; // TK_STR
-        struct { int ch; int ch_enc; }; // TK_CH
-        int param;   // TK_MACRO_PARAM
+        struct { int ch, ch_enc; }; // TK_CH
+        int param_idx; // TK_MACRO_PARAM
     };
-    Set *hide_set; // For the preprocessor
+    Set *hide_set; // For macro expansion in the preprocessor
 } Token;
 
 typedef struct Lexer {
@@ -129,6 +129,7 @@ void undo_tks(Lexer *l, Vec *tks);
 
 char * lex_rest_of_line(Lexer *l);
 char * lex_include_path(Lexer *l, int *search_local);
+
 Token * glue_tks(Lexer *l, Token *t, Token *u);
 
 char * tk2str(int t);
