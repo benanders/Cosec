@@ -15,7 +15,6 @@ typedef struct {
 } File;
 
 File * new_file(FILE *fp, char *name);
-
 int next_ch(File *f);
 void undo_ch(File *f, int c);
 void undo_chs(File *f, char *s, size_t len);

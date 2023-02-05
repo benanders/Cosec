@@ -1,6 +1,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "parse.h"
 
@@ -55,10 +56,10 @@ int main(int argc, char *argv[]) {
         char *arg = argv[i];
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_help();
-            return 0;
+            return EXIT_SUCCESS;
         } else if (strcmp(arg, "--version") == 0 || strcmp(arg, "-v") == 0) {
             print_version();
-            return 0;
+            return EXIT_SUCCESS;
         } else if (strcmp(arg, "-o") == 0) {
             if (i == argc - 1) {
                 error("expected file name after '-o'");
@@ -74,5 +75,5 @@ int main(int argc, char *argv[]) {
         error("no input files");
     }
     pipeline(in, out);
-    return 0;
+    return EXIT_SUCCESS;
 }

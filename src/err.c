@@ -11,7 +11,6 @@
 #define COLOUR_CLEAR  0
 #define COLOUR_BOLD   1
 #define COLOUR_RED    31
-#define COLOUR_GREEN  32
 #define COLOUR_YELLOW 33
 #define COLOUR_BLUE   34
 #define COLOUR_WHITE  37
@@ -39,17 +38,13 @@ static void print_colour(int colour) {
     printf("\033[%dm", colour);
 }
 
-static void print_error_header() {
+void error(char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
     print_colour(COLOUR_RED);
     print_colour(COLOUR_BOLD);
     printf("error: ");
     print_colour(COLOUR_WHITE);
-}
-
-void error(char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    print_error_header();
     vprintf(fmt, args);
     print_colour(COLOUR_CLEAR);
     printf("\n");
@@ -78,7 +73,10 @@ static void print_tk(Token *tk) {
 void error_at(Token *tk, char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    print_error_header();
+    print_colour(COLOUR_RED);
+    print_colour(COLOUR_BOLD);
+    printf("error: ");
+    print_colour(COLOUR_WHITE);
     vprintf(fmt, args);
     print_colour(COLOUR_CLEAR);
     printf("\n");
@@ -87,17 +85,13 @@ void error_at(Token *tk, char *fmt, ...) {
     exit(1);
 }
 
-static void print_warning_header() {
+void warning_at(Token *t, char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
     print_colour(COLOUR_YELLOW);
     print_colour(COLOUR_BOLD);
     printf("warning: ");
     print_colour(COLOUR_WHITE);
-}
-
-void warning_at(Token *t, char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    print_warning_header();
     vprintf(fmt, args);
     print_colour(COLOUR_CLEAR);
     printf("\n");

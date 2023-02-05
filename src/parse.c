@@ -269,15 +269,15 @@ static Node * parse_num(Scope *s) {
     }
 }
 
-static Token * parse_str_concat(Scope *s) {
+static Token * concat_strs(Scope *s) {
     Buf *buf = buf_new();
     Token *t = peek_tk(s->pp);
     assert(t->k == TK_STR);
     Token *str = copy_tk(t);
     while (t->k == TK_STR) {
         t = next_tk(s->pp);
-        if (t->str_enc != str->str_enc) {
-            error_at(t, "cannot concatenate strings with different encodings");
+        if (t->str_enc > str->str_enc) {
+            str->str_enc = t->str_enc;
         }
         buf_nprint(buf, t->str, t->len);
         t = peek_tk(s->pp);
@@ -289,7 +289,7 @@ static Token * parse_str_concat(Scope *s) {
 }
 
 static Node * parse_str(Scope *s) {
-    Token *tk = parse_str_concat(s);
+    Token *tk = concat_strs(s);
     Node *len = node(N_IMM, tk);
     len->t = t_num(T_LLONG, 1);
     Node *n = node(N_STR, tk);

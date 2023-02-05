@@ -123,7 +123,7 @@ static int lex_hex_esc_seq(Lexer *l) {
         c = next_ch(l->f);
     }
     if (b->len == 0) {
-        error_at(err, "expected hexadecimal digit in escape sequence");
+        error_at(err, "expected hexadecimal digit in '\\x' escape sequence");
     }
     undo_ch(l->f, c);
     buf_push(b, '\0');
@@ -141,7 +141,7 @@ static int lex_oct_esc_seq(Lexer *l) {
         i++;
     }
     if (b->len == 0) {
-        error_at(err, "expected octal digit in escape sequence");
+        error_at(err, "expected octal digit in '\\0' escape sequence");
     }
     undo_ch(l->f, c);
     buf_push(b, '\0');
@@ -165,7 +165,7 @@ static int lex_universal_ch(Lexer *l, int len) { // [len] is 4 or 8
             case '0' ... '9': r = (r << 4) | (c - '0'); continue;
             case 'a' ... 'f': r = (r << 4) | (c - 'a' + 10); continue;
             case 'A' ... 'F': r = (r << 4) | (c - 'A' + 10); continue;
-            default: error_at(err, "invalid universal character '%c'", c);
+            default: error_at(err, "expected hexadecimal digit in universal character sequence", c);
         }
     }
     if (!is_valid_ucn(r)) {

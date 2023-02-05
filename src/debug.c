@@ -6,7 +6,7 @@
 #include "debug.h"
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "array", "init", "local", "global", "kptr", NULL,
+    "imm", "fp", "str", "array", "init", "local", "global", "kptr", "kval",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -40,7 +40,7 @@ static void print_enum_consts(Type *t) {
     printf("{ ");
     for (size_t i = 0; i < vec_len(t->fields); i++) {
         Field *f = vec_get(t->fields, i);
-        if (i == 0) {
+        if (i == 0) { // f->t is same for all enum consts
             printf("(");
             print_type(f->t);
             printf(") ");
@@ -93,7 +93,8 @@ static void print_expr(Node *n) {
         // Operands
     case N_IMM:
         print_type(n->t);
-        if (n->t->k == T_CHAR && n->imm < CHAR_MAX && !iscntrl((char) n->imm)) {
+        if (n->t->k == T_CHAR && !n->t->is_unsigned &&
+                n->imm < CHAR_MAX && !iscntrl((char) n->imm)) {
             printf(" '%c'", (char) n->imm);
         } else {
             printf(" %" PRId64, n->imm);
@@ -107,7 +108,7 @@ static void print_expr(Node *n) {
         print_type(n->t);
         printf(" ");
         switch (n->enc) {
-            case ENC_NONE: break;
+            case ENC_NONE:   break;
             case ENC_CHAR16: printf("u"); break;
             case ENC_CHAR32: printf("U"); break;
             case ENC_WCHAR:  printf("L"); break;
@@ -119,16 +120,20 @@ static void print_expr(Node *n) {
         printf(" { ");
         for (size_t i = 0; i < vec_len(n->inits); i++) {
             Node *elem = vec_get(n->inits, i);
-            printf("[%" PRIu64 "] = ", elem->init_offset);
-            print_expr(elem->init_val);
+            print_expr(elem);
             printf(", ");
         }
         printf("}");
+        break;
+    case N_INIT:
+        printf("[%" PRIu64 "] = ", n->init_offset);
+        print_expr(n->init_val);
         break;
     case N_LOCAL: case N_GLOBAL:
         print_type(n->t);
         printf(" %s", n->var_name);
         break;
+    case N_KVAL: UNREACHABLE();
     case N_KPTR:
         print_type(n->t);
         assert(n->global->k == N_GLOBAL);
@@ -351,5 +356,4 @@ static void print_nodes(Node *n, int indent) {
 
 void print_ast(Node *n) {
     print_nodes(n, 0);
-    printf("\n");
 }

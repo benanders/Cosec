@@ -73,7 +73,7 @@ void undo_ch(File *f, int c) {
 
 void undo_chs(File *f, char *s, size_t len) {
     for (size_t i = 0; i < len; i++) {
-        buf_push(f->buf, s[len - i - 1]);
+        undo_ch(f, s[len - i - 1]);
     }
 }
 

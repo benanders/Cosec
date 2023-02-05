@@ -92,10 +92,10 @@ enum {
     TK_LAST, // For tables indexed by token
 };
 
-enum {
+enum { // In order of size
     ENC_NONE,   // (UTF-8)
-    ENC_WCHAR,  // L"..."
     ENC_CHAR16, // u"..."
+    ENC_WCHAR,  // L"..."
     ENC_CHAR32, // U"..."
 };
 
