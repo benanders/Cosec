@@ -65,8 +65,15 @@ typedef struct Type {
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
         struct Type *ptr; // T_PTR
-        struct { struct Type *elem; struct Node *len; }; // T_ARR (VLA if len->k != N_IMM)
-        struct { struct Type *ret; Vec *params; /* of 'Type *' */ }; // T_FN
+        struct { // T_ARR
+            struct Type *elem;
+            struct Node *len; // VLA if len->k != N_IMM
+        };
+        struct { // T_FN
+            struct Type *ret;
+            Vec *params; // of 'Type *'
+            int is_vararg;
+        };
         Vec *fields; // T_STRUCT, T_UNION, T_ENUM
     };
 } Type;
@@ -76,7 +83,7 @@ Type * t_copy(Type *t);
 Type * t_num(int t, int is_unsigned);
 Type * t_ptr(Type *base);
 Type * t_arr(Type *base, struct Node *len);
-Type * t_fn(Type *ret, Vec *args);
+Type * t_fn(Type *ret, Vec *args, int is_vararg);
 Type * t_struct();
 Type * t_union();
 Type * t_enum();

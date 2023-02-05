@@ -602,11 +602,12 @@ static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
     }
     expect_tk(s->pp, '(');
     if (peek_tk_is(s->pp, TK_VOID) && peek2_tk_is(s->pp, ')')) {
-        next_tk(s->pp); next_tk(s->pp); // 'void' ')'
-        return t_fn(ret, vec_new());
+        next_tk(s->pp); next_tk(s->pp); // Skip 'void' ')'
+        return t_fn(ret, vec_new(), 0);
     }
     Vec *param_types = vec_new();
-    while (!peek_tk_is(s->pp, ')') && !peek_tk_is(s->pp, TK_EOF)) {
+    while (!peek_tk_is(s->pp, ')') && !peek_tk_is(s->pp, TK_ELLIPSIS) &&
+           !peek_tk_is(s->pp, TK_EOF)) {
         Token *name;
         Type *param = parse_fn_declarator_param(s, &name);
         vec_push(param_types, param);
@@ -617,8 +618,16 @@ static Type * parse_fn_declarator(Scope *s, Type *ret, Vec *param_names) {
             break;
         }
     }
+    int is_vararg = 0;
+    Token *ellipsis = next_tk_is(s->pp, TK_ELLIPSIS);
+    if (ellipsis) {
+        if (vec_len(param_types) == 0) {
+            error_at(ellipsis, "expected at least one parameter before '...'");
+        }
+        is_vararg = 1;
+    }
     expect_tk(s->pp, ')');
-    return t_fn(ret, param_types);
+    return t_fn(ret, param_types, is_vararg);
 }
 
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names) {
@@ -840,10 +849,13 @@ static Node * parse_call(Scope *s, Node *l) {
         Node *arg = parse_subexpr(s, PREC_COMMA);
         arg = discharge(arg);
         if (vec_len(args) >= vec_len(fn_t->params)) {
-            error_at(arg->tk, "too many arguments to function call");
+            if (!fn_t->is_vararg) {
+                error_at(arg->tk, "too many arguments to function call");
+            }
+        } else { // Emit conversions for non-varargs
+            Type *expected = vec_get(fn_t->params, vec_len(args));
+            arg = conv_to(arg, expected);
         }
-        Type *expected = vec_get(fn_t->params, vec_len(args));
-        arg = conv_to(arg, expected);
         vec_push(args, arg);
         if (!next_tk_is(s->pp, ',')) {
             break;

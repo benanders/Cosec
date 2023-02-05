@@ -51,11 +51,12 @@ Type * t_arr(Type *base, struct Node *len) {
     return t;
 }
 
-Type * t_fn(Type *ret, Vec *params) {
+Type * t_fn(Type *ret, Vec *params, int is_vararg) {
     Type *t = t_new();
     t->k = T_FN;
     t->ret = ret;
     t->params = params;
+    t->is_vararg = is_vararg;
     t->size = t->align = 8;
     return t;
 }

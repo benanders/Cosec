@@ -52,6 +52,7 @@ void * vec_pop(Vec *v) {
 }
 
 void * vec_remove(Vec *v, size_t i) {
+    if (!v || vec_len(v) == 0) return NULL;
     void *elem = v->data[i];
     memcpy(&v->data[i], &v->data[i + 1], sizeof(void *) * (v->len - i - 1));
     v->len--;
@@ -64,17 +65,20 @@ size_t vec_len(Vec *v) {
 }
 
 void * vec_get(Vec *v, size_t i) {
-    if (!v || i >= v->len) return NULL;
+    if (!v) return NULL;
+    assert(i < vec_len(v));
     return v->data[i];
 }
 
 void * vec_head(Vec *v) {
-    if (!v || v->len == 0) return NULL;
+    if (!v) return NULL;
+    assert(vec_len(v) > 0);
     return vec_get(v, 0);
 }
 
 void * vec_tail(Vec *v) {
-    if (!v || v->len == 0) return NULL;
+    if (!v) return NULL;
+    assert(vec_len(v) > 0);
     return vec_get(v, v->len - 1);
 }
 

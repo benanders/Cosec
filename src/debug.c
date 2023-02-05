@@ -76,15 +76,18 @@ static void print_type(Type *t) {
         for (size_t i = 0; i < vec_len(t->params); i++) {
             Type *arg = vec_get(t->params, i);
             print_type(arg);
-            if (i < vec_len(t->params) - 1) {
+            if (i < vec_len(t->params) - 1 || t->is_vararg) {
                 printf(", ");
             }
+        }
+        if (t->is_vararg) {
+            printf("...");
         }
         printf(")");
         break;
     case T_STRUCT: printf("struct "); print_struct_fields(t); break;
-    case T_UNION:  printf("union "); print_struct_fields(t); break;
-    case T_ENUM:   printf("enum "); print_enum_consts(t); break;
+    case T_UNION:  printf("union ");  print_struct_fields(t); break;
+    case T_ENUM:   printf("enum ");   print_enum_consts(t); break;
     }
 }
 
@@ -210,9 +213,12 @@ static void print_fn_def(Node *n) {
             assert(name->k == TK_IDENT);
             printf("%s", name->ident);
         }
-        if (i < vec_len(n->param_names) - 1) {
+        if (i < vec_len(n->param_names) - 1 || n->t->is_vararg) {
             printf(", ");
         }
+    }
+    if (n->t->is_vararg) {
+        printf("...");
     }
     printf(")\n");
     print_nodes(n->fn_body, 1);
