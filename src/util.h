@@ -2,6 +2,7 @@
 #ifndef COSEC_UTIL_H
 #define COSEC_UTIL_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <assert.h>
 
