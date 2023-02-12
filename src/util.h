@@ -64,8 +64,11 @@ void set_intersection(Set **dst, Set *src);
 // String manipulation
 char * str_copy(char *s);
 char * str_ncopy(char *s, size_t len);
+char * prepend_underscore(char *s);
+
 char * quote_ch(char ch);
 char * quote_str(char *s, size_t len);
+
 uint16_t * utf8_to_utf16(char *s, size_t len, size_t *buf_len);
 uint32_t * utf8_to_utf32(char *s, size_t len, size_t *buf_len);
 

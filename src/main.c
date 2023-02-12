@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 #include "parse.h"
-
+#include "compile.h"
 #include "err.h"
 #include "debug.h"
 
@@ -46,8 +46,13 @@ static void pipeline(char *in, char *out) {
         error("cannot read input file '%s'", in);
     }
     File *f = new_file(fp, in);
+
     Node *ast = parse(f);
     print_ast(ast);
+    printf("\n");
+
+    Vec *globals = compile(ast);
+    print_ir(globals);
 }
 
 int main(int argc, char *argv[]) {

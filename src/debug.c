@@ -4,6 +4,10 @@
 #include <inttypes.h>
 
 #include "debug.h"
+#include "compile.h"
+
+
+// ---- AST Printing ----------------------------------------------------------
 
 static char * AST_NAMES[N_LAST] = {
     "imm", "fp", "str", "array", "init", "local", "global", "kptr", "kval",
@@ -363,4 +367,118 @@ static void print_nodes(Node *n, int indent) {
 
 void print_ast(Node *n) {
     print_nodes(n, 0);
+}
+
+
+// ---- SSA IR Printing -------------------------------------------------------
+
+#define BB_PREFIX ".BB"
+
+static char *IR_OP_NAMES[IR_LAST] = {
+    "IMM", "FP", "GLOBAL",
+    "FARG", "ALLOC", "LOAD", "STORE", "ELEM",
+    "ADD", "SUB", "MUL", "DIV", "MOD",
+    "AND", "OR", "XOR", "SHL", "SHR",
+    "EQ", "NEQ", "LT", "LE", "GT", "GE",
+    "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
+    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
+};
+
+static void print_ins(IrIns *ins) {
+    printf("\t%.4d\t", ins->idx);
+    print_type(ins->t);
+    printf("\t%s\t", IR_OP_NAMES[ins->op]);
+    switch (ins->op) {
+    case IR_IMM:    printf("+%llu", ins->imm); break;
+    case IR_FP:     printf("+%g", ins->fp); break;
+    case IR_GLOBAL: printf("%s", ins->g->label); break;
+    case IR_FARG:   printf("%zu", ins->arg_num); break;
+    case IR_ALLOC:  print_type(ins->t->ptr); break;
+    case IR_STORE:  printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
+    case IR_PHI:
+        for (size_t i = 0; i < vec_len(ins->preds); i++) {
+            IrBB *pred = vec_get(ins->preds, i);
+            IrIns *def = vec_get(ins->defs, i);
+            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->idx, def->idx);
+        }
+        break;
+    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->idx : -1); break;
+    case IR_CONDBR:
+        printf("%.4d\t", ins->cond->idx);
+        printf(BB_PREFIX "%d\t", ins->true ? ins->true->idx : -1);
+        printf(BB_PREFIX "%d", ins->false ? ins->false->idx : -1);
+        break;
+    default:
+        if (ins->l) printf("%.4d", ins->l->idx);
+        if (ins->r) printf("\t%.4d", ins->r->idx);
+        break;
+    }
+    printf("\n");
+}
+
+static void print_bb(IrBB *bb) {
+    printf(BB_PREFIX "%d:\n", bb->idx);
+    for (IrIns *ins = bb->head; ins; ins = ins->next) {
+        print_ins(ins);
+    }
+}
+
+static void number_bbs(IrFn *fn) {
+    int i = 0;
+    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+        bb->idx = i++;
+    }
+}
+
+static void number_ins(IrFn *fn) {
+    int i = 0;
+    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+        for (IrIns *ins = bb->head; ins; ins = ins->next) {
+            ins->idx = i++;
+        }
+    }
+}
+
+static void print_fn(Global *g) {
+    number_bbs(g->fn);
+    number_ins(g->fn);
+    print_type(g->t);
+    printf(" %s:\n", g->label);
+    for (IrBB *bb = g->fn->entry; bb; bb = bb->next) {
+        print_bb(bb);
+    }
+}
+
+static void print_global(Global *g) {
+    print_type(g->t);
+    printf(" %s", g->label);
+    if (g->k == K_NONE) { // No init value
+        return;
+    }
+    printf(" = ");
+    switch (g->k) {
+    case K_INT: printf("%llu", g->i); break;
+    case K_FP:  printf("%g", g->f); break;
+    case K_STR: printf("\"%s\"", quote_str(g->str, g->len)); break;
+    case K_PTR:
+        printf("&%s", g->ptr->label);
+        if (g->offset > 0) {
+            printf(" + %llu", g->offset);
+        } else {
+            printf(" - %llu", -g->offset);
+        }
+        break;
+    }
+    printf("\n");
+}
+
+void print_ir(Vec *globals) {
+    for (size_t i = 0; i < vec_len(globals); i++) {
+        Global *g = vec_get(globals, i);
+        if (g->k != K_FN_DEF) {
+            print_global(g);
+        } else {
+            print_fn(g);
+        }
+    }
 }

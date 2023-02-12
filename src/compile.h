@@ -107,31 +107,31 @@ typedef struct {
 } IrFn;
 
 enum {
+    K_NONE,
     K_INT,
     K_FP,
-    K_STR,   // UTF-8
-    K_STR16, // UTF-16
-    K_STR32, // UTF-32
+    K_STR,
     K_PTR,
     K_FN_DEF,
 };
 
 typedef struct Global {
+    int k;
     Type *t;
     char *label;
-    int k;
     union {
         int64_t i; // K_INT
         double f;  // K_FP
         struct {   // K_STR, K_STR16, K_STR32
-            union { char *s; uint16_t *s16; uint32_t *s32; };
+            union { char *str; uint16_t *str16; uint32_t *str32; };
             size_t len;
+            int enc;
         };
         struct { struct Global *ptr; int64_t offset; }; // K_PTR
         IrFn *fn; // K_FN_DEF
     };
 } Global;
 
-Vec * compile(Node *ast);
+Vec * compile(Node *n);
 
 #endif

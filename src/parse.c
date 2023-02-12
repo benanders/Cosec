@@ -809,10 +809,14 @@ static void ensure_ptr(Node *n) {
 static void ensure_lvalue(Node *n) {
     if (n->k != N_LOCAL && n->k != N_GLOBAL &&
             n->k != N_DEREF && n->k != N_IDX && n->k != N_FIELD)
-        error_at(n->tk, "expression is not assignable");
-    if (n->t->k == T_ARR)  error_at(n->tk, "array type is not assignable");
-    if (n->t->k == T_FN)   error_at(n->tk, "function type is not assignable");
-    if (n->t->k == T_VOID) error_at(n->tk, "'void' type is not assignable");
+        error_at(n->tk, "expression is not an lvalue");
+    if (n->t->k == T_ARR)  error_at(n->tk, "array type is not an lvalue");
+    if (n->t->k == T_VOID) error_at(n->tk, "'void' type is not an lvalue");
+}
+
+static void ensure_assignable(Node *n) {
+    ensure_lvalue(n);
+    if (n->t->k == T_FN) error_at(n->tk, "function type is not assignable");
 }
 
 static int is_null_ptr(Node *n) {
@@ -901,7 +905,7 @@ static Node * parse_struct_field_deref(Scope *s, Node *l) {
 
 static Node * parse_post_inc_dec(Scope *s, Node *l) {
     Token *op = next_tk(s->pp);
-    ensure_lvalue(l);
+    ensure_assignable(l);
     l = discharge(l);
     Node *n = node(op->k == TK_INC ? N_POST_INC : N_POST_DEC, op);
     n->t = l->t;
@@ -963,7 +967,7 @@ static Node * parse_log_not(Scope *s) {
 static Node * parse_pre_inc_dec(Scope *s) {
     Token *op = next_tk(s->pp);
     Node *l = parse_subexpr(s, PREC_UNARY);
-    ensure_lvalue(l);
+    ensure_assignable(l);
     l = discharge(l);
     Node *unop = node(op->k == TK_INC ? N_PRE_INC : N_PRE_DEC, op);
     unop->t = l->t;
@@ -1126,7 +1130,7 @@ static Node * parse_binop(Scope *s, Token *op, Node *l) {
     case TK_A_SHR:     ensure_int(l); ensure_int(r); return emit_binop(N_A_SHR, l, r, op);
 
     case '=':
-        ensure_lvalue(l);
+        ensure_assignable(l);
         n = node(N_ASSIGN, op);
         n->t = l->t;
         n->l = l;

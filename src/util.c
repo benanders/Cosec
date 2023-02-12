@@ -328,6 +328,13 @@ char * str_ncopy(char *s, size_t len) {
     return r;
 }
 
+char * prepend_underscore(char *s) {
+    char *out = malloc(sizeof(char) * (strlen(s) + 1));
+    out[0] = '_';
+    strcpy(&out[1], s);
+    return out;
+}
+
 static void quote_ch_to_buf(Buf *b, char ch) {
     switch (ch) {
     case '\\': buf_print(b, "\\\\"); break;
