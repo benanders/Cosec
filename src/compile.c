@@ -571,6 +571,21 @@ static IrIns * compile_array_access(Scope *s, Node *n) {
     return emit_load(s, ptr);
 }
 
+static IrIns * compile_field_access(Scope *s, Node *n) {
+    IrIns *l = discharge(s, compile_expr(s, n->l));
+    assert(l->op == IR_LOAD);
+    delete_ir(l);
+    size_t idx = find_field(n->strct->t, n->field_name);
+    assert(idx != NOT_FOUND); // Checked by parser
+    Field *f = vec_get(n->strct->t->fields, idx);
+    IrIns *offset = emit(s, IR_IMM, t_num(T_LLONG, 0));
+    offset->imm = f->offset;
+    IrIns *elem = emit(s, IR_ELEM, t_ptr(f->t));
+    elem->base = l->src;
+    elem->offset = offset;
+    return emit_load(s, elem);
+}
+
 static IrIns * compile_call(Scope *s, Node *n) {
     Type *fn_t = n->fn->t;
     if (fn_t->k == T_PTR) {
@@ -664,7 +679,7 @@ static IrIns * compile_expr(Scope *s, Node *n) {
         // Postfix operations
     case N_IDX:   return compile_array_access(s, n);
     case N_CALL:  return compile_call(s, n);
-    case N_FIELD: TODO();
+    case N_FIELD: return compile_field_access(s, n);
     default:      UNREACHABLE();
     }
 }
@@ -690,8 +705,8 @@ static void compile_decl(Scope *s, Node *n) {
 static void compile_stmt(Scope *s, Node *n) {
     switch (n->k) {
         case N_TYPEDEF: break;
-        case N_DECL: compile_decl(s, n); break;
-        default:     discharge(s, compile_expr(s, n)); break;
+        case N_DECL:    compile_decl(s, n); break;
+        default:        discharge(s, compile_expr(s, n)); break;
     }
 }
 
@@ -699,7 +714,7 @@ static void compile_block(Scope *s, Node *n) {
     Scope block;
     enter_scope(&block, s);
     while (n) {
-        compile_stmt(s, n);
+        compile_stmt(&block, n);
         n = n->next;
     }
 }
@@ -752,7 +767,7 @@ static void compile_top_level(Scope *s, Node *n) {
         case N_DECL:    compile_global_decl(s, n); break;
         case N_FN_DEF:  compile_fn_def(s, n); break;
         case N_TYPEDEF: break; // Ignore
-        default: UNREACHABLE();
+        default:        UNREACHABLE();
     }
 }
 
