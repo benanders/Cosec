@@ -57,6 +57,11 @@ enum {
     IR_LAST, // For tables indexed by opcode
 };
 
+typedef struct {
+    struct IrBB **bb;
+    struct IrIns *ins; // Needed to generate PHIs
+} BrChain;
+
 typedef struct IrIns {
     struct IrIns *next, *prev;
     struct IrBB *bb;
@@ -82,11 +87,11 @@ typedef struct IrIns {
             Vec *preds; // of 'IrBB *'; predecessors
             Vec *defs;  // of 'IrIns *'; definitions, one for each predecessor
         };
-        struct IrBB *br;  // IR_BR
-        struct {   // IR_CONDBR
+        struct IrBB *br; // IR_BR
+        struct { // IR_CONDBR
             struct IrIns *cond;
             struct IrBB *true, *false;
-            Vec *true_chain, *false_chain; // of 'IrBB **'
+            Vec *true_chain, *false_chain; // of 'BrChain *'
         };
         struct IrIns *fn;  // IR_CALL
         struct IrIns *arg; // IR_CARG

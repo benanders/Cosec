@@ -82,7 +82,7 @@ void * vec_tail(Vec *v) {
     return vec_get(v, v->len - 1);
 }
 
-static void vec_empty(Vec *v) {
+void vec_empty(Vec *v) {
     v->len = 0;
 }
 

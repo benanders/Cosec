@@ -83,6 +83,14 @@ static IrIns * emit(Scope *s, int op, Type *t) {
     IrIns *i = calloc(1, sizeof(IrIns));
     i->op = op;
     i->t = t;
+    if (op == IR_CONDBR) {
+        i->true_chain = vec_new();
+        i->false_chain = vec_new();
+    }
+    if (op == IR_PHI) {
+        i->preds = vec_new();
+        i->defs = vec_new();
+    }
     emit_to_bb(s->fn->last, i);
     return i;
 }
@@ -160,13 +168,81 @@ static Global * find_global(Scope *s, char *name) {
 
 // ---- Expressions -----------------------------------------------------------
 
+static int INVERT_COND[IR_LAST] = {
+    [IR_EQ]  = IR_NEQ,
+    [IR_NEQ] = IR_EQ,
+    [IR_LT]  = IR_GE,
+    [IR_LE]  = IR_GT,
+    [IR_GT]  = IR_LE,
+    [IR_GE]  = IR_LT,
+};
+
 static IrIns * compile_expr(Scope *s, Node *n);
 
-static IrIns * discharge(Scope *s, IrIns *ins) {
-    if (ins->op == IR_CONDBR) { // Convert conditions into integers
-        assert(0); // TODO
+static void add_to_branch_chain(Vec *bcs, IrBB **bb, IrIns *ins) {
+    BrChain *bc = malloc(sizeof(BrChain));
+    bc->bb = bb;
+    bc->ins = ins;
+    vec_push(bcs, bc);
+}
+
+static void patch_branch_chain(Vec *bcs, IrBB *target) {
+    for (size_t i = 0; i < vec_len(bcs); i++) {
+        BrChain *bc = vec_get(bcs, i);
+        *bc->bb = target;
     }
-    return ins;
+    vec_empty(bcs);
+}
+
+static void merge_branch_chains(Vec *bcs, Vec *to_append) {
+    for (size_t i = 0; i < vec_len(to_append); i++) {
+        BrChain *bc = vec_get(to_append, i);
+        vec_push(bcs, bc);
+    }
+}
+
+static void add_phi(IrIns *phi, IrBB *pred, IrIns *def) {
+    assert(phi->op == IR_PHI);
+    vec_push(phi->preds, pred);
+    vec_push(phi->defs, def);
+}
+
+static IrIns * discharge(Scope *s, IrIns *br) {
+    if (br->op != IR_CONDBR) {
+        return br; // Doesn't need discharging
+    }
+    if (vec_len(br->true_chain) == 1 && vec_len(br->false_chain) == 1) {
+        IrIns *cond = br->cond;
+        if (((BrChain *) vec_get(br->false_chain, 0))->bb == &br->false) {
+            cond->op = INVERT_COND[cond->op]; // Negate
+        }
+        delete_ir(br);
+        return cond;
+    }
+    IrBB *bb = emit_bb(s);
+    IrIns *k_true = emit(s, IR_IMM, t_num(T_INT, 0));
+    k_true->imm = 1;
+    IrIns *k_false = emit(s, IR_IMM, t_num(T_INT, 0));
+    k_false->imm = 0;
+    IrIns *phi = emit(s, IR_PHI, br->t);
+    for (size_t i = 0; i < vec_len(br->true_chain); i++) {
+        BrChain *bc = vec_get(br->true_chain, i);
+        if (bc->ins != br) { // Handle last condition separately
+            add_phi(phi, bc->ins->bb, k_true);
+        }
+    }
+    for (size_t i = 0; i < vec_len(br->false_chain); i++) {
+        BrChain *bc = vec_get(br->false_chain, i);
+        if (bc->ins != br) { // Handle last condition separately
+            add_phi(phi, bc->ins->bb, k_false);
+        }
+    }
+    patch_branch_chain(br->true_chain, bb);
+    patch_branch_chain(br->false_chain, bb);
+    add_phi(phi, br->bb, br->cond); // Add last condition separately
+    br->op = IR_BR; // Change last condition to unconditional branch
+    br->br = bb;
+    return phi;
 }
 
 static IrIns * to_cond(Scope *s, IrIns *cond) {
@@ -184,8 +260,8 @@ static IrIns * to_cond(Scope *s, IrIns *cond) {
     }
     IrIns *br = emit(s, IR_CONDBR, NULL);
     br->cond = cond;
-    vec_push(br->true_chain, &br->true);
-    vec_push(br->false_chain, &br->false);
+    add_to_branch_chain(br->true_chain, &br->true, br);
+    add_to_branch_chain(br->false_chain, &br->false, br);
     return br;
 }
 
@@ -374,54 +450,51 @@ static IrIns * compile_arith_assign(Scope *s, Node *n, int op) {
 }
 
 static IrIns * compile_and(Scope *s, Node *n) {
-//    IrIns *l = to_cond(s, compile_expr(s, n->l));
-//    IrBB *r_bb = emit_bb(s);
-//    patch_branch_chain(l->true_chain, r_bb);
-//
-//    IrIns *r = to_cond(s, compile_expr(s, n->r));
-//    merge_branch_chains(r->false_chain, l->false_chain);
-//    return r;
-    TODO();
+    IrIns *l = to_cond(s, compile_expr(s, n->l));
+    IrBB *r_bb = emit_bb(s);
+    patch_branch_chain(l->true_chain, r_bb);
+
+    IrIns *r = to_cond(s, compile_expr(s, n->r));
+    merge_branch_chains(r->false_chain, l->false_chain);
+    return r;
 }
 
 static IrIns * compile_or(Scope *s, Node *n) {
-//    IrIns *l = to_cond(s, compile_expr(s, n->l));
-//    IrBB *r_bb = emit_bb(s);
-//    patch_branch_chain(l->false_chain, r_bb);
-//
-//    IrIns *r = to_cond(s, compile_expr(s, n->r));
-//    merge_branch_chains(r->true_chain, l->true_chain);
-//    return r;
-    TODO();
+    IrIns *l = to_cond(s, compile_expr(s, n->l));
+    IrBB *r_bb = emit_bb(s);
+    patch_branch_chain(l->false_chain, r_bb);
+
+    IrIns *r = to_cond(s, compile_expr(s, n->r));
+    merge_branch_chains(r->true_chain, l->true_chain);
+    return r;
 }
 
 static IrIns * compile_comma(Scope *s, Node *n) {
-    compile_expr(s, n->l); // Discard left operand
+    discharge(s, compile_expr(s, n->l)); // Discard left operand
     return compile_expr(s, n->r);
 }
 
 static IrIns * compile_ternary(Scope *s, Node *n) {
-//    IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
-//
-//    IrBB *true_bb = emit_bb(s);
-//    patch_branch_chain(cond->true_chain, true_bb);
-//    IrIns *true = discharge(s, compile_expr(s, n->if_body));
-//    IrIns *true_br = emit(s, ir_br());
-//
-//    IrBB *false_bb = emit_bb(s);
-//    patch_branch_chain(cond->false_chain, false_bb);
-//    IrIns *false = discharge(s, compile_expr(s, n->if_else));
-//    IrIns *false_br = emit(s, ir_br());
-//
-//    IrBB *after = emit_bb(s);
-//    true_br->br = after;
-//    false_br->br = after;
-//
-//    IrIns *phi = emit(s, ir_phi(n->t));
-//    add_phi(phi, true_bb, true);
-//    add_phi(phi, false_bb, false);
-//    return phi;
-    TODO();
+    IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
+
+    IrBB *true_bb = emit_bb(s);
+    patch_branch_chain(cond->true_chain, true_bb);
+    IrIns *true = discharge(s, compile_expr(s, n->if_body));
+    IrIns *true_br = emit(s, IR_BR, NULL);
+
+    IrBB *false_bb = emit_bb(s);
+    patch_branch_chain(cond->false_chain, false_bb);
+    IrIns *false = discharge(s, compile_expr(s, n->if_else));
+    IrIns *false_br = emit(s, IR_BR, NULL);
+
+    IrBB *after = emit_bb(s);
+    true_br->br = after;
+    false_br->br = after;
+
+    IrIns *phi = emit(s, IR_PHI, n->t);
+    add_phi(phi, true_bb, true);
+    add_phi(phi, false_bb, false);
+    return phi;
 }
 
 static IrIns * compile_neg(Scope *s, Node *n) {
@@ -607,7 +680,7 @@ static void compile_decl(Scope *s, Node *n) {
     IrIns *alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
     def_local(s, n->var->var_name, alloc);
     if (n->init) {
-        IrIns *v = compile_expr(s, n->init);
+        IrIns *v = discharge(s, compile_expr(s, n->init));
         IrIns *store = emit(s, IR_STORE, NULL);
         store->src = v;
         store->dst = alloc;
@@ -618,7 +691,7 @@ static void compile_stmt(Scope *s, Node *n) {
     switch (n->k) {
         case N_TYPEDEF: break;
         case N_DECL: compile_decl(s, n); break;
-        default:     compile_expr(s, n); break;
+        default:     discharge(s, compile_expr(s, n)); break;
     }
 }
 

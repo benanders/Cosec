@@ -24,6 +24,7 @@ size_t vec_len(Vec *v);
 void * vec_get(Vec *v, size_t i);
 void * vec_head(Vec *v);
 void * vec_tail(Vec *v);
+void vec_empty(Vec *v);
 
 // String buffer
 typedef struct {
