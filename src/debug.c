@@ -125,16 +125,33 @@ static void print_expr(Node *n) {
     case N_ARR:
         print_type(n->t);
         printf(" { ");
-        for (size_t i = 0; i < vec_len(n->inits); i++) {
-            Node *elem = vec_get(n->inits, i);
-            print_expr(elem);
+        for (size_t i = 0; i < vec_len(n->elems); i++) {
+            Node *elem = vec_get(n->elems, i);
+            if (!elem) {
+                printf("∅");
+            } else {
+                print_expr(elem);
+            }
             printf(", ");
         }
         printf("}");
         break;
-    case N_INIT:
-        printf("[%" PRIu64 "] = ", n->init_offset);
-        print_expr(n->init_val);
+    case N_STRUCT:
+        print_type(n->t);
+        printf(" { ");
+        assert(vec_len(n->elems) == vec_len(n->t->fields));
+        for (size_t i = 0; i < vec_len(n->fields); i++) {
+            Node *f = vec_get(n->fields, i);
+            Field *ft = vec_get(n->t->fields, i);
+            printf(".%s = ", ft->name);
+            if (!f) {
+                printf("∅");
+            } else {
+                print_expr(f);
+            }
+            printf(", ");
+        }
+        printf("}");
         break;
     case N_LOCAL: case N_GLOBAL:
         print_type(n->t);
@@ -145,10 +162,10 @@ static void print_expr(Node *n) {
         print_type(n->t);
         assert(n->global->k == N_GLOBAL);
         printf(" &%s", n->global->var_name);
-        if (n->kptr_offset > 0) {
-            printf(" + %" PRIu64, n->kptr_offset);
-        } else if (n->kptr_offset < 0) {
-            printf(" - %" PRIu64, -n->kptr_offset);
+        if (n->offset > 0) {
+            printf(" + %" PRIu64, n->offset);
+        } else if (n->offset < 0) {
+            printf(" - %" PRIu64, -n->offset);
         }
         break;
 

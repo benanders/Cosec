@@ -18,22 +18,24 @@ Vec * vec_new() {
     Vec *v = malloc(sizeof(Vec));
     v->len = 0;
     v->max = 8;
-    v->data = malloc(sizeof(void *) * v->max);
+    v->data = calloc(v->max, sizeof(void *)); // Needed for 'vec_put'
     return v;
 }
 
-static void vec_resize(Vec *v, size_t by) {
-    if (v->len + by >= v->max) {
-        while (v->max <= v->len + by) {
+static void vec_resize(Vec *v, size_t min) {
+    if (min >= v->max) {
+        size_t prev_max = v->max;
+        while (v->max < min) {
             v->max *= 2;
         }
         v->data = realloc(v->data, sizeof(void *) * v->max);
+        memset(&v->data[prev_max], 0, sizeof(void *) * (v->max - prev_max));
     }
 }
 
 void vec_push(Vec *v, void *elem) {
     if (!v) return;
-    vec_resize(v, 1);
+    vec_resize(v, v->len + 1);
     v->data[v->len++] = elem;
 }
 
@@ -41,6 +43,15 @@ void vec_push_all(Vec *v, Vec *to_append) {
     for (size_t i = 0; i < vec_len(to_append); i++) {
         void *elem = vec_get(to_append, i);
         vec_push(v, elem);
+    }
+}
+
+void vec_put(Vec *v, size_t i, void *elem) {
+    if (!v) return;
+    vec_resize(v, i);
+    v->data[i] = elem;
+    if (i >= v->len) {
+        v->len = i + 1;
     }
 }
 

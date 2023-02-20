@@ -18,6 +18,7 @@ typedef struct {
 Vec * vec_new();
 void vec_push(Vec *v, void *elem);
 void vec_push_all(Vec *v, Vec *to_append);
+void vec_put(Vec *v, size_t i, void *elem);
 void * vec_pop(Vec *v);
 void * vec_remove(Vec *v, size_t i);
 size_t vec_len(Vec *v);

@@ -116,9 +116,15 @@ enum {
     K_INT,
     K_FP,
     K_STR,
+    K_ARR,
     K_PTR,
     K_FN_DEF,
 };
+
+typedef struct {
+    uint64_t offset;
+    struct Global *val; // 'label' = NULL
+} Init;
 
 typedef struct Global {
     int k;
@@ -132,6 +138,7 @@ typedef struct Global {
             size_t len;
             int enc;
         };
+        Vec *inits; // K_ARR; of 'Init *'
         struct { struct Global *ptr; int64_t offset; }; // K_PTR
         IrFn *fn; // K_FN_DEF
     };

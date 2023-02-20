@@ -10,8 +10,8 @@ enum { // AST nodes
     N_IMM,
     N_FP,
     N_STR,
-    N_ARR,
-    N_INIT,
+    N_ARR, // Array initializer
+    N_STRUCT, // Struct/union initializer
     N_LOCAL,
     N_GLOBAL,
     N_KPTR, // Constant pointer to a 'static' variable
@@ -107,14 +107,13 @@ typedef struct Node {
             size_t len;
             int enc;
         };
-        Vec *inits; /* of N_INIT */ // N_ARR
-        struct { struct Node *init_val; uint64_t init_offset; }; // N_INIT
+        Vec *elems;  // N_ARR; of 'Node *'
+        Vec *fields; // N_STRUCT; of 'Node *' (same order as 't->fields')
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
-        struct { struct Node *global; /* to N_GLOBAL */ int64_t kptr_offset; }; // N_KPTR, N_KVAL
+        struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
 
         // Operations
         struct { struct Node *l, *r; }; // Unary, binary
-        struct { struct Node *arr, *idx; }; // N_IDX
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
         struct { struct Node *strct; char *field_name; }; // N_FIELD
 
@@ -133,7 +132,7 @@ typedef struct Node {
 
 Node * parse(File *f);
 
-// Used by the preprocessor for '#if', etc. directives
+// Used by the preprocessor for '#if' directives
 int64_t parse_const_int_expr(PP *pp);
 
 #endif

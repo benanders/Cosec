@@ -557,7 +557,7 @@ static Type * parse_array_declarator(Scope *s, Type *base) {
         if (!try_calc_int_expr(n, &i)) {
             len = n; // VLA
         } else if (i < 0) {
-            error_at(n->tk, "cannot have array with negative size ('" PRId64 "')", i);
+            error_at(n->tk, "cannot have array with negative size ('%" PRId64 "')", i);
         } else {
             len = node(N_IMM, n->tk);
             len->t = t_num(T_LLONG, 1);
@@ -781,7 +781,10 @@ static Node * parse_operand(Scope *s) {
     case TK_STR: n = parse_str(s); break;
     case TK_IDENT:
         next_tk(s->pp);
-        n = find_var(s, tk->ident);
+        Node *v = find_var(s, tk->ident);
+        n = node(N_LOCAL, tk);
+        n->t = v->t;
+        n->var_name = v->var_name;
         if (!n) error_at(tk, "undeclared identifier '%s'", tk->ident);
         break;
     case '(':
@@ -836,8 +839,8 @@ static Node * parse_array_access(Scope *s, Node *l) {
     expect_tk(s->pp, ']');
     Node *n = node(N_IDX, op);
     n->t = l->t->elem;
-    n->arr = l;
-    n->idx = idx;
+    n->l = l;
+    n->r = idx;
     return n;
 }
 
@@ -1242,11 +1245,11 @@ static Node * parse_expr_no_commas(Scope *s) {
     } else if (l->k == N_KPTR && r->k == N_IMM) {                      \
         n->k = N_KPTR;                                                 \
         n->global = l->global;                                         \
-        n->kptr_offset = l->kptr_offset op (r->imm * e->t->ptr->size); \
+        n->offset = l->offset op (r->imm * e->t->ptr->size); \
     } else if (l->k == N_IMM && r->k == N_KPTR) {                      \
         n->k = N_KPTR;                                                 \
         n->global = r->global;                                         \
-        n->kptr_offset = r->kptr_offset op (l->imm * e->t->ptr->size); \
+        n->offset = r->offset op (l->imm * e->t->ptr->size); \
     } else {                                                           \
         goto err;                                                      \
     }                                                                  \
@@ -1266,7 +1269,7 @@ static Node * parse_expr_no_commas(Scope *s) {
     } else if (l->k == N_KPTR && r->k == N_KPTR) {                 \
         n->k = N_IMM;                                              \
         n->imm = op (l->global == r->global &&                     \
-                     l->kptr_offset == r->kptr_offset);            \
+                     l->offset == r->offset);            \
     } else if ((l->k == N_KPTR && r->k == N_IMM && r->imm == 0) || \
                (r->k == N_KPTR && l->k == N_IMM && l->imm == 0)) { \
         n->k = N_IMM;                                              \
@@ -1299,18 +1302,18 @@ static Node * eval_const_expr(Node *e, Token **err) {
     switch (e->k) {
         // Constants
     case N_IMM: case N_FP: case N_KPTR: *n = *e; break;
-    case N_ARR:
-        n->inits = vec_new();
-        for (size_t i = 0; i < vec_len(e->inits); i++) {
-            Node *v = vec_get(e->inits, i);
-            assert(v->k == N_INIT);
-            Node *k = eval_const_expr(v->init_val, err);
+    case N_ARR: case N_STRUCT:
+        n->elems = vec_new();
+        for (size_t i = 0; i < vec_len(e->elems); i++) {
+            Node *v = vec_get(e->elems, i);
+            if (!v) {
+                vec_push(n->elems, NULL);
+                continue;
+            }
+            Node *k = eval_const_expr(v, err);
             if (!k) goto err;
             if (k->k == N_KVAL) goto err;
-            Node *init = node(N_INIT, v->tk);
-            init->init_offset = v->init_offset;
-            init->init_val = k;
-            vec_push(n->inits, init);
+            vec_push(n->elems, k);
         }
         break;
     case N_GLOBAL:
@@ -1400,14 +1403,14 @@ static Node * eval_const_expr(Node *e, Token **err) {
 
         // Postfix operations
     case N_IDX:
-        l = eval_const_expr(e->arr, err);
+        l = eval_const_expr(e->l, err);
         if (!l) goto err;
         if (l->k != N_KVAL && l->k != N_KPTR) goto err;
-        r = eval_const_expr(e->idx, err);
+        r = eval_const_expr(e->r, err);
         if (!r) goto err;
         if (r->k != N_IMM) goto err;
         n = l;
-        n->kptr_offset += (int64_t) (r->imm * n->t->size);
+        n->offset += (int64_t) (r->imm * n->t->size);
         break;
     case N_FIELD:
         l = eval_const_expr(e->strct, err);
@@ -1417,7 +1420,7 @@ static Node * eval_const_expr(Node *e, Token **err) {
         assert(f_idx != NOT_FOUND);
         Field *f = vec_get(l->t->fields, f_idx);
         e = l;
-        e->kptr_offset += (int64_t) f->offset;
+        e->offset += (int64_t) f->offset;
         break;
     default: goto err;
     }
@@ -1428,7 +1431,7 @@ err:
 }
 
 static Node * calc_const_expr(Node *e) {
-    Token *err;
+    Token *err = NULL;
     Node *n = eval_const_expr(e, &err);
     if (!n) {
         error_at(err, "expected constant expression");
@@ -1739,64 +1742,47 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
     return fn;
 }
 
-static void parse_string_init(Scope *s, Vec *inits, Type *t, size_t offset) {
+static Node * parse_string_init(Scope *s, Type *t) {
     assert(is_string_type(t));
     assert(!is_vla(t));
-    Node *str;
-    if (peek_tk_is(s->pp, TK_STR)) {
-        str = parse_str(s);
-    } else if (peek_tk_is(s->pp, '{') && peek2_tk_is(s->pp, TK_STR)) {
-        next_tk(s->pp); // Skip '{'
-        str = parse_str(s);
-        expect_tk(s->pp, '}');
-    } else {
-        return; // Parse as normal array
+    if (!peek_tk_is(s->pp, TK_STR)) {
+        return NULL; // Parse as normal array
     }
+    Node *str = parse_str(s);
     if (!are_equal(t->elem, str->t->elem)) {
         warning_at(str->tk, "initializing string with literal of different type");
     }
     if (!t->len) {
+        assert(str->t->len->k == N_IMM);
         t->len = str->t->len;
         t->size = t->len->imm * t->elem->size;
     }
     if (t->len->imm < str->len) {
         warning_at(str->tk, "initializer string is too long");
     }
-    for (size_t i = 0; i < t->len->imm || i < str->len; i++) {
-        Node *ch = node(N_IMM, str->tk);
-        ch->t = t->elem;
-        if (i < str->len) {
-            switch (str->enc) {
-                case ENC_NONE: ch->imm = (uint64_t) str->str[i]; break;
-                case ENC_CHAR16: ch->imm = str->str16[i]; break;
-                case ENC_CHAR32: case ENC_WCHAR: ch->imm = str->str32[i]; break;
-            }
-        } else {
-            ch->imm = 0;
-        }
-        Node *n = node(N_INIT, str->tk);
-        n->init_offset = offset + i * t->elem->size;
-        n->init_val = ch;
-        vec_push(inits, n);
-    }
+    return str;
 }
 
-static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, int designated);
+static Node * parse_init_list_raw(Scope *s, Type *t, int designated);
 
-static void parse_init_elem(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
-    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION || peek_tk_is(s->pp, '{')) {
-        parse_init_list_raw(s, inits, t, offset, designated);
+static Node * parse_init_elem(Scope *s, Type *t, int designated) {
+    Node *n;
+    int has_brace = peek_tk_is(s->pp, '{') != NULL;
+    if (t && (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION || has_brace)) {
+        n = parse_init_list_raw(s, t, designated);
+        if (has_brace && !peek_tk_is(s->pp, '}')) {
+            expect_tk(s->pp, ',');
+        }
     } else {
-        Node *e = parse_expr_no_commas(s);
-        e = conv_to(e, t);
-        Node *n = node(N_INIT, e->tk);
-        n->init_offset = offset;
-        n->init_val = e;
-        vec_push(inits, n);
+        n = parse_expr_no_commas(s);
+        if (t) {
+            n = conv_to(n, t);
+        }
+        if (!peek_tk_is(s->pp, '}')) {
+            expect_tk(s->pp, ',');
+        }
     }
-    if (!peek_tk_is(s->pp, '}')) {
-        expect_tk(s->pp, ',');
-    }
+    return n;
 }
 
 static size_t parse_array_designator(Scope *s, Type *t) {
@@ -1804,16 +1790,19 @@ static size_t parse_array_designator(Scope *s, Type *t) {
     Node *e = parse_expr(s);
     int64_t desg = calc_int_expr(e);
     if (desg < 0 || (t->len && (uint64_t) desg >= t->len->imm)) {
-        error_at(e->tk, "array designator index '" PRId64 "' exceeds array bounds", desg);
+        error_at(e->tk, "designator index '%" PRId64 "' exceeds array bounds", desg);
     }
     expect_tk(s->pp, ']');
     expect_tk(s->pp, '=');
     return desg;
 }
 
-static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
+static Node * parse_array_init(Scope *s, Type *t, int designated) {
     assert(t->k == T_ARR);
     assert(!is_vla(t));
+    Node *n = node(N_ARR, peek_tk(s->pp));
+    n->t = t;
+    n->elems = vec_new();
     int has_brace = next_tk_is(s->pp, '{') != NULL;
     size_t idx = 0;
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
@@ -1821,18 +1810,17 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
             break;
         }
         if (peek_tk_is(s->pp, '[') && !has_brace && !designated) {
-            break; // e.g., int a[3][3] = {3 /* RETURN HERE */, [2] = 1}
+            break; // e.g., int a[3][3] = {3, /* RETURN HERE */ [2] = 1}
         }
         if (peek_tk_is(s->pp, '[')) {
             idx = parse_array_designator(s, t);
             designated = 1;
         }
-        int excess = t->len && idx >= t->len->imm;
-        if (excess) {
+        if (t->len && idx >= t->len->imm) {
             warning_at(peek_tk(s->pp), "excess elements in array initializer");
         }
-        size_t elem_offset = offset + idx * t->elem->size;
-        parse_init_elem(s, excess ? NULL : inits, t->elem, elem_offset, designated);
+        Node *elem = parse_init_elem(s, t->elem, designated);
+        vec_put(n->elems, idx, elem);
         idx++;
         designated = 0;
     }
@@ -1845,6 +1833,10 @@ static void parse_array_init(Scope *s, Vec *inits, Type *t, size_t offset, int d
         t->len->imm = idx;
         t->size = t->len->imm * t->elem->size;
     }
+    if (idx < t->len->imm) {
+        vec_put(n->elems, t->len->imm - 1, NULL);
+    }
+    return n;
 }
 
 static size_t parse_struct_designator(Scope *s, Type *t) {
@@ -1859,8 +1851,11 @@ static size_t parse_struct_designator(Scope *s, Type *t) {
     return f_idx;
 }
 
-static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
+static Node * parse_struct_init(Scope *s, Type *t, int designated) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
+    Node *n = node(N_STRUCT, peek_tk(s->pp));
+    n->t = t;
+    n->fields = vec_new();
     int has_brace = next_tk_is(s->pp, '{') != NULL;
     size_t idx = 0;
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
@@ -1874,60 +1869,69 @@ static void parse_struct_init(Scope *s, Vec *inits, Type *t, size_t offset, int 
             idx = parse_struct_designator(s, t);
             designated = 1;
         }
-        int excess = idx >= vec_len(t->fields);
-        if (excess) {
+        Type *ft = NULL;
+        if (idx >= vec_len(t->fields)) {
             warning_at(peek_tk(s->pp), "excess elements in %s initializer",
                        t->k == T_STRUCT ? "struct" : "union");
+        } else {
+            ft = ((Field *) vec_get(t->fields, idx))->t;
         }
-        Field *f = excess ? vec_tail(t->fields) : vec_get(t->fields, idx);
-        size_t field_offset = offset + f->offset;
-        parse_init_elem(s, excess ? NULL : inits, f->t, field_offset, designated);
+        Node *elem = parse_init_elem(s, ft, designated);
+        vec_put(n->fields, idx, elem);
         idx++;
         designated = 0;
     }
     if (has_brace) {
         expect_tk(s->pp, '}');
     }
+    if (idx < t->len->imm) {
+        vec_put(n->elems, t->len->imm - 1, NULL);
+    }
+    return n;
 }
 
-static void parse_init_list_raw(Scope *s, Vec *inits, Type *t, size_t offset, int designated) {
+static Node * parse_init_list_raw(Scope *s, Type *t, int designated) {
     if (is_string_type(t)) {
-        parse_string_init(s, inits, t, offset);
-        return;
-    } // Fall through if no string literal...
+        Node *n = parse_string_init(s, t);
+        if (n) return n; // Fall through if no string literal...
+    }
     if (t->k == T_ARR) {
-        parse_array_init(s, inits, t, offset, designated);
+        return parse_array_init(s, t, designated);
     } else if (t->k == T_STRUCT || t->k == T_UNION) {
-        parse_struct_init(s, inits, t, offset, designated);
+        return parse_struct_init(s, t, designated);
     } else { // Everything else, e.g., int a = {3}
         Node *len = node(N_IMM, peek_tk(s->pp));
         len->t = t_num(T_LLONG, 1);
         len->imm = 1;
         Type *arr_t = t_arr(t, len);
-        parse_array_init(s, inits, arr_t, offset, designated);
+        return parse_array_init(s, arr_t, designated);
     }
 }
 
 static Node * parse_init_list(Scope *s, Type *t) {
-    Node *n = node(N_ARR, peek_tk(s->pp));
-    n->t = t;
-    n->inits = vec_new();
-    parse_init_list_raw(s, n->inits, t, 0, 0);
-    return n;
+    return parse_init_list_raw(s, t, 0);
 }
 
 static Node * parse_decl_init(Scope *s, Type *t) {
+    Token *err = peek_tk(s->pp);
     if (t->linkage == L_EXTERN || t->k == T_FN) {
-        error_at(peek_tk(s->pp), "illegal initializer");
+        error_at(err, "illegal initializer");
     }
     if (is_vla(t)) {
-        error_at(peek_tk(s->pp), "cannot initialize variable-length array");
+        error_at(err, "cannot initialize variable-length array");
     }
     Node *init;
     if (peek_tk_is(s->pp, '{') || is_string_type(t)) {
         init = parse_init_list(s, t);
     } else {
         init = parse_expr_no_commas(s);
+    }
+    if (t->k == T_ARR && init->t->k != T_ARR) {
+        error_at(err, "array initializer must be initializer list or string literal");
+    }
+    if (t->k == T_ARR && !t->len) { // Complete an incomplete array type
+        t->len = init->t->len;
+        t->size = t->len->imm * t->elem->size;
     }
     init = conv_to(init, t);
     if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {

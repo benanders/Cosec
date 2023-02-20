@@ -169,12 +169,8 @@ static Global * find_global(Scope *s, char *name) {
 // ---- Expressions -----------------------------------------------------------
 
 static int INVERT_COND[IR_LAST] = {
-    [IR_EQ]  = IR_NEQ,
-    [IR_NEQ] = IR_EQ,
-    [IR_LT]  = IR_GE,
-    [IR_LE]  = IR_GT,
-    [IR_GT]  = IR_LE,
-    [IR_GE]  = IR_LT,
+    [IR_EQ] = IR_NEQ, [IR_NEQ] = IR_EQ,
+    [IR_LT] = IR_GE, [IR_LE] = IR_GT, [IR_GT] = IR_LE, [IR_GE] = IR_LT,
 };
 
 static IrIns * compile_expr(Scope *s, Node *n);
@@ -314,42 +310,29 @@ static IrIns * emit_load(Scope *s, IrIns *l) {
     }
 }
 
-static IrIns * compile_imm(Scope *s, Node *n) {
-    IrIns *imm = emit(s, IR_IMM, n->t);
-    imm->imm = n->imm;
-    return imm;
-}
-
-static IrIns * compile_fp(Scope *s, Node *n) {
-    IrIns *fp = emit(s, IR_FP, n->t);
-    fp->fp = n->fp;
-    return fp;
-}
-
-static IrIns * compile_str(Scope *s, Node *n) {
-    IrIns *g = emit(s, IR_GLOBAL, n->t);
-    g->g = def_str(s, n);
-    return g;
-}
-
 static IrIns * compile_arr(Scope *s, Node *n) {
-    IrIns *g = emit(s, IR_GLOBAL, n->t);
-    g->g = def_arr(s, n);
-    return g;
-}
-
-static IrIns * compile_local(Scope *s, Node *n) {
-    IrIns *alloc = find_local(s, n->var_name);
-    assert(alloc); // Checked by parser
-    return emit_load(s, alloc);
-}
-
-static IrIns * compile_global(Scope *s, Node *n) {
-    Global *g = find_global(s, n->var_name);
-    assert(g); // Checked by parser
-    IrIns *ins = emit(s, IR_GLOBAL, t_ptr(n->t));
-    ins->g = g;
-    return emit_load(s, ins);
+    assert(n->t->k == T_ARR);
+    IrIns *alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
+    IrIns *arr = emit(s, IR_ELEM, alloc->t->ptr);
+    arr->base = alloc;
+    arr->offset = 0;
+    IrIns *elem;
+//    for (size_t i = 0; i < vec_len(n->inits); i++) {
+//        Node *init = vec_get(n->inits, i);
+//        assert(init->k == N_INIT);
+//        if (i == 0) {
+//            elem = emit(s, IR_ELEM, t_ptr(arr->t->elem));
+//            elem->base = arr;
+//            elem->offset = 0;
+//        } else {
+//
+//        }
+//        IrIns *v = discharge(s, compile_expr(s, n));
+//        IrIns *store = emit(s, IR_STORE, NULL);
+//        store->dst = elem;
+//        store->src = v;
+//    }
+    return alloc;
 }
 
 static IrIns * compile_kptr(Scope *s, Node *n) {
@@ -358,13 +341,52 @@ static IrIns * compile_kptr(Scope *s, Node *n) {
     assert(g); // Checked by parser
     IrIns *ins = emit(s, IR_GLOBAL, t_ptr(n->t));
     ins->g = g;
-    if (n->kptr_offset != 0) {
+    if (n->offset != 0) {
         IrIns *offset = emit(s, IR_IMM, t_num(T_LLONG, 0));
-        offset->imm = n->kptr_offset < 0 ? -n->kptr_offset : n->kptr_offset;
-        IrIns *arith = emit(s, n->kptr_offset < 0 ? IR_SUB : IR_ADD, n->t);
+        offset->imm = n->offset < 0 ? -n->offset : n->offset;
+        IrIns *arith = emit(s, n->offset < 0 ? IR_SUB : IR_ADD, n->t);
         arith->l = ins;
         arith->r = offset;
         return arith;
+    }
+    return ins;
+}
+
+static IrIns * compile_operand(Scope *s, Node *n) {
+    IrIns *ins;
+    Global *g;
+    switch (n->k) {
+    case N_IMM:
+        ins = emit(s, IR_IMM, n->t);
+        ins->imm = n->imm;
+        break;
+    case N_FP:
+        ins = emit(s, IR_FP, n->t);
+        ins->fp = n->fp;
+        break;
+    case N_STR:
+        ins = emit(s, IR_GLOBAL, n->t);
+        ins->g = def_str(s, n);
+        break;
+    case N_ARR:
+        ins = compile_arr(s, n);
+        break;
+    case N_LOCAL:
+        ins = find_local(s, n->var_name); // 'IR_ALLOC' ins
+        assert(ins); // Checked by parser
+        ins = emit_load(s, ins);
+        break;
+    case N_GLOBAL:
+        g = find_global(s, n->var_name);
+        assert(g); // Checked by parser
+        ins = emit(s, IR_GLOBAL, t_ptr(n->t));
+        ins->g = g;
+        ins = emit_load(s, ins);
+        break;
+    case N_KPTR:
+        ins = compile_kptr(s, n);
+        break;
+    default: UNREACHABLE();
     }
     return ins;
 }
@@ -610,17 +632,6 @@ static IrIns * compile_call(Scope *s, Node *n) {
 
 static IrIns * compile_expr(Scope *s, Node *n) {
     switch (n->k) {
-        // Operands
-    case N_IMM:    return compile_imm(s, n);
-    case N_FP:     return compile_fp(s, n);
-    case N_STR:    return compile_str(s, n);
-    case N_ARR:    return compile_arr(s, n);
-    case N_INIT:   UNREACHABLE();
-    case N_LOCAL:  return compile_local(s, n);
-    case N_GLOBAL: return compile_global(s, n);
-    case N_KPTR:   return compile_kptr(s, n);
-    case N_KVAL:   UNREACHABLE();
-
         // Binary operations
     case N_ADD:
         if (n->l->t->k == T_PTR || n->r->t->k == T_PTR) {
@@ -680,7 +691,9 @@ static IrIns * compile_expr(Scope *s, Node *n) {
     case N_IDX:   return compile_array_access(s, n);
     case N_CALL:  return compile_call(s, n);
     case N_FIELD: return compile_field_access(s, n);
-    default:      UNREACHABLE();
+
+        // Operands
+    default: return compile_operand(s, n);
     }
 }
 
