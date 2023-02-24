@@ -33,7 +33,6 @@ static void print_struct_fields(Type *t) {
         Field *f = vec_get(t->fields, i);
         print_type(f->t);
         if (f->name) printf(" %s", f->name);
-        if (t->k == T_STRUCT) printf(" (%" PRIu64 ")", f->offset);
         printf(", ");
     }
     printf("}");
@@ -190,10 +189,10 @@ static void print_expr(Node *n) {
         break;
     case N_FIELD:
         print_type(n->t);
-        printf(" ( %s ", n->k == N_FIELD ? "." : "->");
+        printf(" ( . ");
         print_expr(n->strct);
-        printf(" ");
-        printf("%s )", n->field_name);
+        Field *f = vec_get(n->strct->t->fields, n->field_idx);
+        printf(" %s )", f->name);
         break;
     case N_TERNARY:
         print_type(n->t);
@@ -398,7 +397,7 @@ static char *IR_OP_NAMES[IR_LAST] = {
     "AND", "OR", "XOR", "SHL", "SHR",
     "EQ", "NEQ", "LT", "LE", "GT", "GE",
     "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
-    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
+    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET", "ZERO",
 };
 
 static void print_ins(IrIns *ins) {

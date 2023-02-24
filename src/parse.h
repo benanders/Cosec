@@ -115,7 +115,7 @@ typedef struct Node {
         // Operations
         struct { struct Node *l, *r; }; // Unary, binary
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
-        struct { struct Node *strct; char *field_name; }; // N_FIELD
+        struct { struct Node *strct; size_t field_idx; }; // N_FIELD
 
         // Statements
         struct { char *fn_name; Vec *param_names; struct Node *fn_body; }; // N_FN_DEF

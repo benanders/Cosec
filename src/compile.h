@@ -54,6 +54,9 @@ enum {
     IR_CARG,   // Immediately after IR_CALL
     IR_RET,
 
+    // Intrinsics
+    IR_ZERO,
+
     IR_LAST, // For tables indexed by opcode
 };
 
@@ -96,6 +99,9 @@ typedef struct IrIns {
         struct IrIns *fn;  // IR_CALL
         struct IrIns *arg; // IR_CARG
         struct IrIns *val; // IR_RET
+
+        // Intrinsics
+        struct { struct IrIns *ptr, *size; }; // IR_MEMSET
     };
     int vreg; // For the assembler
     int idx;  // For printing

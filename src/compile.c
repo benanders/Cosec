@@ -294,14 +294,15 @@ static IrIns * emit_conv(Scope *s, IrIns *src, Type *dt) {
 
 static IrIns * emit_load(Scope *s, IrIns *l) {
     assert(l->t->k == T_PTR);
-    if (l->t->ptr->k == T_ARR) { // Pointer to an array
+    Type *t = l->t->ptr;
+    if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION) { // Aggregate
         IrIns *zero = emit(s, IR_IMM, t_num(T_LLONG, 0));
         zero->imm = 0;
         IrIns *elem = emit(s, IR_ELEM, l->t->ptr);
         elem->base = l;
         elem->offset = zero;
         return elem;
-    } else if (l->t->ptr->k == T_FN) { // Pointer to a function
+    } else if (l->t->ptr->k == T_FN) { // Pointer to function
         return l;
     } else {
         IrIns *load = emit(s, IR_LOAD, l->t->ptr);
@@ -310,28 +311,82 @@ static IrIns * emit_load(Scope *s, IrIns *l) {
     }
 }
 
-static IrIns * compile_arr(Scope *s, Node *n) {
+static void compile_init_elem(Scope *s, Node *n, Type *t, IrIns *elem);
+
+static void compile_array_init_raw(Scope *s, Node *n, IrIns *elem) {
     assert(n->t->k == T_ARR);
-    IrIns *alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
-    IrIns *arr = emit(s, IR_ELEM, alloc->t->ptr);
+    IrIns *zero = emit(s, IR_IMM, t_num(T_LLONG, 0));
+    zero->imm = 0;
+    for (size_t i = 0; i < vec_len(n->elems); i++) {
+        if (i == 0) {
+            IrIns *first = emit(s, IR_ELEM, t_ptr(n->t->elem));
+            first->base = elem;
+            first->offset = zero;
+            elem = first;
+        } else {
+            IrIns *one = emit(s, IR_IMM, t_num(T_LLONG, 0));
+            one->imm = 1;
+            IrIns *next = emit(s, IR_ELEM, elem->t);
+            next->base = elem;
+            next->offset = one;
+            elem = next;
+        }
+        Node *v = vec_get(n->elems, i);
+        compile_init_elem(s, v, n->t->elem, elem);
+    }
+}
+
+static void compile_struct_init_raw(Scope *s, Node *n, IrIns *strct) {
+    assert(n->t->k == T_STRUCT || n->t->k == T_UNION);
+    for (size_t i = 0; i < vec_len(n->elems); i++) {
+        Type *ft = ((Field *) vec_get(n->t->fields, i))->t;
+        IrIns *idx = emit(s, IR_IMM, t_num(T_LLONG, 0));
+        idx->imm = i;
+        IrIns *elem = emit(s, IR_ELEM, t_ptr(ft));
+        elem->base = strct;
+        elem->offset = idx;
+        Node *v = vec_get(n->fields, i);
+        compile_init_elem(s, v, ft, elem);
+    }
+}
+
+static void compile_init_elem(Scope *s, Node *n, Type *t, IrIns *elem) {
+    if (n) {
+        if (t->k == T_ARR) {
+            compile_array_init_raw(s, n, elem);
+        } else if (t->k == T_STRUCT || t->k == T_UNION) {
+            compile_struct_init_raw(s, n, elem);
+        } else {
+            IrIns *ins = discharge(s, compile_expr(s, n));
+            IrIns *store = emit(s, IR_STORE, NULL);
+            store->dst = elem;
+            store->src = ins;
+        }
+    } else {
+        if (t->k == T_ARR || t->k == T_STRUCT || t->k == T_UNION) {
+            IrIns *size = emit(s, IR_IMM, t);
+            size->imm = t->size;
+            IrIns *zero = emit(s, IR_ZERO, NULL);
+            zero->ptr = elem;
+            zero->size = size;
+        } else {
+            IrIns *zero = emit(s, IR_IMM, t);
+            zero->imm = 0;
+            IrIns *store = emit(s, IR_STORE, NULL);
+            store->dst = elem;
+            store->src = zero;
+        }
+    }
+}
+
+static IrIns * compile_init(Scope *s, Node *n) {
+    IrIns *alloc = emit(s, IR_ALLOC, t_ptr(n->t));
+    IrIns *zero1 = emit(s, IR_IMM, t_num(T_LLONG, 0));
+    zero1->imm = 0;
+    IrIns *arr = emit(s, IR_ELEM, n->t);
     arr->base = alloc;
-    arr->offset = 0;
-    IrIns *elem;
-//    for (size_t i = 0; i < vec_len(n->inits); i++) {
-//        Node *init = vec_get(n->inits, i);
-//        assert(init->k == N_INIT);
-//        if (i == 0) {
-//            elem = emit(s, IR_ELEM, t_ptr(arr->t->elem));
-//            elem->base = arr;
-//            elem->offset = 0;
-//        } else {
-//
-//        }
-//        IrIns *v = discharge(s, compile_expr(s, n));
-//        IrIns *store = emit(s, IR_STORE, NULL);
-//        store->dst = elem;
-//        store->src = v;
-//    }
+    arr->offset = zero1;
+    compile_init_elem(s, n, n->t, arr);
     return alloc;
 }
 
@@ -368,8 +423,8 @@ static IrIns * compile_operand(Scope *s, Node *n) {
         ins = emit(s, IR_GLOBAL, n->t);
         ins->g = def_str(s, n);
         break;
-    case N_ARR:
-        ins = compile_arr(s, n);
+    case N_ARR: case N_STRUCT:
+        ins = compile_init(s, n);
         break;
     case N_LOCAL:
         ins = find_local(s, n->var_name); // 'IR_ALLOC' ins
@@ -595,16 +650,12 @@ static IrIns * compile_array_access(Scope *s, Node *n) {
 
 static IrIns * compile_field_access(Scope *s, Node *n) {
     IrIns *l = discharge(s, compile_expr(s, n->l));
-    assert(l->op == IR_LOAD);
-    delete_ir(l);
-    size_t idx = find_field(n->strct->t, n->field_name);
-    assert(idx != NOT_FOUND); // Checked by parser
-    Field *f = vec_get(n->strct->t->fields, idx);
-    IrIns *offset = emit(s, IR_IMM, t_num(T_LLONG, 0));
-    offset->imm = f->offset;
-    IrIns *elem = emit(s, IR_ELEM, t_ptr(f->t));
-    elem->base = l->src;
-    elem->offset = offset;
+    Type *ft = ((Field *) vec_get(n->strct->t->fields, n->field_idx))->t;
+    IrIns *idx = emit(s, IR_IMM, t_num(T_LLONG, 0));
+    idx->imm = n->field_idx;
+    IrIns *elem = emit(s, IR_ELEM, t_ptr(ft));
+    elem->base = l;
+    elem->offset = idx;
     return emit_load(s, elem);
 }
 
@@ -705,9 +756,14 @@ static void compile_decl(Scope *s, Node *n) {
         return; // Not an object; doesn't need stack space
     }
     assert(n->var->k == N_LOCAL);
-    IrIns *alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
+    IrIns *alloc;
+    if (n->init && (n->init->k == N_ARR || n->init->k == N_STRUCT)) {
+        alloc = compile_init(s, n->init);
+    } else {
+        alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
+    }
     def_local(s, n->var->var_name, alloc);
-    if (n->init) {
+    if (n->init && n->init->k != N_ARR && n->init->k != N_STRUCT) {
         IrIns *v = discharge(s, compile_expr(s, n->init));
         IrIns *store = emit(s, IR_STORE, NULL);
         store->src = v;

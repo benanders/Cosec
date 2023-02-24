@@ -894,7 +894,7 @@ static Node * parse_struct_field_access(Scope *s, Node *l) {
     Node *n = node(N_FIELD, op);
     n->t = f->t;
     n->strct = l;
-    n->field_name = name->ident;
+    n->field_idx = f_idx;
     return n;
 }
 
@@ -1416,9 +1416,7 @@ static Node * eval_const_expr(Node *e, Token **err) {
         l = eval_const_expr(e->strct, err);
         if (!l) goto err;
         if (l->k != N_KVAL) goto err;
-        size_t f_idx = find_field(l->t, e->field_name);
-        assert(f_idx != NOT_FOUND);
-        Field *f = vec_get(l->t->fields, f_idx);
+        Field *f = vec_get(l->t->fields, e->field_idx);
         e = l;
         e->offset += (int64_t) f->offset;
         break;
@@ -1884,9 +1882,6 @@ static Node * parse_struct_init(Scope *s, Type *t, int designated) {
     if (has_brace) {
         expect_tk(s->pp, '}');
     }
-    if (idx < t->len->imm) {
-        vec_put(n->elems, t->len->imm - 1, NULL);
-    }
     return n;
 }
 
@@ -1927,7 +1922,7 @@ static Node * parse_decl_init(Scope *s, Type *t) {
         init = parse_expr_no_commas(s);
     }
     if (t->k == T_ARR && init->t->k != T_ARR) {
-        error_at(err, "array initializer must be initializer list or string literal");
+        error_at(err, "array initializer must be an initializer list or string literal");
     }
     if (t->k == T_ARR && !t->len) { // Complete an incomplete array type
         t->len = init->t->len;
