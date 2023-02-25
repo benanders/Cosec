@@ -351,6 +351,7 @@ static int is_type(Scope *s, Token *t) {
 }
 
 static size_t pad(size_t offset, size_t align) {
+    assert(align > 0);
     return offset % align == 0 ? offset : offset + align - (offset % align);
 }
 
@@ -449,6 +450,8 @@ static void parse_struct_union_enum_def(Scope *s, Type *t) {
         error_at(tag, "use of tag '%s' does not match previous declaration", tag->ident);
     } else if (tt) { // Use
         t->fields = tt->fields;
+        t->size = tt->size;
+        t->align = tt->align;
     } else { // Forward declaration
         def_tag(s, tag, t);
     }

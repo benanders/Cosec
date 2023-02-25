@@ -512,14 +512,31 @@ static IrIns * compile_ptr_arith(Scope *s, Node *n) { // <ptr> +/- <int>
     return elem;
 }
 
+static void emit_store(Scope *s, IrIns *dst, IrIns *src) {
+    assert(src->t->k != T_ARR); // Checked by parser
+    if (src->t->k == T_STRUCT || src->t->k == T_UNION) { // Use IR_COPY
+        assert(src->op == IR_ELEM && src->offset->imm == 0);
+        delete_ir(src->offset);
+        delete_ir(src);
+        IrIns *size = emit(s, IR_IMM, t_num(T_LLONG, 0));
+        size->imm = src->ptr->t->size;
+        IrIns *cpy = emit(s, IR_COPY, NULL);
+        cpy->cpy_src = src->ptr;
+        cpy->cpy_dst = dst;
+        cpy->cpy_size = size;
+    } else {
+        IrIns *store = emit(s, IR_STORE, NULL);
+        store->dst = dst;
+        store->src = src;
+    }
+}
+
 static IrIns * compile_assign(Scope *s, Node *n) {
     IrIns *r = discharge(s, compile_expr(s, n->r));
     IrIns *l = compile_expr(s, n->l);
-    assert(l->op == IR_LOAD || l->op == IR_ELEM); // lvalue
-    l->op = IR_STORE; // Change to store
-    l->dst = l->src;
-    l->src = r;
-    l->t = NULL;
+    assert(l->op == IR_LOAD || l->op == IR_ELEM);
+    delete_ir(l);
+    emit_store(s, l->src, r);
     return r; // Assignment evaluates to its right operand
 }
 
@@ -540,9 +557,7 @@ static IrIns * compile_arith_assign(Scope *s, Node *n, int op) {
     if (!are_equal(binop->t, target)) {
         emit_conv(s, binop, target);
     }
-    IrIns *store = emit(s, IR_STORE, NULL);
-    store->src = binop;
-    store->dst = lvalue->src;
+    emit_store(s, lvalue->src, binop);
     return binop; // Assignment evaluates to its right operand
 }
 
@@ -631,9 +646,7 @@ static IrIns * compile_inc_dec(Scope *s, Node *n) {
     IrIns *result = compile_expr(s, &fake_op);
     IrIns *lvalue = result->l;
     assert(lvalue->op == IR_LOAD);
-    IrIns *store = emit(s, IR_STORE, NULL);
-    store->src = result;
-    store->dst = lvalue->src;
+    emit_store(s, lvalue->src, result);
     int is_prefix = (n->k == N_PRE_INC || n->k == N_PRE_DEC);
     if (is_prefix) {
         return result;
@@ -788,9 +801,7 @@ static void compile_decl(Scope *s, Node *n) {
     def_local(s, n->var->var_name, alloc);
     if (n->init && n->init->k != N_ARR && n->init->k != N_STRUCT) {
         IrIns *v = discharge(s, compile_expr(s, n->init));
-        IrIns *store = emit(s, IR_STORE, NULL);
-        store->src = v;
-        store->dst = alloc;
+        emit_store(s, alloc, v);
     }
 }
 
@@ -1028,9 +1039,7 @@ static void compile_fn_args(Scope *s, Node *n) {
         char *name = vec_get(n->param_names, i);
         Type *t = vec_get(n->t->params, i);
         IrIns *alloc = emit(s, IR_ALLOC, t_ptr(t));
-        IrIns *store = emit(s, IR_STORE, NULL);
-        store->dst = alloc;
-        store->src = fargs[i];
+        emit_store(s, alloc, fargs[i]);
         def_local(s, name, alloc);
     }
 }

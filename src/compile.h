@@ -102,7 +102,8 @@ typedef struct IrIns {
         struct IrIns *val; // IR_RET
 
         // Intrinsics
-        struct { struct IrIns *ptr, *size; }; // IR_MEMSET
+        struct { struct IrIns *ptr, *size; }; // IR_ZERO
+        struct { struct IrIns *cpy_src, *cpy_dst, *cpy_size; }; // IR_COPY
     };
     int vreg; // For the assembler
     int idx;  // For printing
