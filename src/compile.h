@@ -56,6 +56,7 @@ enum {
 
     // Intrinsics
     IR_ZERO,
+    IR_COPY,
 
     IR_LAST, // For tables indexed by opcode
 };

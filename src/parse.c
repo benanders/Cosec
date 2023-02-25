@@ -22,7 +22,10 @@ typedef struct Scope {
     Map *vars;  // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
     Map *tags;  // of 'Type *'
     Node *fn;   // NULL in file scope
-    Vec *cases; // for SCOPE_SWITCH
+
+    // For SCOPE_SWITCH
+    Vec *cases;   // of 'Node *' with k = N_CASE or N_DEFAULT
+    Type *cond_t; // Type of the condition
 } Scope;
 
 static Node * node(int k, Token *tk) {
@@ -55,7 +58,9 @@ static void enter_scope(Scope *inner, Scope *outer, int k) {
 }
 
 static Scope * find_scope(Scope *s, int k) {
-    while (s && s->k != k) s = s->outer;
+    while (s && s->k != k) {
+        s = s->outer;
+    }
     return s;
 }
 
@@ -1571,7 +1576,8 @@ static Node * parse_switch(Scope *s) {
 
     Scope switch_s;
     enter_scope(&switch_s, s, SCOPE_SWITCH);
-    Node *body = parse_stmt(s);
+    switch_s.cond_t = cond->t;
+    Node *body = parse_stmt(&switch_s);
     Node *n = node(N_SWITCH, switch_tk);
     n->switch_cond = cond;
     n->switch_body = body;
@@ -1581,29 +1587,39 @@ static Node * parse_switch(Scope *s) {
 
 static Node * parse_case(Scope *s) {
     Token *case_tk = expect_tk(s->pp, TK_CASE);
-    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
-    if (!switch_s) {
+    Scope *swtch = find_scope(s, SCOPE_SWITCH);
+    if (!swtch) {
         error_at(case_tk, "'case' not allowed here");
     }
-    Node *cond = parse_expr(s);
+    Node *cond_expr = conv_to(parse_expr(s), swtch->cond_t);
+    int64_t cond = calc_int_expr(cond_expr);
+    for (size_t i = 0; i < vec_len(swtch->cases); i++) {
+        Node *c = vec_get(swtch->cases, i);
+        if (c && c->imm == (uint64_t) cond) {
+            error_at(cond_expr->tk, "duplicate case value '%ll'", cond);
+        }
+    }
     expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
+    Node *imm = node(N_IMM, cond_expr->tk);
+    imm->t = swtch->cond_t;
+    imm->imm = cond;
     Node *n = node(N_CASE, case_tk);
-    n->case_cond = cond;
+    n->case_cond = imm;
     n->case_body = body;
-    vec_push(switch_s->cases, n);
+    vec_push(swtch->cases, n);
     return n;
 }
 
 static Node * parse_default(Scope *s) {
     Token *default_tk = expect_tk(s->pp, TK_DEFAULT);
-    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
-    if (!switch_s) {
+    Scope *swtch = find_scope(s, SCOPE_SWITCH);
+    if (!swtch) {
         error_at(default_tk, "'default' not allowed here");
     }
-    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
-        Node *cas = vec_get(switch_s->cases, i);
-        if (cas->k == N_DEFAULT) {
+    for (size_t i = 0; i < vec_len(swtch->cases); i++) {
+        Node *c = vec_get(swtch->cases, i);
+        if (c->k == N_DEFAULT) {
             error_at(default_tk, "cannot have more than one 'default' in a switch");
         }
     }
@@ -1611,7 +1627,7 @@ static Node * parse_default(Scope *s) {
     Node *body = parse_stmt(s);
     Node *n = node(N_DEFAULT, default_tk);
     n->case_body = body;
-    vec_push(switch_s->cases, n);
+    vec_push(swtch->cases, n);
     return n;
 }
 

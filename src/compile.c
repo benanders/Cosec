@@ -7,26 +7,46 @@
 
 #define STR_PREFIX "_S."
 
+enum {
+    SCOPE_FILE   = 0b0001,
+    SCOPE_BLOCK  = 0b0010,
+    SCOPE_LOOP   = 0b0100,
+    SCOPE_SWITCH = 0b1000,
+};
+
 typedef struct Scope {
     struct Scope *outer;
+    int k;
     Vec *globals;
     IrFn *fn;
-    Map *vars; // Block: 'IrIns *' k = IR_ALLOC; file: 'Global *'
+    Map *vars;   // Block: 'IrIns *' k = IR_ALLOC; file: 'Global *'
+    Vec *breaks; // SCOPE_LOOP and SCOPE_SWITCH 'break' jump list
+    union {
+        Vec *continues; // SCOPE_LOOP; 'continue' jump list
+        Vec *cases;     // SCOPE_SWITCH; list of 'IrBB *'
+    };
 } Scope;
 
-static void enter_scope(Scope *inner, Scope *outer) {
+static void enter_scope(Scope *inner, Scope *outer, int k) {
     *inner = (Scope) {0};
     inner->outer = outer;
+    inner->k = k;
     inner->globals = outer->globals;
     inner->fn = outer->fn;
     inner->vars = map_new();
+    if (k == SCOPE_LOOP) {
+        inner->breaks = vec_new();
+        inner->continues = vec_new();
+    } else if (k == SCOPE_SWITCH) {
+        inner->breaks = vec_new();
+        inner->cases = vec_new();
+    }
 }
 
-static Scope * find_global_scope(Scope *s) {
-    while (s->outer) {
+static Scope * find_scope(Scope *s, int k) {
+    while (s && !(s->k & k)) {
         s = s->outer;
     }
-    assert(!s->fn);
     return s;
 }
 
@@ -122,7 +142,7 @@ static void def_global(Scope *s, char *name, Global *g) {
     }
     vec_push(s->globals, g);
     if (name) {
-        Scope *gs = find_global_scope(s);
+        Scope *gs = find_scope(s, SCOPE_FILE);
         assert(gs);
         map_put(gs->vars, name, g);
     }
@@ -148,7 +168,7 @@ static Global * def_str(Scope *s, Node *n) {
 
 static Global * def_arr(Scope *s, Node *n) {
     assert(n->k == N_ARR);
-    TODO();
+    TODO(); // TODO
 }
 
 static IrIns * find_local(Scope *s, char *name) {
@@ -161,7 +181,7 @@ static IrIns * find_local(Scope *s, char *name) {
 }
 
 static Global * find_global(Scope *s, char *name) {
-    Scope *gs = find_global_scope(s);
+    Scope *gs = find_scope(s, SCOPE_FILE);
     return map_get(gs->vars, name);
 }
 
@@ -751,6 +771,9 @@ static IrIns * compile_expr(Scope *s, Node *n) {
 
 // ---- Statements ------------------------------------------------------------
 
+static void compile_block(Scope *s, Node *n);
+static void compile_stmt(Scope *s, Node *n);
+
 static void compile_decl(Scope *s, Node *n) {
     if (n->var->t->k == T_FN) {
         return; // Not an object; doesn't need stack space
@@ -771,17 +794,216 @@ static void compile_decl(Scope *s, Node *n) {
     }
 }
 
+static void compile_if(Scope *s, Node *n) {
+    Vec *brs = vec_new();
+    while (n && n->if_cond) { // 'if' and 'else if's
+        IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
+        IrBB *body = emit_bb(s);
+        patch_branch_chain(cond->true_chain, body);
+        compile_block(s, n->if_body);
+
+        IrIns *end_br = emit(s, IR_BR, NULL);
+        add_to_branch_chain(brs, &end_br->br, end_br);
+
+        IrBB *after = emit_bb(s);
+        patch_branch_chain(cond->false_chain, after);
+        n = n->if_else;
+    }
+    if (n) { // else
+        assert(!n->if_cond);
+        assert(!n->if_else);
+        compile_block(s, n->if_body);
+        IrIns *end_br = emit(s, IR_BR, NULL);
+        add_to_branch_chain(brs, &end_br->br, end_br);
+        emit_bb(s);
+    }
+    patch_branch_chain(brs, s->fn->last);
+}
+
+static void compile_while(Scope *s, Node *n) {
+    IrIns *before_br = emit(s, IR_BR, NULL);
+    IrBB *cond_bb = emit_bb(s);
+    before_br->bb = cond_bb;
+    IrIns *cond = to_cond(s, compile_expr(s, n->loop_cond));
+
+    Scope loop;
+    enter_scope(&loop, s, SCOPE_LOOP);
+    IrBB *body_bb = emit_bb(s);
+    patch_branch_chain(cond->true_chain, body_bb);
+    compile_block(&loop, n->loop_body);
+    IrIns *end_br = emit(s, IR_BR, NULL);
+    end_br->br = cond_bb;
+
+    IrBB *after_bb = emit_bb(s);
+    patch_branch_chain(cond->false_chain, after_bb);
+    patch_branch_chain(loop.breaks, after_bb);
+    patch_branch_chain(loop.continues, cond_bb);
+}
+
+static void compile_do_while(Scope *s, Node *n) {
+    IrIns *before_br = emit(s, IR_BR, NULL);
+    Scope loop;
+    enter_scope(&loop, s, SCOPE_LOOP);
+    IrBB *body_bb = emit_bb(s);
+    before_br->br = body_bb;
+    compile_block(&loop, n->loop_body);
+    IrIns *body_br = emit(s, IR_BR, NULL);
+
+    IrBB *cond_bb = emit_bb(s);
+    body_br->br = cond_bb;
+    IrIns *cond = to_cond(s, compile_expr(s, n->loop_cond));
+    patch_branch_chain(cond->true_chain, body_bb);
+
+    IrBB *after_bb = emit_bb(s);
+    patch_branch_chain(cond->false_chain, after_bb);
+    patch_branch_chain(loop.breaks, after_bb);
+    patch_branch_chain(loop.continues, cond_bb);
+}
+
+static void compile_for(Scope *s, Node *n) {
+    if (n->init) {
+        compile_stmt(s, n->init);
+    }
+
+    IrIns *before_br = emit(s, IR_BR, NULL);
+    IrBB *start_bb = NULL;
+    IrIns *cond = NULL;
+    if (n->for_cond) {
+        start_bb = emit_bb(s);
+        before_br->bb = start_bb;
+        cond = to_cond(s, compile_expr(s, n->for_cond));
+    }
+
+    Scope loop;
+    enter_scope(&loop, s, SCOPE_LOOP);
+    IrBB *body = emit_bb(s);
+    if (cond) {
+        patch_branch_chain(cond->true_chain, body);
+    } else {
+        start_bb = body;
+        before_br->bb = body;
+    }
+    compile_block(&loop, n->for_body);
+    IrIns *end_br = emit(s, IR_BR, NULL);
+
+    IrBB *continue_bb = NULL;
+    if (n->for_inc) {
+        IrBB *inc_bb = emit_bb(s);
+        end_br->br = inc_bb;
+        compile_expr(s, n->for_inc);
+        IrIns *inc_br = emit(s, IR_BR, NULL);
+        inc_br->br = start_bb;
+        continue_bb = inc_bb;
+    } else {
+        end_br->br = start_bb;
+        continue_bb = start_bb;
+    }
+
+    IrBB *after = emit_bb(s);
+    if (cond) {
+        patch_branch_chain(cond->false_chain, after);
+    }
+    patch_branch_chain(loop.breaks, after);
+    patch_branch_chain(loop.continues, continue_bb);
+}
+
+static void compile_switch(Scope *s, Node *n) {
+    IrIns *cond = compile_expr(s, n->switch_cond);
+    Vec *brs = vec_new(); // of 'IrBB **'
+    IrBB **false_br;
+    for (size_t i = 0; i < vec_len(n->cases); i++) {
+        Node *case_n = vec_get(n->cases, i);
+        if (case_n->k == N_CASE) {
+            IrIns *val = compile_expr(s, case_n->switch_cond);
+            IrIns *cmp = emit(s, IR_EQ, t_num(T_INT, 0));
+            cmp->l = cond;
+            cmp->r = val;
+            IrIns *br = emit(s, IR_CONDBR, NULL);
+            br->cond = cmp;
+            vec_push(brs, &br->true);
+            false_br = &br->false;
+            IrBB *next = emit_bb(s);
+            *false_br = next;
+        } else { // N_DEFAULT
+            vec_push(brs, NULL);
+        }
+    }
+
+    Scope swtch;
+    enter_scope(&swtch, s, SCOPE_SWITCH);
+    compile_block(&swtch, n->switch_body);
+
+    IrIns *end_br = emit(s, IR_BR, NULL);
+    IrBB *after = emit_bb(s);
+    end_br->br = after;
+    patch_branch_chain(swtch.breaks, after);
+    *false_br = after; // For if there's no default
+
+    assert(vec_len(brs) == vec_len(swtch.cases));
+    for (size_t i = 0; i < vec_len(brs); i++) { // Patch initial branches
+        IrBB **br = vec_get(brs, i);
+        IrBB *dst = vec_get(swtch.cases, i);
+        if (br) { // Case
+            *br = dst;
+        } else { // Default
+            *false_br = dst;
+        }
+    }
+}
+
+static void compile_case(Scope *s, Node *n) {
+    Scope *swtch = find_scope(s, SCOPE_SWITCH);
+    assert(swtch); // Checked by parser
+    IrIns *end_br = emit(s, IR_BR, NULL);
+    IrBB *bb = emit_bb(s);
+    end_br->br = bb;
+    compile_stmt(s, n->case_body);
+    vec_push(swtch->cases, bb);
+}
+
+static void compile_break(Scope *s) {
+    Scope *swtch_loop = find_scope(s, SCOPE_SWITCH | SCOPE_LOOP);
+    assert(swtch_loop); // Checked by the parser
+    IrIns *br = emit(s, IR_BR, NULL);
+    add_to_branch_chain(swtch_loop->breaks, &br->br, br);
+}
+
+static void compile_continue(Scope *s) {
+    Scope *loop = find_scope(s, SCOPE_LOOP);
+    assert(loop); // Checked by the parser
+    IrIns *br = emit(s, IR_BR, NULL);
+    add_to_branch_chain(loop->continues, &br->br, br);
+}
+
+static void compile_ret(Scope *s, Node *n) {
+    IrIns *v = NULL;
+    if (n->ret_val) {
+        v = discharge(s, compile_expr(s, n->ret_val));
+    }
+    IrIns *ret = emit(s, IR_RET, NULL);
+    ret->val = v;
+}
+
 static void compile_stmt(Scope *s, Node *n) {
     switch (n->k) {
-        case N_TYPEDEF: break;
-        case N_DECL:    compile_decl(s, n); break;
-        default:        discharge(s, compile_expr(s, n)); break;
+        case N_TYPEDEF:  break;
+        case N_DECL:     compile_decl(s, n); break;
+        case N_IF:       compile_if(s, n); break;
+        case N_WHILE:    compile_while(s, n); break;
+        case N_DO_WHILE: compile_do_while(s, n); break;
+        case N_FOR:      compile_for(s, n); break;
+        case N_SWITCH:   compile_switch(s, n); break;
+        case N_CASE: case N_DEFAULT: compile_case(s, n); break;
+        case N_BREAK:    compile_break(s); break;
+        case N_CONTINUE: compile_continue(s); break;
+        case N_RET:      compile_ret(s, n); break;
+        default:         discharge(s, compile_expr(s, n)); break;
     }
 }
 
 static void compile_block(Scope *s, Node *n) {
     Scope block;
-    enter_scope(&block, s);
+    enter_scope(&block, s, SCOPE_BLOCK);
     while (n) {
         compile_stmt(&block, n);
         n = n->next;
@@ -818,11 +1040,11 @@ static void compile_fn_def(Scope *s, Node *n) {
     g->fn = new_fn();
     def_global(s, n->fn_name, g);
     Scope body;
-    enter_scope(&body, s);
+    enter_scope(&body, s, SCOPE_BLOCK);
     body.fn = g->fn;
     compile_fn_args(&body, n);
     compile_block(&body, n->fn_body);
-    if (!body.fn->last || body.fn->last->last->op != IR_RET) {
+    if (!body.fn->last->last || body.fn->last->last->op != IR_RET) {
         emit(&body, IR_RET, NULL);
     }
 }
@@ -841,12 +1063,13 @@ static void compile_top_level(Scope *s, Node *n) {
 }
 
 Vec * compile(Node *n) {
-    Scope top_level = {0};
-    top_level.globals = vec_new();
-    top_level.vars = map_new();
+    Scope file = {0};
+    file.k = SCOPE_FILE;
+    file.globals = vec_new();
+    file.vars = map_new();
     while (n) {
-        compile_top_level(&top_level, n);
+        compile_top_level(&file, n);
         n = n->next;
     }
-    return top_level.globals;
+    return file.globals;
 }
