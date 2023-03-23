@@ -10,8 +10,7 @@ enum { // AST nodes
     N_IMM,
     N_FP,
     N_STR,
-    N_ARR, // Array initializer
-    N_STRUCT, // Struct/union initializer
+    N_INIT, // Array/struct/union initializer
     N_LOCAL,
     N_GLOBAL,
     N_KPTR, // Constant pointer to a 'static' variable
@@ -107,8 +106,7 @@ typedef struct Node {
             size_t len;
             int enc;
         };
-        Vec *elems;  // N_ARR; of 'Node *'
-        Vec *fields; // N_STRUCT; of 'Node *' (same order as 't->fields')
+        Vec *elems;     // N_INIT (array/struct initializer); of 'Node *'
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
         struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
 

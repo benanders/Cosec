@@ -4,6 +4,16 @@
 
 #include "parse.h"
 
+// TODO: consider getting rid of the concept of an array from the bytecode and
+// just dealing with pointers; IR_ALLOC takes a size as an argument and returns
+// a pointer
+// May make array bounds checking and optimisations that depend on this
+// harder...
+// Could we tag pointers with size information when known? this is checked on
+// emitting IR_ELEM and any pointer returned by IR_ELEM gets its size adjusted
+// accordingly so we know when we're performing loads/stores to out of bound
+// pointers (for alias analysis)
+
 enum {
     // Constants, globals, and functions
     IR_IMM,
@@ -119,37 +129,11 @@ typedef struct {
     IrBB *entry, *last;
 } IrFn;
 
-enum {
-    K_NONE,
-    K_INT,
-    K_FP,
-    K_STR,
-    K_ARR,
-    K_PTR,
-    K_FN_DEF,
-};
-
-typedef struct {
-    uint64_t offset;
-    struct Global *val; // 'label' = NULL
-} Init;
-
 typedef struct Global {
-    int k;
     Type *t;
     char *label;
-    union {
-        int64_t i; // K_INT
-        double f;  // K_FP
-        struct {   // K_STR, K_STR16, K_STR32
-            union { char *str; uint16_t *str16; uint32_t *str32; };
-            size_t len;
-            int enc;
-        };
-        Vec *inits; // K_ARR; of 'Init *'
-        struct { struct Global *ptr; int64_t offset; }; // K_PTR
-        IrFn *fn; // K_FN_DEF
-    };
+    Node *val; // One of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
+    IrFn *fn;  // One of 'val' or 'fn' is NULL
 } Global;
 
 Vec * compile(Node *n);

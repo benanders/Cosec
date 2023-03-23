@@ -5,7 +5,7 @@
 
 #include "compile.h"
 
-#define STR_PREFIX "_S."
+#define GLOBAL_PREFIX "_G."
 
 enum {
     SCOPE_FILE   = 0b0001,
@@ -50,9 +50,8 @@ static Scope * find_scope(Scope *s, int k) {
     return s;
 }
 
-static Global * new_global(int k, Type *t, char *label) {
+static Global * new_global(Type *t, char *label) {
     Global *g = calloc(1, sizeof(Global));
-    g->k = k;
     g->t = t;
     g->label = label;
     return g;
@@ -138,7 +137,7 @@ static void def_local(Scope *s, char *name, IrIns *alloc) {
 static void def_global(Scope *s, char *name, Global *g) {
     for (size_t i = 0; i < vec_len(s->globals); i++) {
         Global *g2 = vec_get(s->globals, i);
-        assert(strcmp(g->label, g2->label) != 0); // No duplicates
+        assert(strcmp(g->label, g2->label) != 0); // No duplicate labels
     }
     vec_push(s->globals, g);
     if (name) {
@@ -148,27 +147,20 @@ static void def_global(Scope *s, char *name, Global *g) {
     }
 }
 
-static Global * def_str(Scope *s, Node *n) {
-    assert(n->k == N_STR);
+static char * next_global_label(Scope *s) {
     size_t i = vec_len(s->globals);
     int num_digits = (i == 0) ? 1 : (int) log10((double) i) + 1;
-    char *label = malloc(sizeof(char) * (num_digits + strlen(STR_PREFIX) + 1));
-    sprintf(label, STR_PREFIX "%zu", i);
-    Global *g = new_global(K_STR, n->t, label);
-    switch (n->enc) {
-        case ENC_NONE: g->str = n->str; break;
-        case ENC_CHAR16: g->str16 = n->str16; break;
-        case ENC_CHAR32: case ENC_WCHAR: g->str32 = n->str32; break;
-    }
-    g->len = n->len;
-    g->enc = n->enc;
-    def_global(s, NULL, g);
-    return g;
+    char *label = malloc(sizeof(char) * (num_digits + strlen(GLOBAL_PREFIX) + 1));
+    sprintf(label, GLOBAL_PREFIX "%zu", i);
+    return label;
 }
 
-static Global * def_arr(Scope *s, Node *n) {
-    assert(n->k == N_ARR);
-    TODO(); // TODO
+static Global * def_const_global(Scope *s, Node *n) {
+    char *label = next_global_label(s);
+    Global *g = new_global(n->t, label);
+    g->val = n;
+    def_global(s, NULL, g);
+    return g;
 }
 
 static IrIns * find_local(Scope *s, char *name) {
@@ -365,7 +357,7 @@ static void compile_struct_init_raw(Scope *s, Node *n, IrIns *strct) {
         IrIns *elem = emit(s, IR_ELEM, t_ptr(ft));
         elem->base = strct;
         elem->offset = idx;
-        Node *v = vec_get(n->fields, i);
+        Node *v = vec_get(n->elems, i);
         compile_init_elem(s, v, ft, elem);
     }
 }
@@ -399,13 +391,43 @@ static void compile_init_elem(Scope *s, Node *n, Type *t, IrIns *elem) {
     }
 }
 
+static int is_const_init(Node *n) {
+    assert(n->k == N_INIT);
+    for (size_t i = 0; i < vec_len(n->elems); i++) {
+        Node *e = vec_get(n->elems, i);
+        if (!(e->k == N_IMM || e->k == N_FP || e->k == N_STR || e->k == N_KPTR ||
+              (e->k == N_INIT && is_const_init(e)))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static IrIns * compile_const_init(Scope *s, Node *n) {
+    Global *g = def_const_global(s, n);
+    IrIns *src = emit(s, IR_GLOBAL, t_ptr(n->t));
+    src->g = g;
+    IrIns *dst = emit(s, IR_ALLOC, t_ptr(n->t));
+    IrIns *size = emit(s, IR_IMM, t_num(T_LLONG, 0));
+    size->imm = n->t->size;
+    IrIns *cpy = emit(s, IR_COPY, NULL);
+    cpy->cpy_src = src;
+    cpy->cpy_dst = dst;
+    cpy->cpy_size = size;
+    return dst;
+}
+
 static IrIns * compile_init(Scope *s, Node *n) {
+    assert(n->k == N_INIT);
+    if (is_const_init(n)) {
+        return compile_const_init(s, n);
+    }
     IrIns *alloc = emit(s, IR_ALLOC, t_ptr(n->t));
-    IrIns *zero1 = emit(s, IR_IMM, t_num(T_LLONG, 0));
-    zero1->imm = 0;
+    IrIns *zero = emit(s, IR_IMM, t_num(T_LLONG, 0));
+    zero->imm = 0;
     IrIns *arr = emit(s, IR_ELEM, n->t);
     arr->base = alloc;
-    arr->offset = zero1;
+    arr->offset = zero;
     compile_init_elem(s, n, n->t, arr);
     return alloc;
 }
@@ -441,9 +463,9 @@ static IrIns * compile_operand(Scope *s, Node *n) {
         break;
     case N_STR:
         ins = emit(s, IR_GLOBAL, n->t);
-        ins->g = def_str(s, n);
+        ins->g = def_const_global(s, n);
         break;
-    case N_ARR: case N_STRUCT:
+    case N_INIT:
         ins = compile_init(s, n);
         break;
     case N_LOCAL:
@@ -641,9 +663,9 @@ static IrIns * compile_log_not(Scope *s, Node *n) {
 static IrIns * compile_inc_dec(Scope *s, Node *n) {
     int is_sub = (n->k == N_PRE_DEC || n->k == N_POST_DEC);
     Type *t = n->t->k == T_PTR ? t_num(T_LLONG, 1) : n->t;
-    Node one = {.k = N_IMM, .t = t, .imm = 1};
-    Node fake_op = {.k = is_sub ? N_SUB : N_ADD, .t = n->t, .l = n->l, .r = &one};
-    IrIns *result = compile_expr(s, &fake_op);
+    Node one = { .k = N_IMM, .t = t, .imm = 1 };
+    Node op = { .k = is_sub ? N_SUB : N_ADD, .t = n->t, .l = n->l, .r = &one };
+    IrIns *result = compile_expr(s, &op);
     IrIns *lvalue = result->l;
     assert(lvalue->op == IR_LOAD);
     emit_store(s, lvalue->src, result);
@@ -720,17 +742,15 @@ static IrIns * compile_expr(Scope *s, Node *n) {
     case N_ADD:
         if (n->l->t->k == T_PTR || n->r->t->k == T_PTR) {
             return compile_ptr_arith(s, n);
-        } else {
-            return compile_binop(s, n, IR_ADD);
         }
+        return compile_binop(s, n, IR_ADD);
     case N_SUB:
         if (n->l->t->k == T_PTR && n->r->t->k == T_PTR) {
             return compile_ptr_sub(s, n);
         } else if (n->l->t->k == T_PTR || n->r->t->k == T_PTR) {
             return compile_ptr_arith(s, n);
-        } else {
-            return compile_binop(s, n, IR_SUB);
         }
+        return compile_binop(s, n, IR_SUB);
     case N_MUL:       return compile_binop(s, n, IR_MUL);
     case N_DIV:       return compile_binop(s, n, IR_DIV);
     case N_MOD:       return compile_binop(s, n, IR_MOD);
@@ -793,13 +813,13 @@ static void compile_decl(Scope *s, Node *n) {
     }
     assert(n->var->k == N_LOCAL);
     IrIns *alloc;
-    if (n->init && (n->init->k == N_ARR || n->init->k == N_STRUCT)) {
-        alloc = compile_init(s, n->init);
+    if (n->init && n->init->k == N_INIT) {
+        alloc = compile_init(s, n->init); // Array/struct initializer list
     } else {
         alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
     }
     def_local(s, n->var->var_name, alloc);
-    if (n->init && n->init->k != N_ARR && n->init->k != N_STRUCT) {
+    if (n->init && n->init->k != N_INIT) {
         IrIns *v = discharge(s, compile_expr(s, n->init));
         emit_store(s, alloc, v);
     }
@@ -1045,7 +1065,7 @@ static void compile_fn_args(Scope *s, Node *n) {
 }
 
 static void compile_fn_def(Scope *s, Node *n) {
-    Global *g = new_global(K_FN_DEF, n->t, prepend_underscore(n->fn_name));
+    Global *g = new_global(n->t, prepend_underscore(n->fn_name));
     g->fn = new_fn();
     def_global(s, n->fn_name, g);
     Scope body;
@@ -1059,7 +1079,10 @@ static void compile_fn_def(Scope *s, Node *n) {
 }
 
 static void compile_global_decl(Scope *s, Node *n) {
-    TODO();
+    char *label = prepend_underscore(n->var->var_name);
+    Global *g = new_global(n->var->t, label);
+    def_global(s, n->var->var_name, g);
+    g->val = n->init;
 }
 
 static void compile_top_level(Scope *s, Node *n) {
@@ -1072,13 +1095,13 @@ static void compile_top_level(Scope *s, Node *n) {
 }
 
 Vec * compile(Node *n) {
-    Scope file = {0};
-    file.k = SCOPE_FILE;
-    file.globals = vec_new();
-    file.vars = map_new();
+    Scope top_level = {0};
+    top_level.k = SCOPE_FILE;
+    top_level.globals = vec_new();
+    top_level.vars = map_new();
     while (n) {
-        compile_top_level(&file, n);
+        compile_top_level(&top_level, n);
         n = n->next;
     }
-    return file.globals;
+    return top_level.globals;
 }

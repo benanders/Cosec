@@ -1310,7 +1310,7 @@ static Node * eval_const_expr(Node *e, Token **err) {
     switch (e->k) {
         // Constants
     case N_IMM: case N_FP: case N_KPTR: *n = *e; break;
-    case N_ARR: case N_STRUCT:
+    case N_INIT:
         n->elems = vec_new();
         for (size_t i = 0; i < vec_len(e->elems); i++) {
             Node *v = vec_get(e->elems, i);
@@ -1318,10 +1318,10 @@ static Node * eval_const_expr(Node *e, Token **err) {
                 vec_push(n->elems, NULL);
                 continue;
             }
-            Node *k = eval_const_expr(v, err);
-            if (!k) goto err;
-            if (k->k == N_KVAL) goto err;
-            vec_push(n->elems, k);
+            v = eval_const_expr(v, err);
+            if (!v) goto err;
+            if (v->k == N_KVAL) goto err;
+            vec_push(n->elems, v);
         }
         break;
     case N_GLOBAL:
@@ -1817,7 +1817,7 @@ static size_t parse_array_designator(Scope *s, Type *t) {
 static Node * parse_array_init(Scope *s, Type *t, int designated) {
     assert(t->k == T_ARR);
     assert(!is_vla(t));
-    Node *n = node(N_ARR, peek_tk(s->pp));
+    Node *n = node(N_INIT, peek_tk(s->pp));
     n->t = t;
     n->elems = vec_new();
     int has_brace = next_tk_is(s->pp, '{') != NULL;
@@ -1870,9 +1870,9 @@ static size_t parse_struct_designator(Scope *s, Type *t) {
 
 static Node * parse_struct_init(Scope *s, Type *t, int designated) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
-    Node *n = node(N_STRUCT, peek_tk(s->pp));
+    Node *n = node(N_INIT, peek_tk(s->pp));
     n->t = t;
-    n->fields = vec_new();
+    n->elems = vec_new();
     int has_brace = next_tk_is(s->pp, '{') != NULL;
     size_t idx = 0;
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
@@ -1894,7 +1894,7 @@ static Node * parse_struct_init(Scope *s, Type *t, int designated) {
             ft = ((Field *) vec_get(t->fields, idx))->t;
         }
         Node *elem = parse_init_elem(s, ft, designated);
-        vec_put(n->fields, idx, elem);
+        vec_put(n->elems, idx, elem);
         idx++;
         designated = 0;
     }
@@ -2005,7 +2005,9 @@ static Node * parse_decl(Scope *s) {
         if ((*cur)->k == N_FN_DEF) {
             return head;
         }
-        while (*cur) cur = &(*cur)->next;
+        while (*cur) {
+            cur = &(*cur)->next;
+        }
         if (!next_tk_is(s->pp, ',')) {
             break;
         }
@@ -2022,7 +2024,9 @@ Node * parse(File *f) {
     Node **cur = &head;
     while (!next_tk_is(pp, TK_EOF)) {
         *cur = parse_decl(&file_scope);
-        while (*cur) cur = &(*cur)->next;
+        while (*cur) {
+            cur = &(*cur)->next;
+        }
     }
     return head;
 }

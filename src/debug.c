@@ -7,10 +7,10 @@
 #include "compile.h"
 
 
-// ---- AST Printing ----------------------------------------------------------
+// ---- AST -------------------------------------------------------------------
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "array", "init", "local", "global", "kptr", "kval",
+    "imm", "fp", "str", "init", "local", "global", "kptr", "kval",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -121,32 +121,19 @@ static void print_expr(Node *n) {
         }
         printf("\"%s\"", quote_str(n->tk->str, n->tk->len));
         break;
-    case N_ARR:
+    case N_INIT:
         print_type(n->t);
         printf(" { ");
         for (size_t i = 0; i < vec_len(n->elems); i++) {
             Node *elem = vec_get(n->elems, i);
+            if (n->t->k == T_STRUCT) {
+                Field *ft = vec_get(n->t->fields, i);
+                printf(".%s = ", ft->name);
+            }
             if (!elem) {
                 printf("∅");
             } else {
                 print_expr(elem);
-            }
-            printf(", ");
-        }
-        printf("}");
-        break;
-    case N_STRUCT:
-        print_type(n->t);
-        printf(" { ");
-        assert(vec_len(n->elems) == vec_len(n->t->fields));
-        for (size_t i = 0; i < vec_len(n->fields); i++) {
-            Node *f = vec_get(n->fields, i);
-            Field *ft = vec_get(n->t->fields, i);
-            printf(".%s = ", ft->name);
-            if (!f) {
-                printf("∅");
-            } else {
-                print_expr(f);
             }
             printf(", ");
         }
@@ -386,7 +373,7 @@ void print_ast(Node *n) {
 }
 
 
-// ---- SSA IR Printing -------------------------------------------------------
+// ---- SSA IR ----------------------------------------------------------------
 
 #define BB_PREFIX ".BB"
 
@@ -471,33 +458,21 @@ static void print_fn(Global *g) {
 static void print_global(Global *g) {
     print_type(g->t);
     printf(" %s", g->label);
-    if (g->k == K_NONE) { // No init value
-        return;
+    if (g->val) {
+        printf(" = ");
+        print_node(g->val, 0);
+    } else {
+        printf("\n");
     }
-    printf(" = ");
-    switch (g->k) {
-    case K_INT: printf("%llu", g->i); break;
-    case K_FP:  printf("%g", g->f); break;
-    case K_STR: printf("\"%s\"", quote_str(g->str, g->len)); break;
-    case K_PTR:
-        printf("&%s", g->ptr->label);
-        if (g->offset > 0) {
-            printf(" + %llu", g->offset);
-        } else {
-            printf(" - %llu", -g->offset);
-        }
-        break;
-    }
-    printf("\n");
 }
 
 void print_ir(Vec *globals) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->k != K_FN_DEF) {
-            print_global(g);
-        } else {
+        if (g->fn) {
             print_fn(g);
+        } else {
+            print_global(g);
         }
     }
 }
