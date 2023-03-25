@@ -558,6 +558,9 @@ static IrIns * compile_assign(Scope *s, Node *n) {
     IrIns *l = compile_expr(s, n->l);
     assert(l->op == IR_LOAD || l->op == IR_ELEM);
     delete_ir(l);
+    if (l->op == IR_ELEM) {
+        delete_ir(l->offset);
+    }
     emit_store(s, l->src, r);
     return r; // Assignment evaluates to its right operand
 }
