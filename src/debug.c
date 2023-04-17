@@ -397,10 +397,15 @@ static void print_ins(IrIns *ins) {
     case IR_FP:     printf("+%g", ins->fp); break;
     case IR_GLOBAL: printf("%s", ins->g->label); break;
     case IR_FARG:   printf("%zu", ins->arg_num); break;
-    case IR_ALLOC:  print_type(ins->t->ptr); break;
-    case IR_STORE:  printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
-    case IR_COPY:   printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
-                           ins->cpy_dst->idx, ins->cpy_size->idx); break;
+    case IR_ALLOC:
+        print_type(ins->t->ptr);
+        if (ins->count) {
+            printf("\t%.4d", ins->count->idx);
+        }
+        break;
+    case IR_STORE: printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
+    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
+                          ins->cpy_dst->idx, ins->cpy_size->idx); break;
     case IR_PHI:
         for (size_t i = 0; i < vec_len(ins->preds); i++) {
             IrBB *pred = vec_get(ins->preds, i);

@@ -4,16 +4,6 @@
 
 #include "parse.h"
 
-// TODO: consider getting rid of the concept of an array from the bytecode and
-// just dealing with pointers; IR_ALLOC takes a size as an argument and returns
-// a pointer
-// May make array bounds checking and optimisations that depend on this
-// harder...
-// Could we tag pointers with size information when known? this is checked on
-// emitting IR_ELEM and any pointer returned by IR_ELEM gets its size adjusted
-// accordingly so we know when we're performing loads/stores to out of bound
-// pointers (for alias analysis)
-
 enum {
     // Constants, globals, and functions
     IR_IMM,
@@ -89,7 +79,7 @@ typedef struct IrIns {
 
         // Memory access
         size_t arg_num; // IR_FARG
-        int stack_slot; // IR_ALLOC (for assembler)
+        struct { struct IrIns *count; int stack_slot; /* for assembler */ }; // IR_ALLOC
         struct { struct IrIns *src, *dst; };     // IR_LOAD, IR_STORE
         struct { struct IrIns *base, *offset; }; // IR_ELEM
 

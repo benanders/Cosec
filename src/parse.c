@@ -380,6 +380,10 @@ static void parse_struct_fields(Scope *s, Type *t) {
                 error_at(name, "%s field cannot have incomplete type",
                          t->k == T_STRUCT ? "struct" : "union");
             }
+            if (is_vla(ft)) {
+                error_at(name, "%s field must have constant size",
+                         t->k == T_STRUCT ? "struct" : "union");
+            }
             if (find_field(t, name->ident) != NOT_FOUND) {
                 error_at(name, "duplicate field '%s' in %s", name->ident,
                          t->k == T_STRUCT ? "struct" : "union");
@@ -555,6 +559,7 @@ t_err:
 static Type * parse_declarator_tail(Scope *s, Type *base, Vec *param_names);
 static Node * parse_expr(Scope *s);
 static int try_calc_int_expr(Node *e, int64_t *val);
+static Node * conv_to(Node *l, Type *t);
 
 static Type * parse_array_declarator(Scope *s, Type *base) {
     expect_tk(s->pp, '[');
@@ -563,7 +568,7 @@ static Type * parse_array_declarator(Scope *s, Type *base) {
         Node *n = parse_expr(s);
         int64_t i;
         if (!try_calc_int_expr(n, &i)) {
-            len = n; // VLA
+            len = conv_to(n, t_num(T_LLONG, 1)); // VLA
         } else if (i < 0) {
             error_at(n->tk, "cannot have array with negative size ('%" PRId64 "')", i);
         } else {

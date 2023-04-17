@@ -89,7 +89,9 @@ Field * new_field(Type *t, char *name, uint64_t offset) {
 
 size_t find_field(Type *t, char *name) {
     assert(t->k == T_STRUCT || t->k == T_UNION);
-    if (!t->fields) return NOT_FOUND; // Incomplete type
+    if (!t->fields) {
+        return NOT_FOUND; // Incomplete type
+    }
     for (size_t i = 0; i < vec_len(t->fields); i++) {
         Field *f = vec_get(t->fields, i);
         if (strcmp(f->name, name) == 0) {
@@ -122,18 +124,28 @@ int is_string_type(Type *t) {
 }
 
 int is_vla(Type *t) {
-    return t->k == T_ARR && t->len && t->len->k != N_IMM;
+    if (t->k != T_ARR) return 0;
+    if (t->len && t->len->k != N_IMM) return 1;
+    return is_vla(t->elem);
 }
 
 int is_incomplete(Type *t) {
-    return t->k == T_VOID ||
-           (t->k == T_ARR && !t->len) ||
-           ((t->k == T_STRUCT || t->k == T_UNION) && !t->fields);
-}
-
-static int fields_are_equal(Field *a, Field *b) {
-    return strcmp(a->name, b->name) == 0 && a->offset == b->offset &&
-           are_equal(a->t, b->t);
+    switch (t->k) {
+    case T_VOID: return 1;
+    case T_ARR:
+        if (!t->len) return 1;
+        return is_incomplete(t->elem);
+    case T_STRUCT: case T_UNION:
+        if (!t->fields) return 1;
+        for (size_t i = 0; i < vec_len(t->fields); i++) {
+            Type *ft = ((Field *) vec_get(t->fields, i))->t;
+            if (is_incomplete(ft)) {
+                return 1;
+            }
+        }
+    case T_ENUM: return !t->fields;
+    default: return 0;
+    }
 }
 
 int are_equal(Type *a, Type *b) {
@@ -142,18 +154,28 @@ int are_equal(Type *a, Type *b) {
     if (a->k != b->k) return 0;
     switch (a->k) {
     case T_PTR: return are_equal(a->ptr, b->ptr);
-    case T_ARR: return a->len == b->len && are_equal(a->ptr, b->ptr);
+    case T_ARR:
+        if (a->len && b->len && a->len->k == N_IMM && b->len->k == N_IMM &&
+                a->len->k != b->len->k) {
+            return 0;
+        }
+        return are_equal(a->elem, b->elem);
     case T_FN:
         if (vec_len(a->params) != vec_len(b->params)) return 0;
         for (size_t i = 0; i < vec_len(a->params); i++) {
             if (!are_equal(vec_get(a->params, i), vec_get(b->params, i))) return 0;
         }
         return are_equal(a->ret, b->ret);
-    case T_STRUCT: case T_UNION:
+    case T_STRUCT: case T_UNION: case T_ENUM:
         if (!a->fields || !b->fields) return 0;
         if (vec_len(a->fields) != vec_len(b->fields)) return 0;
         for (size_t i = 0; i < vec_len(a->fields); i++) {
-            if (!fields_are_equal(vec_get(a->fields, i), vec_get(b->fields, i))) return 0;
+            Field *fa = vec_get(a->fields, i);
+            Field *fb = vec_get(b->fields, i);
+            if (!(strcmp(fa->name, fb->name) == 0 && fa->offset == fb->offset &&
+                   are_equal(fa->t, fb->t))) {
+                return 0;
+            }
         }
         return 1;
     default: return a->is_unsigned == b->is_unsigned;

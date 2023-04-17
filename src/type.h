@@ -68,6 +68,7 @@ typedef struct Type {
         struct { // T_ARR
             struct Type *elem;
             struct Node *len; // VLA if len->k != N_IMM
+            struct IrIns *len_ins; // IR_ALLOC if VLA
         };
         struct { // T_FN
             struct Type *ret;

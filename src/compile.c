@@ -702,6 +702,7 @@ static IrIns * compile_conv(Scope *s, Node *n) {
 }
 
 static IrIns * compile_array_access(Scope *s, Node *n) {
+    // TODO: VLA access (via multiplication)
     IrIns *ptr = compile_ptr_arith(s, n);
     return emit_load(s, ptr);
 }
@@ -816,9 +817,29 @@ static void compile_decl(Scope *s, Node *n) {
     }
     assert(n->var->k == N_LOCAL);
     IrIns *alloc;
-    if (n->init && n->init->k == N_INIT) {
-        alloc = compile_init(s, n->init); // Array/struct initializer list
-    } else {
+    if (n->init && n->init->k == N_INIT) { // Array/struct initializer list
+        alloc = compile_init(s, n->init);
+    } else if (is_vla(n->var->t)) { // VLA
+        Vec *to_mul = vec_new();
+        Type *t = n->var->t;
+        while (is_vla(t)) {
+            IrIns *count = discharge(s, compile_expr(s, t->len));
+            vec_push(to_mul, count);
+            t->len_ins = emit(s, IR_ALLOC, t_ptr(count->t));
+            emit_store(s, t->len_ins, count);
+            t = t->elem;
+        }
+        assert(vec_len(to_mul) > 0); // Is actually a VLA
+        IrIns *total = vec_get(to_mul, 0);
+        for (size_t i = 1; i < vec_len(to_mul); i++) {
+            IrIns *mul = emit(s, IR_MUL, total->t);
+            mul->l = vec_get(to_mul, i);
+            mul->r = total;
+            total = mul;
+        }
+        alloc = emit(s, IR_ALLOC, t_ptr(t));
+        alloc->count = total;
+    } else { // Everything else
         alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
     }
     def_local(s, n->var->var_name, alloc);
@@ -1085,7 +1106,7 @@ static void compile_global_decl(Scope *s, Node *n) {
     char *label = prepend_underscore(n->var->var_name);
     Global *g = new_global(n->var->t, label);
     def_global(s, n->var->var_name, g);
-    g->val = n->init;
+    g->val = n->init; // May be NULL
 }
 
 static void compile_top_level(Scope *s, Node *n) {
