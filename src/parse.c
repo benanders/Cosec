@@ -281,8 +281,8 @@ static Token * concat_strs(Scope *s) {
     Token *str = copy_tk(t);
     while (t->k == TK_STR) {
         t = next_tk(s->pp);
-        if (t->str_enc > str->str_enc) {
-            str->str_enc = t->str_enc;
+        if (t->enc > str->enc) {
+            str->enc = t->enc;
         }
         buf_nprint(buf, t->str, t->len);
         t = peek_tk(s->pp);
@@ -298,8 +298,8 @@ static Node * parse_str(Scope *s) {
     Node *len = node(N_IMM, tk);
     len->t = t_num(T_LLONG, 1);
     Node *n = node(N_STR, tk);
-    n->enc = tk->str_enc;
-    switch (tk->str_enc) {
+    n->enc = tk->enc;
+    switch (tk->enc) {
     case ENC_NONE:
         n->len = tk->len;
         n->str = tk->str;
@@ -324,7 +324,7 @@ static Node * parse_str(Scope *s) {
 static Node * parse_ch(Scope *s) {
     Token *tk = next_tk(s->pp);
     Node *n = node(N_IMM, tk);
-    switch (tk->ch_enc) {
+    switch (tk->enc) {
         case ENC_NONE: n->t = t_num(T_CHAR, 0); break;
         case ENC_CHAR16: n->t = t_num(T_SHORT, 1); break;
         case ENC_CHAR32: case ENC_WCHAR: n->t = t_num(T_INT, 1); break;

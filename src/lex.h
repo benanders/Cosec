@@ -94,9 +94,9 @@ enum {
 
 enum { // In order of element size
     ENC_NONE,   // UTF-8 (default)
-    ENC_CHAR16, // u"..."
-    ENC_WCHAR,  // L"..."
-    ENC_CHAR32, // U"..."
+    ENC_CHAR16, // u"..." (UTF-16)
+    ENC_WCHAR,  // L"..." (UTF-32)
+    ENC_CHAR32, // U"..." (UTF-32)
 };
 
 typedef struct {
@@ -107,8 +107,13 @@ typedef struct {
     union {
         char *ident; // TK_IDENT
         char *num;   // TK_NUM
-        struct { char *str; size_t len; int str_enc; }; // TK_STR
-        struct { int ch, ch_enc; }; // TK_CH
+        struct {
+            int enc;
+            union {
+                int ch; // TK_CH
+                struct { char *str; size_t len; }; // TK_STR
+            };
+        };
         size_t param_idx; // TK_MACRO_PARAM
     };
     Set *hide_set; // For macro expansion in the preprocessor
@@ -127,11 +132,12 @@ Token * lex_tk(Lexer *l);
 void undo_tk(Lexer *l, Token *t);
 void undo_tks(Lexer *l, Vec *tks);
 
-char * lex_rest_of_line(Lexer *l);
-char * lex_include_path(Lexer *l, int *search_local);
+// Special preprocessor functions
+char * lex_rest_of_line(Lexer *l); // For '#error' and '#warning'
+char * lex_include_path(Lexer *l, int *search_cwd); // For '#include' and '#import'
+Token * glue_tks(Lexer *l, Token *t, Token *u); // For '##' operator
 
-Token * glue_tks(Lexer *l, Token *t, Token *u);
-
+// Token printing
 char * tk2str(int t);
 char * token2str(Token *t);
 char * tk2pretty(int t);

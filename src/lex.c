@@ -185,7 +185,17 @@ static int lex_esc_seq(Lexer *l, int *is_utf8) {
     }
 }
 
-static Token * lex_ch(Lexer *l, int enc) {
+static int lex_enc(Lexer *l) {
+    switch (peek_ch(l->f)) {
+        case 'L': next_ch(l->f); return ENC_WCHAR;
+        case 'u': next_ch(l->f); return ENC_CHAR16;
+        case 'U': next_ch(l->f); return ENC_CHAR32;
+        default: return ENC_NONE;
+    }
+}
+
+static Token * lex_ch(Lexer *l) {
+    int enc = lex_enc(l);
     Token *t = new_tk(l, TK_CH);
     next_ch(l->f); // Skip '
     t->ch = next_ch(l->f);
@@ -196,11 +206,12 @@ static Token * lex_ch(Lexer *l, int enc) {
     if (!next_ch_is(l->f, '\'')) {
         error_at(t, "unterminated character literal");
     }
-    t->ch_enc = enc;
+    t->enc = enc;
     return t;
 }
 
-static Token * lex_str(Lexer *l, int enc) {
+static Token * lex_str(Lexer *l) {
+    int enc = lex_enc(l);
     Token *t = new_tk(l, TK_STR);
     next_ch(l->f); // Skip "
     Buf *b = buf_new();
@@ -222,17 +233,8 @@ static Token * lex_str(Lexer *l, int enc) {
     }
     t->str = b->data;
     t->len = b->len; // NOT null terminated
-    t->str_enc = enc;
+    t->enc = enc;
     return t;
-}
-
-static int lex_str_encoding(Lexer *l) {
-    switch (peek_ch(l->f)) {
-        case 'L': next_ch(l->f); return ENC_WCHAR;
-        case 'u': next_ch(l->f); return ENC_CHAR16;
-        case 'U': next_ch(l->f); return ENC_CHAR32;
-        default: return ENC_NONE;
-    }
 }
 
 static Token * lex_sym(Lexer *l) {
@@ -309,10 +311,10 @@ static Token * lex_raw(Lexer *l) {
         return lex_num(l);
     } else if (c == '\'' ||
                ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '\'')) {
-        return lex_ch(l, lex_str_encoding(l));
+        return lex_ch(l);
     } else if (c == '"' ||
                ((c == 'L' || c == 'u' || c == 'U') && peek2_ch(l->f) == '"')) {
-        return lex_str(l, lex_str_encoding(l));
+        return lex_str(l);
     } else if (isalpha(c) || c == '_') {
         return lex_ident(l);
     } else {
@@ -347,6 +349,9 @@ void undo_tks(Lexer *l, Vec *tks) {
     }
 }
 
+
+// ---- Special Preprocessor Functions ----------------------------------------
+
 char * lex_rest_of_line(Lexer *l) {
     skip_spaces(l);
     Buf *b = buf_new();
@@ -359,16 +364,16 @@ char * lex_rest_of_line(Lexer *l) {
     return b->data;
 }
 
-char * lex_include_path(Lexer *l, int *search_local) {
+char * lex_include_path(Lexer *l, int *search_cwd) {
     skip_spaces(l);
     Token *err = new_tk(l, -1);
     char close;
     if (next_ch_is(l->f, '"')) {
         close = '"';
-        *search_local = 1;
+        *search_cwd = 1;
     } else if (next_ch_is(l->f, '<')) {
         close = '>';
-        *search_local = 0;
+        *search_cwd = 0;
     } else {
         return NULL; // No include path
     }
@@ -401,6 +406,9 @@ Token * glue_tks(Lexer *l, Token *t, Token *u) {
     }
     return glued;
 }
+
+
+// ---- Token Printing --------------------------------------------------------
 
 static char *TK_NAMES[TK_LAST - TK_FIRST] = {
     "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
@@ -439,11 +447,11 @@ char * token2str(Token *t) {
     case TK_NUM:   buf_printf(b, "%s", t->num); break;
     case TK_IDENT: buf_printf(b, "%s", t->ident); break;
     case TK_CH:
-        write_encoding(b, t->ch_enc);
+        write_encoding(b, t->enc);
         buf_printf(b, "'%c'", quote_ch((char) t->ch));
         break;
     case TK_STR:
-        write_encoding(b, t->str_enc);
+        write_encoding(b, t->enc);
         buf_printf(b, "\"%s\"", quote_str(t->str, t->len));
         break;
     default: return tk2str(t->k);
@@ -471,12 +479,12 @@ char * token2pretty(Token *t) {
     case TK_IDENT: buf_printf(b, "identifier '%s'", t->ident); break;
     case TK_CH:
         buf_print(b, "character ");
-        write_encoding(b, t->ch_enc);
+        write_encoding(b, t->enc);
         buf_printf(b, "'%c'", quote_ch((char) t->ch));
         break;
     case TK_STR:
         buf_print(b, "string ");
-        write_encoding(b, t->str_enc);
+        write_encoding(b, t->enc);
         buf_printf(b, "\"%s\"", quote_str(t->str, t->len));
         break;
     default: return tk2pretty(t->k);
