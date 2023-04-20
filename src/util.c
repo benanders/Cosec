@@ -9,7 +9,7 @@
 #include <stddef.h>
 
 #include "util.h"
-#include "err.h"
+#include "error.h"
 
 
 // ---- Vector ----------------------------------------------------------------

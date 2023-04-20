@@ -6,7 +6,7 @@
 
 #include "parse.h"
 #include "pp.h"
-#include "err.h"
+#include "error.h"
 
 enum {
     SCOPE_FILE,

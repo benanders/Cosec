@@ -4,7 +4,7 @@
 
 #include "pp.h"
 #include "parse.h"
-#include "err.h"
+#include "error.h"
 
 // Preprocessor macro expansion uses Dave Prosser's algorithm, described here:
 // https://www.spinellis.gr/blog/20060626/cpp.algo.pdf
@@ -259,7 +259,7 @@ static void parse_include(PP *pp, Token *t) {
         if (include(pp, "/", path, is_import)) return;
     } else { // Relative path
         if (search_local) {
-            char *local_dir = pp->l->f->name ? get_dir(pp->l->f->name) : ".";
+            char *local_dir = pp->l->f->path ? get_dir(pp->l->f->path) : ".";
             if (include(pp, local_dir, path, is_import)) return;
         }
         for (size_t i = 0; i < vec_len(pp->include_paths); i++) {
@@ -441,7 +441,7 @@ static void parse_line(PP *pp) {
     }
     pp->l->f->line = (int) line;
     if (file) {
-        pp->l->f->name = file;
+        pp->l->f->path = file;
     }
 }
 
@@ -456,7 +456,7 @@ static void parse_error(PP *pp, Token *t) {
 }
 
 static void parse_pragma_once(PP *pp) {
-    char *path = full_path(pp->l->f->name);
+    char *path = full_path(pp->l->f->path);
     map_put(pp->include_once, path, (void *) 1);
     lex_expect(pp, TK_NEWLINE);
 }
@@ -491,8 +491,8 @@ static void macro_time(PP *pp, Token *t) {
 
 static void macro_file(PP *pp, Token *t) {
     t->k = TK_STR;
-    t->len = strlen(pp->l->f->name);
-    t->str = str_ncopy(pp->l->f->name, t->len);
+    t->len = strlen(pp->l->f->path);
+    t->str = str_ncopy(pp->l->f->path, t->len);
 }
 
 static void macro_line(PP *pp, Token *t) {

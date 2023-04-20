@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include "lex.h"
-#include "err.h"
+#include "error.h"
 
 #define TK_FIRST TK_SHL
 
@@ -82,12 +82,10 @@ static int skip_spaces(Lexer *l) {
 static Token * lex_ident(Lexer *l) {
     Token *t = new_tk(l, TK_IDENT);
     Buf *b = buf_new();
-    int c = next_ch(l->f);
-    while (isalnum(c) || c == '_') {
+    while (isalnum(peek_ch(l->f)) || peek_ch(l->f) == '_') {
+        int c = next_ch(l->f);
         buf_push(b, (char) c);
-        c = next_ch(l->f);
     }
-    undo_ch(l->f, c);
     buf_push(b, '\0');
     t->ident = b->data;
     return t;
@@ -96,13 +94,13 @@ static Token * lex_ident(Lexer *l) {
 static Token * lex_num(Lexer *l) {
     Token *t = new_tk(l, TK_NUM);
     Buf *b = buf_new();
-    int c = next_ch(l->f), last = c;
-    while (isalnum(c) || c == '.' || (strchr("eEpP", last) && strchr("+-", c))) {
+    int last = EOF;
+    while (isalnum(peek_ch(l->f)) || peek_ch(l->f) == '.' ||
+            (strchr("eEpP", last) && strchr("+-", peek_ch(l->f)))) {
+        int c = next_ch(l->f);
         buf_push(b, (char) c);
         last = c;
-        c = next_ch(l->f);
     }
-    undo_ch(l->f, c);
     buf_push(b, '\0');
     t->num = b->data;
     return t;
@@ -111,15 +109,13 @@ static Token * lex_num(Lexer *l) {
 static int lex_hex_esc_seq(Lexer *l) {
     Token *err = new_tk(l, -1);
     Buf *b = buf_new();
-    int c = next_ch(l->f);
-    while (isxdigit(c)) {
+    while (isxdigit(peek_ch(l->f))) {
+        int c = next_ch(l->f);
         buf_push(b, (char) c);
-        c = next_ch(l->f);
     }
     if (b->len == 0) {
         error_at(err, "expected hexadecimal digit in '\\x' escape sequence");
     }
-    undo_ch(l->f, c);
     buf_push(b, '\0');
     return (int) strtol(b->data, NULL, 16);
 }
@@ -128,16 +124,14 @@ static int lex_oct_esc_seq(Lexer *l) {
     Token *err = new_tk(l, -1);
     Buf *b = buf_new();
     int i = 0;
-    int c = next_ch(l->f);
-    while (c >= '0' && c <= '7' && i < 3) { // Max of 3 octal digits
+    while (peek_ch(l->f) >= '0' && peek_ch(l->f) <= '7' && i < 3) { // Max 3 digits
+        int c = next_ch(l->f);
         buf_push(b, (char) c);
-        c = next_ch(l->f);
         i++;
     }
     if (b->len == 0) {
         error_at(err, "expected octal digit in '\\0' escape sequence");
     }
-    undo_ch(l->f, c);
     buf_push(b, '\0');
     return (int) strtol(b->data, NULL, 8);
 }
@@ -153,16 +147,14 @@ static int is_valid_ucn(unsigned int c) {
 static int lex_universal_ch(Lexer *l, size_t len) { // [len] is 4 or 8
     Token *err = new_tk(l, -1);
     Buf *b = buf_new();
-    int c = next_ch(l->f);
-    while (isxdigit(c) && b->len < len) {
+    while (isxdigit(peek_ch(l->f)) && b->len < len) {
+        int c = next_ch(l->f);
         buf_push(b, (char) c);
-        c = next_ch(l->f);
     }
     if (b->len != len) {
         error_at(err, "expected %zu hexadecimal digits in '\\%c' escape sequence",
                  len, (len == 4 ? 'u' : 'U'));
     }
-    undo_ch(l->f, c);
     buf_push(b, '\0');
     uint32_t r = strtol(b->data, NULL, 16);
     if (!is_valid_ucn(r)) {
@@ -175,20 +167,20 @@ static int lex_universal_ch(Lexer *l, size_t len) { // [len] is 4 or 8
 static int lex_esc_seq(Lexer *l, int *is_utf8) {
     *is_utf8 = 0;
     Token *err = new_tk(l, -1);
-    int c = next_ch(l->f);
+    int c = peek_ch(l->f);
     switch (c) {
-        case '\'': case '"': case '?': case '\\': return c;
-        case 'a': return '\a';
-        case 'b': return '\b';
-        case 'f': return '\f';
-        case 'n': return '\n';
-        case 'r': return '\r';
-        case 't': return '\t';
-        case 'v': return '\v';
-        case 'u': *is_utf8 = 1; return lex_universal_ch(l, 4);
-        case 'U': *is_utf8 = 1; return lex_universal_ch(l, 8);
-        case 'x': return lex_hex_esc_seq(l);
-        case '0' ... '7': undo_ch(l->f, c); return lex_oct_esc_seq(l);
+        case '\'': case '"': case '?': case '\\': next_ch(l->f); return c;
+        case 'a': next_ch(l->f); return '\a';
+        case 'b': next_ch(l->f); return '\b';
+        case 'f': next_ch(l->f); return '\f';
+        case 'n': next_ch(l->f); return '\n';
+        case 'r': next_ch(l->f); return '\r';
+        case 't': next_ch(l->f); return '\t';
+        case 'v': next_ch(l->f); return '\v';
+        case 'u': *is_utf8 = 1; next_ch(l->f); return lex_universal_ch(l, 4);
+        case 'U': *is_utf8 = 1; next_ch(l->f); return lex_universal_ch(l, 8);
+        case 'x': next_ch(l->f); return lex_hex_esc_seq(l);
+        case '0' ... '7': return lex_oct_esc_seq(l);
         default: error_at(err, "unknown escape sequence");
     }
 }

@@ -2,6 +2,11 @@
 #ifndef COSEC_COMPILE_H
 #define COSEC_COMPILE_H
 
+// TODO: move all constant IR_ALLOCs to the start of the function so only
+// dynamically sized allocations (that modify rsp) come after. So allocating
+// a static-sized variable after a dynamically-sized one doesn't require
+// modification of the stack pointer
+
 #include "parse.h"
 
 enum {

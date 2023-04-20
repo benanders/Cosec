@@ -7,19 +7,21 @@
 #include "util.h"
 
 typedef struct {
-    FILE *f;
-    char *name;
+    FILE *fp;
+    char *path;
     int line, col;
     Buf *buf;
-    int last;
+    int prev_ch;
 } File;
 
-File * new_file(FILE *fp, char *name);
+File * new_file(FILE *fp, char *path);
 int next_ch(File *f);
-void undo_ch(File *f, int c);
-void undo_chs(File *f, char *s, size_t len);
-int next_ch_is(File *f, int c);
 int peek_ch(File *f);
 int peek2_ch(File *f);
+int next_ch_is(File *f, int c);
+
+// Used by the preprocessor when gluing tokens together with '##'. CANNOT
+// contain newlines (can't reliably update 'f->col' for errors)
+void undo_chs(File *f, char *s, size_t len);
 
 #endif

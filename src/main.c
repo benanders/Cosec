@@ -1,11 +1,10 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include "parse.h"
 #include "compile.h"
-#include "err.h"
+#include "error.h"
 #include "debug.h"
 
 // Compile the generated assembly with (on my macOS machine):
@@ -32,7 +31,7 @@ static void print_version() {
 }
 
 static void print_help() {
-    printf("Usage: cosec <file>\n");
+    printf("Usage: cosec [options] <file>\n");
     printf("\n");
     printf("Options:\n");
     printf("  --help, -h     Print this help message\n");
@@ -61,10 +60,10 @@ int main(int argc, char *argv[]) {
         char *arg = argv[i];
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_help();
-            return EXIT_SUCCESS;
+            return 1;
         } else if (strcmp(arg, "--version") == 0 || strcmp(arg, "-v") == 0) {
             print_version();
-            return EXIT_SUCCESS;
+            return 1;
         } else if (strcmp(arg, "-o") == 0) {
             if (i == argc - 1) {
                 error("expected file name after '-o'");
@@ -80,5 +79,5 @@ int main(int argc, char *argv[]) {
         error("no input files");
     }
     pipeline(in, out);
-    return EXIT_SUCCESS;
+    return 1;
 }
