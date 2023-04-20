@@ -513,7 +513,7 @@ char * full_path(char *path) {
         return simplify_path(path);
     }
     if (!*cwd && !getcwd(cwd, PATH_MAX)) {
-        error("cannot get current working directory: %s", strerror(errno));
+        error("can't get current working directory: %s", strerror(errno));
     }
     return simplify_path(concat_paths(cwd, path));
 }

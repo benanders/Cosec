@@ -7,7 +7,7 @@ File * new_file(FILE *fp, char *path) {
     assert(fp);
     File *f = malloc(sizeof(File));
     f->fp = fp;
-    f->path = str_copy(path);
+    f->name = str_copy(path);
     f->line = 1;
     f->col = 1;
     f->buf = buf_new();

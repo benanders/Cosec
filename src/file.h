@@ -8,7 +8,7 @@
 
 typedef struct {
     FILE *fp;
-    char *path;
+    char *name; // Not the full path to the file (e.g., 'stdlib.h')
     int line, col;
     Buf *buf;
     int prev_ch;

@@ -42,7 +42,7 @@ static void print_help() {
 static void pipeline(char *in, char *out) {
     FILE *fp = fopen(in, "r");
     if (!fp) {
-        error("cannot read input file '%s'", in);
+        error("can't read input file '%s'", in);
     }
     File *f = new_file(fp, in);
 
@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
             return 1;
         } else if (strcmp(arg, "-o") == 0) {
             if (i == argc - 1) {
-                error("expected file name after '-o'");
+                error("no file name after '-o'");
             }
             out = argv[++i];
         } else if (in) {

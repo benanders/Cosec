@@ -114,7 +114,7 @@ static int lex_hex_esc_seq(Lexer *l) {
         buf_push(b, (char) c);
     }
     if (b->len == 0) {
-        error_at(err, "expected hexadecimal digit in '\\x' escape sequence");
+        error_at(err, "expected hexadecimal digit after '\\x'");
     }
     buf_push(b, '\0');
     return (int) strtol(b->data, NULL, 16);
@@ -130,7 +130,7 @@ static int lex_oct_esc_seq(Lexer *l) {
         i++;
     }
     if (b->len == 0) {
-        error_at(err, "expected octal digit in '\\0' escape sequence");
+        error_at(err, "expected octal digit after '\\0'");
     }
     buf_push(b, '\0');
     return (int) strtol(b->data, NULL, 8);
@@ -152,7 +152,7 @@ static int lex_universal_ch(Lexer *l, size_t len) { // [len] is 4 or 8
         buf_push(b, (char) c);
     }
     if (b->len != len) {
-        error_at(err, "expected %zu hexadecimal digits in '\\%c' escape sequence",
+        error_at(err, "expected %zu hexadecimal digits after '\\%c'",
                  len, (len == 4 ? 'u' : 'U'));
     }
     buf_push(b, '\0');
@@ -387,22 +387,22 @@ char * lex_include_path(Lexer *l, int *search_cwd) {
         error_at(err, "premature end of '#include' path");
     }
     if (b->len == 0) {
-        error_at(err, "cannot have empty '#include' path");
+        error_at(err, "empty '#include' path");
     }
     buf_push(b, '\0');
     return b->data;
 }
 
-Token * glue_tks(Lexer *l, Token *t, Token *u) {
+Token * glue_tks(Lexer *l, Token *t1, Token *t2) {
     Buf *b = buf_new();
-    buf_print(b, token2str(t));
-    buf_print(b, token2str(u));
+    buf_print(b, token2str(t1));
+    buf_print(b, token2str(t2));
     buf_push(b, '\0');
     undo_chs(l->f, b->data, b->len);
     Token *glued = lex_tk(l);
-    glued->has_preceding_space = t->has_preceding_space;
+    glued->has_preceding_space = t1->has_preceding_space;
     if (next_ch(l->f) != '\0') {
-        error_at(t, "macro token concatenation formed invalid token '%s'", b->data);
+        error_at(t1, "macro concatenation formed invalid token '%s'", b->data);
     }
     return glued;
 }

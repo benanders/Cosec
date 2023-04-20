@@ -6,27 +6,25 @@
 #include "parse.h"
 #include "error.h"
 
-// Preprocessor macro expansion uses Dave Prosser's algorithm, described here:
-// https://www.spinellis.gr/blog/20060626/cpp.algo.pdf
-// Read https://www.math.utah.edu/docs/info/cpp_1.html beforehand to make sure
-// you understand the macro expansion process
-// Read https://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html for an
-// explanation around variadic function-like macros
+// Preprocessor macro expansion uses Dave Prosser's algorithm:
+//   https://www.spinellis.gr/blog/20060626/cpp.algo.pdf
+// An explanation of the macro expansion process:
+//   https://www.math.utah.edu/docs/info/cpp_1.html
+// An explanation around variadic function-like macros:
+//   https://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html
 
 #define FIRST_KEYWORD TK_VOID
+
 static char *KEYWORDS[] = {
-    "void", "char", "short", "int", "long", "float", "double",
-    "signed", "unsigned",
-    "struct", "union", "enum", "typedef",
-    "auto", "static", "extern", "register", "inline",
-    "const", "restrict", "volatile",
-    "sizeof", "if", "else", "while", "do", "for", "switch", "case", "default",
-    "break", "continue", "goto", "return",
-    NULL,
+    "void", "char", "short", "int", "long", "float", "double", "signed",
+    "unsigned", "struct", "union", "enum", "typedef", "auto", "static",
+    "extern", "register", "inline", "const", "restrict", "volatile", "sizeof",
+    "if", "else", "while", "do", "for", "switch", "case", "default", "break",
+    "continue", "goto", "return", NULL,
 };
 
-static Token * ZERO_TK = &(Token) { .k = TK_NUM, .num = "0" };
-static Token * ONE_TK  = &(Token) { .k = TK_NUM, .num = "1" };
+static Token *ZERO_TK = &(Token) { .k = TK_NUM, .num = "0" };
+static Token *ONE_TK  = &(Token) { .k = TK_NUM, .num = "1" };
 
 static void def_built_ins(PP *pp);
 static void def_default_include_paths(PP *pp);
@@ -117,7 +115,7 @@ static Macro * parse_obj_macro(PP *pp) {
 static Map * parse_params(PP *pp, int *is_vararg) {
     lex_expect(pp, '(');
     Map *params = map_new();
-    int nparams = 0;
+    size_t num_params = 0;
     Token *t = lex_peek(pp);
     *is_vararg = 0;
     while (t->k != ')' && t->k != TK_NEWLINE) {
@@ -126,7 +124,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
         if (t->k == TK_IDENT) {
             name = t->ident;
             t->k = TK_MACRO_PARAM;
-            t->param_idx = nparams++;
+            t->param_idx = num_params++;
             if (lex_peek(pp)->k == TK_ELLIPSIS) {
                 lex_next(pp);
                 *is_vararg = 1;
@@ -134,7 +132,7 @@ static Map * parse_params(PP *pp, int *is_vararg) {
         } else if (t->k == TK_ELLIPSIS) { // Vararg
             name = "__VA_ARGS__";
             t->k = TK_MACRO_PARAM;
-            t->param_idx = nparams++;
+            t->param_idx = num_params++;
             *is_vararg = 1;
         } else {
             error_at(t, "expected identifier, found %s", token2pretty(t));
@@ -173,7 +171,7 @@ static Macro * parse_fn_macro(PP *pp) {
     Map *params = parse_params(pp, &is_vararg);
     Vec *body = parse_body(pp, params);
     Macro *m = new_macro(MACRO_FN);
-    m->nparams = map_count(params);
+    m->num_params = map_count(params);
     m->body = body;
     m->is_vararg = is_vararg;
     return m;
@@ -209,17 +207,17 @@ static char * concat_tks(Vec *tks) {
     return b->data;
 }
 
-static char * parse_include_path(PP *pp, int *search_local) {
-    char *path = lex_include_path(pp->l, search_local);
+static char * parse_include_path(PP *pp, int *search_cwd) {
+    char *path = lex_include_path(pp->l, search_cwd);
     if (path) {
         return path;
     }
     Token *t = expand_next(pp); // Otherwise, might be a macro expansion
     if (t->k == TK_STR) {
-        *search_local = 1;
+        *search_cwd = 1;
         return str_ncopy(t->str, t->len);
     } else if (t->k == '<') {
-        *search_local = 0;
+        *search_cwd = 0;
         Vec *tks = vec_new();
         while (t->k != '>' && t->k != TK_NEWLINE) {
             vec_push(tks, t);
@@ -230,16 +228,18 @@ static char * parse_include_path(PP *pp, int *search_local) {
         }
         return concat_tks(tks);
     } else {
-        error_at(t, "expected string or '<', found %s", token2pretty(t));
+        error_at(t, "expected '\"' or '<', found %s", token2pretty(t));
     }
 }
 
-static int include(PP *pp, char *dir, char *file, int include_once) {
+static void include(PP *pp, char *dir, char *file, int include_once, Token *err) {
     char *path = full_path(concat_paths(dir, file));
-    if (map_get(pp->include_once, path)) return 1;
+    if (map_get(pp->include_once, path)) {
+        return; // Already included
+    }
     FILE *fp = fopen(path, "r");
     if (!fp) {
-        return 0;
+        error_at(err, "can't find file '%s'", path);
     }
     File *f = new_file(fp, file);
     Lexer *l = new_lexer(f);
@@ -247,27 +247,25 @@ static int include(PP *pp, char *dir, char *file, int include_once) {
     if (include_once) {
         map_put(pp->include_once, path, (void *) 1);
     }
-    return 1;
 }
 
 static void parse_include(PP *pp, Token *t) {
     int is_import = strcmp(t->ident, "import") == 0;
-    int search_local;
-    char *path = parse_include_path(pp, &search_local);
+    int search_cwd;
+    char *file = parse_include_path(pp, &search_cwd);
     lex_expect(pp, TK_NEWLINE);
-    if (path[0] == '/') { // Absolute path
-        if (include(pp, "/", path, is_import)) return;
+    if (file[0] == '/') { // Absolute path
+        include(pp, "/", file, is_import, t);
     } else { // Relative path
-        if (search_local) {
-            char *local_dir = pp->l->f->path ? get_dir(pp->l->f->path) : ".";
-            if (include(pp, local_dir, path, is_import)) return;
+        if (search_cwd) {
+            char *local_dir = pp->l->f->name ? get_dir(pp->l->f->name) : ".";
+            include(pp, local_dir, file, is_import, t);
         }
         for (size_t i = 0; i < vec_len(pp->include_paths); i++) {
             char *dir = vec_get(pp->include_paths, i);
-            if (include(pp, dir, path, is_import)) return;
+            include(pp, dir, file, is_import, t);
         }
     }
-    error_at(t, "cannot find file '%s'", path);
 }
 
 static void def_default_include_paths(PP *pp) {
@@ -281,20 +279,6 @@ static void def_default_include_paths(PP *pp) {
 
 // ---- Conditionals ----------------------------------------------------------
 
-static int is_skip_end(Token *t) {
-    return strcmp(t->ident, "elif") == 0 || strcmp(t->ident, "else") == 0 ||
-           strcmp(t->ident, "endif") == 0;
-}
-
-static int is_level_start(Token *t) {
-    return strcmp(t->ident, "if") == 0 || strcmp(t->ident, "ifdef") == 0 ||
-           strcmp(t->ident, "ifndef") == 0;
-}
-
-static int is_level_end(Token *t) {
-    return strcmp(t->ident, "endif") == 0;
-}
-
 static void skip_cond_incl(PP *pp) {
     int level = 0;
     Token *t = lex_peek(pp);
@@ -303,13 +287,21 @@ static void skip_cond_incl(PP *pp) {
         if (!(t->k == '#' && t->col == 1)) continue; // Not a directive
         t = lex_next(pp);
         if (t->k != TK_IDENT) continue;
-        if (level == 0 && is_skip_end(t)) {
+        if (level == 0 && (strcmp(t->ident, "elif") == 0 ||
+                strcmp(t->ident, "else") == 0 ||
+                strcmp(t->ident, "endif") == 0)) {
             undo_tk(pp->l, t);
             undo_tk(pp->l, hash);
             break;
         }
-        if (is_level_start(t)) level++;
-        if (is_level_end(t) && level > 0) level--;
+        if (strcmp(t->ident, "if") == 0 ||
+                strcmp(t->ident, "ifdef") == 0 ||
+                strcmp(t->ident, "ifndef") == 0) {
+            level++;
+        }
+        if (strcmp(t->ident, "endif") == 0 && level > 0) {
+            level--;
+        }
     }
 }
 
@@ -355,7 +347,7 @@ static int parse_cond(PP *pp) {
 static void start_if(PP *pp, int is_true) {
     Cond *cond = malloc(sizeof(Cond));
     cond->k = COND_IF;
-    cond->was_true = is_true;
+    cond->is_true = is_true;
     vec_push(pp->conds, cond);
     if (!is_true) {
         skip_cond_incl(pp);
@@ -391,10 +383,10 @@ static void parse_elif(PP *pp, Token *t) {
     }
     cond->k = COND_ELIF;
     int is_true = parse_cond(pp);
-    if (!is_true || cond->was_true) {
+    if (!is_true || cond->is_true) {
         skip_cond_incl(pp);
     }
-    cond->was_true |= is_true;
+    cond->is_true |= is_true;
 }
 
 static void parse_else(PP *pp, Token *t) {
@@ -404,7 +396,7 @@ static void parse_else(PP *pp, Token *t) {
     Cond *cond = vec_tail(pp->conds);
     cond->k = COND_ELSE;
     lex_expect(pp, TK_NEWLINE);
-    if (cond->was_true) {
+    if (cond->is_true) {
         skip_cond_incl(pp);
     }
 }
@@ -441,7 +433,7 @@ static void parse_line(PP *pp) {
     }
     pp->l->f->line = (int) line;
     if (file) {
-        pp->l->f->path = file;
+        pp->l->f->name = file;
     }
 }
 
@@ -456,7 +448,7 @@ static void parse_error(PP *pp, Token *t) {
 }
 
 static void parse_pragma_once(PP *pp) {
-    char *path = full_path(pp->l->f->path);
+    char *path = full_path(pp->l->f->name);
     map_put(pp->include_once, path, (void *) 1);
     lex_expect(pp, TK_NEWLINE);
 }
@@ -491,8 +483,8 @@ static void macro_time(PP *pp, Token *t) {
 
 static void macro_file(PP *pp, Token *t) {
     t->k = TK_STR;
-    t->len = strlen(pp->l->f->path);
-    t->str = str_ncopy(pp->l->f->path, t->len);
+    t->len = strlen(pp->l->f->name);
+    t->str = str_ncopy(pp->l->f->name, t->len);
 }
 
 static void macro_line(PP *pp, Token *t) {
@@ -517,7 +509,7 @@ static void macro_stdc_version(PP *pp, Token *t) {
 
 static void def_built_in(PP *pp, char *name, BuiltIn fn) {
     Macro *m = new_macro(MACRO_BUILT_IN);
-    m->build_in = fn;
+    m->built_in = fn;
     map_put(pp->macros, name, m);
 }
 
@@ -607,7 +599,7 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
             Vec *arg = vec_get(args, u->param_idx);
             // ',' ## __VA_ARGS__ is expanded to empty token sequence if
             // __VA_ARGS__ is empty, or to ',' [tokens in __VA_ARGS__] otherwise
-            if (m->is_vararg && u->param_idx == m->nparams - 1 && // Is vararg?
+            if (m->is_vararg && u->param_idx == m->num_params - 1 && // Is vararg?
                     vec_len(tks) > 0 && ((Token *) vec_tail(tks))->k == ',') {
                 if (vec_len(arg) > 0) {
                     vec_push_all(tks, arg); // ',' [tokens in __VA_ARGS__]
@@ -654,7 +646,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
     lex_expect(pp, '(');
     Vec *args = vec_new();
     Token *t = lex_peek(pp);
-    if (m->nparams == 1 && t->k == ')') {
+    if (m->num_params == 1 && t->k == ')') {
         vec_push(args, vec_new());
         return args; // Empty single argument
     }
@@ -673,7 +665,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
                 undo_tk(pp->l, t);
                 break;
             }
-            int in_vararg = (m->is_vararg && vec_len(args) == m->nparams - 1);
+            int in_vararg = (m->is_vararg && vec_len(args) == m->num_params - 1);
             if (t->k == ',' && level == 0 && !in_vararg) {
                 break;
             }
@@ -683,7 +675,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
         }
         vec_push(args, arg);
     }
-    if (m->is_vararg && vec_len(args) == m->nparams - 1) {
+    if (m->is_vararg && vec_len(args) == m->num_params - 1) {
         // Allow not specifying the vararg parameter, e.g.
         // #define x(a, ...) [...] \\ x(3)
         vec_push(args, vec_new());
@@ -711,10 +703,10 @@ static Token * expand_next(PP *pp) {
     case MACRO_FN:
         if (lex_peek(pp)->k != '(') return t;
         Vec *args = parse_args(pp, m);
-        if (vec_len(args) != m->nparams) {
+        if (vec_len(args) != m->num_params) {
             error_at(t, "incorrect number of arguments provided to function-"
                         "like macro invocation (have %zu, expected %zu)",
-                        vec_len(args), m->nparams);
+                        vec_len(args), m->num_params);
         }
         Token *rparen = lex_expect(pp, ')');
         set_intersection(&t->hide_set, rparen->hide_set);
@@ -725,7 +717,7 @@ static Token * expand_next(PP *pp) {
         break;
     case MACRO_BUILT_IN:
         t = copy_tk(t);
-        m->build_in(pp, t);
+        m->built_in(pp, t);
         undo_tk(pp->l, t);
         break;
     }

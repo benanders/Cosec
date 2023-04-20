@@ -54,8 +54,8 @@ static void print_tk(Token *tk) {
     print_colour(COLOUR_BLUE);
     printf(" --> ");
     print_colour(COLOUR_CLEAR);
-    if (tk->f && tk->f->path) {
-        printf("%s", tk->f->path);
+    if (tk->f && tk->f->name) {
+        printf("%s", tk->f->name);
     } else {
         printf("<unknown>");
     }

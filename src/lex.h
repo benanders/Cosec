@@ -135,7 +135,7 @@ void undo_tks(Lexer *l, Vec *tks);
 // Special preprocessor functions
 char * lex_rest_of_line(Lexer *l); // For '#error' and '#warning'
 char * lex_include_path(Lexer *l, int *search_cwd); // For '#include' and '#import'
-Token * glue_tks(Lexer *l, Token *t, Token *u); // For '##' operator
+Token * glue_tks(Lexer *l, Token *t1, Token *t2); // For '##' operator
 
 // Token printing
 char * tk2str(int t);

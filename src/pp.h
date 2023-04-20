@@ -7,21 +7,30 @@
 #include "lex.h"
 #include "util.h"
 
+typedef struct { // C pre-processor
+    Lexer *l;
+    Map *macros;
+    Vec *conds; // For nested '#if's
+    Map *include_once;
+    Vec *include_paths;
+    struct tm now;
+} PP;
+
 enum {
     MACRO_OBJ,
     MACRO_FN,
     MACRO_BUILT_IN,
 };
 
-struct PP;
-typedef void (* BuiltIn)(struct PP *pp, Token *t);
+typedef void (*BuiltIn)(PP *pp, Token *t);
 
 typedef struct {
     int k;
     Vec *body; // of 'Token *'
-    size_t nparams; // for MACRO_FN
-    int is_vararg;  // for MACRO_FN
-    BuiltIn build_in; // for MACRO_BUILT_IN
+    union {
+        struct { size_t num_params; int is_vararg; }; // MACRO_FN
+        BuiltIn built_in; // MACRO_BUILT_IN
+    };
 } Macro;
 
 enum {
@@ -32,17 +41,8 @@ enum {
 
 typedef struct {
     int k;
-    int was_true;
+    int is_true;
 } Cond;
-
-typedef struct PP { // C pre-processor
-    Lexer *l;
-    Map *macros;
-    Vec *conds; // For nested '#if's
-    Map *include_once;
-    Vec *include_paths;
-    struct tm now;
-} PP;
 
 PP * new_pp(Lexer *l);
 Token * next_tk(PP *pp);
