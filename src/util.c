@@ -18,7 +18,7 @@ Vec * vec_new() {
     Vec *v = malloc(sizeof(Vec));
     v->len = 0;
     v->max = 8;
-    v->data = calloc(v->max, sizeof(void *)); // Needed for 'vec_put'
+    v->data = calloc(v->max, sizeof(void *)); // 'calloc' needed for 'vec_put'
     return v;
 }
 
@@ -34,7 +34,6 @@ static void vec_resize(Vec *v, size_t min) {
 }
 
 void vec_push(Vec *v, void *elem) {
-    if (!v) return;
     vec_resize(v, v->len + 1);
     v->data[v->len++] = elem;
 }
@@ -47,7 +46,6 @@ void vec_push_all(Vec *v, Vec *to_append) {
 }
 
 void vec_put(Vec *v, size_t i, void *elem) {
-    if (!v) return;
     vec_resize(v, i);
     v->data[i] = elem;
     if (i >= v->len) {
@@ -56,14 +54,14 @@ void vec_put(Vec *v, size_t i, void *elem) {
 }
 
 void * vec_pop(Vec *v) {
-    if (v && v->len > 0) {
+    if (v->len > 0) {
         return v->data[--v->len];
     }
     return NULL;
 }
 
 void * vec_remove(Vec *v, size_t i) {
-    if (!v || vec_len(v) == 0) return NULL;
+    assert(i < vec_len(v));
     void *elem = v->data[i];
     memcpy(&v->data[i], &v->data[i + 1], sizeof(void *) * (v->len - i - 1));
     v->len--;
@@ -71,24 +69,20 @@ void * vec_remove(Vec *v, size_t i) {
 }
 
 size_t vec_len(Vec *v) {
-    if (!v) return 0;
     return v->len;
 }
 
 void * vec_get(Vec *v, size_t i) {
-    if (!v) return NULL;
     assert(i < vec_len(v));
     return v->data[i];
 }
 
 void * vec_head(Vec *v) {
-    if (!v) return NULL;
     assert(vec_len(v) > 0);
     return vec_get(v, 0);
 }
 
 void * vec_tail(Vec *v) {
-    if (!v) return NULL;
     assert(vec_len(v) > 0);
     return vec_get(v, v->len - 1);
 }
@@ -275,7 +269,7 @@ void * map_get(Map *m, char *k) {
     }
 }
 
-size_t map_len(Map *m) {
+size_t map_count(Map *m) {
     return m->num;
 }
 
@@ -298,15 +292,16 @@ int set_has(Set *s, char *v) {
 }
 
 void set_put(Set **s, char *v) {
-    if (!s) return;
-    if (!*s) *s = set_new();
+    if (!*s) {
+        *s = set_new();
+    }
     if (!set_has(*s, v)) {
         vec_push(*s, v);
     }
 }
 
 void set_union(Set **dst, Set *src) {
-    if (!dst || !src) return;
+    if (!src) return;
     for (size_t i = 0; i < vec_len(src); i++) {
         char *v = vec_get(src, i);
         set_put(dst, v);
@@ -314,8 +309,11 @@ void set_union(Set **dst, Set *src) {
 }
 
 void set_intersection(Set **dst, Set *src) {
-    if (!dst || !*dst) return;
-    if (!src) { vec_empty(*dst); return; }
+    if (!*dst) return;
+    if (!src) {
+        vec_empty(*dst);
+        return;
+    }
     for (size_t i = 0; i < vec_len(*dst); i++) {
         char *v = vec_get(*dst, i);
         if (!set_has(src, v)) {
@@ -378,7 +376,7 @@ char * quote_ch(char ch) {
 char * quote_str(char *s, size_t len) {
     Buf *b = buf_new();
     for (size_t i = 0; i < len; i++) {
-        quote_ch_to_buf(b, *(s++));
+        quote_ch_to_buf(b, s[i]);
     }
     buf_push(b, '\0');
     return b->data;

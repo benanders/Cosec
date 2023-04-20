@@ -52,7 +52,7 @@ Map * map_new();
 void map_put(Map *m, char *k, void *v);
 void map_remove(Map *m, char *k);
 void * map_get(Map *m, char *k);
-size_t map_len(Map *m);
+size_t map_count(Map *m);
 
 // Set
 typedef Vec Set;

@@ -173,7 +173,7 @@ static Macro * parse_fn_macro(PP *pp) {
     Map *params = parse_params(pp, &is_vararg);
     Vec *body = parse_body(pp, params);
     Macro *m = new_macro(MACRO_FN);
-    m->nparams = map_len(params);
+    m->nparams = map_count(params);
     m->body = body;
     m->is_vararg = is_vararg;
     return m;
