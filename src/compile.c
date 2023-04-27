@@ -612,16 +612,16 @@ static IrIns * compile_comma(Scope *s, Node *n) {
 }
 
 static IrIns * compile_ternary(Scope *s, Node *n) {
-    IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
+    IrIns *cond = to_cond(s, compile_expr(s, n->cond));
 
     IrBB *true_bb = emit_bb(s);
     patch_branch_chain(cond->true_chain, true_bb);
-    IrIns *true = discharge(s, compile_expr(s, n->if_body));
+    IrIns *true = discharge(s, compile_expr(s, n->body));
     IrIns *true_br = emit(s, IR_BR, NULL);
 
     IrBB *false_bb = emit_bb(s);
     patch_branch_chain(cond->false_chain, false_bb);
-    IrIns *false = discharge(s, compile_expr(s, n->if_else));
+    IrIns *false = discharge(s, compile_expr(s, n->els));
     IrIns *false_br = emit(s, IR_BR, NULL);
 
     IrBB *after = emit_bb(s);
@@ -709,7 +709,7 @@ static IrIns * compile_array_access(Scope *s, Node *n) {
 
 static IrIns * compile_field_access(Scope *s, Node *n) {
     IrIns *l = discharge(s, compile_expr(s, n->l));
-    Type *ft = ((Field *) vec_get(n->strct->t->fields, n->field_idx))->t;
+    Type *ft = ((Field *) vec_get(n->obj->t->fields, n->field_idx))->t;
     IrIns *idx = emit(s, IR_IMM, t_num(T_LLONG, 0));
     idx->imm = n->field_idx;
     IrIns *elem = emit(s, IR_ELEM, t_ptr(ft));
@@ -817,8 +817,8 @@ static void compile_decl(Scope *s, Node *n) {
     }
     assert(n->var->k == N_LOCAL);
     IrIns *alloc;
-    if (n->init && n->init->k == N_INIT) { // Array/struct initializer list
-        alloc = compile_init(s, n->init);
+    if (n->val && n->val->k == N_INIT) { // Array/struct initializer list
+        alloc = compile_init(s, n->val);
     } else if (is_vla(n->var->t)) { // VLA
         Vec *to_mul = vec_new();
         Type *t = n->var->t;
@@ -843,31 +843,31 @@ static void compile_decl(Scope *s, Node *n) {
         alloc = emit(s, IR_ALLOC, t_ptr(n->var->t));
     }
     def_local(s, n->var->var_name, alloc);
-    if (n->init && n->init->k != N_INIT) {
-        IrIns *v = discharge(s, compile_expr(s, n->init));
+    if (n->val && n->val->k != N_INIT) {
+        IrIns *v = discharge(s, compile_expr(s, n->val));
         emit_store(s, alloc, v);
     }
 }
 
 static void compile_if(Scope *s, Node *n) {
     Vec *brs = vec_new();
-    while (n && n->if_cond) { // 'if' and 'else if's
-        IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
+    while (n && n->cond) { // 'if' and 'else if's
+        IrIns *cond = to_cond(s, compile_expr(s, n->cond));
         IrBB *body = emit_bb(s);
         patch_branch_chain(cond->true_chain, body);
-        compile_block(s, n->if_body);
+        compile_block(s, n->body);
 
         IrIns *end_br = emit(s, IR_BR, NULL);
         add_to_branch_chain(brs, &end_br->br, end_br);
 
         IrBB *after = emit_bb(s);
         patch_branch_chain(cond->false_chain, after);
-        n = n->if_else;
+        n = n->els;
     }
     if (n) { // else
-        assert(!n->if_cond);
-        assert(!n->if_else);
-        compile_block(s, n->if_body);
+        assert(!n->cond);
+        assert(!n->els);
+        compile_block(s, n->body);
         IrIns *end_br = emit(s, IR_BR, NULL);
         add_to_branch_chain(brs, &end_br->br, end_br);
         emit_bb(s);
@@ -879,13 +879,13 @@ static void compile_while(Scope *s, Node *n) {
     IrIns *before_br = emit(s, IR_BR, NULL);
     IrBB *cond_bb = emit_bb(s);
     before_br->bb = cond_bb;
-    IrIns *cond = to_cond(s, compile_expr(s, n->loop_cond));
+    IrIns *cond = to_cond(s, compile_expr(s, n->cond));
 
     Scope loop;
     enter_scope(&loop, s, SCOPE_LOOP);
     IrBB *body_bb = emit_bb(s);
     patch_branch_chain(cond->true_chain, body_bb);
-    compile_block(&loop, n->loop_body);
+    compile_block(&loop, n->body);
     IrIns *end_br = emit(s, IR_BR, NULL);
     end_br->br = cond_bb;
 
@@ -901,12 +901,12 @@ static void compile_do_while(Scope *s, Node *n) {
     enter_scope(&loop, s, SCOPE_LOOP);
     IrBB *body_bb = emit_bb(s);
     before_br->br = body_bb;
-    compile_block(&loop, n->loop_body);
+    compile_block(&loop, n->body);
     IrIns *body_br = emit(s, IR_BR, NULL);
 
     IrBB *cond_bb = emit_bb(s);
     body_br->br = cond_bb;
-    IrIns *cond = to_cond(s, compile_expr(s, n->loop_cond));
+    IrIns *cond = to_cond(s, compile_expr(s, n->cond));
     patch_branch_chain(cond->true_chain, body_bb);
 
     IrBB *after_bb = emit_bb(s);
@@ -923,10 +923,10 @@ static void compile_for(Scope *s, Node *n) {
     IrIns *before_br = emit(s, IR_BR, NULL);
     IrBB *start_bb = NULL;
     IrIns *cond = NULL;
-    if (n->for_cond) {
+    if (n->cond) {
         start_bb = emit_bb(s);
         before_br->bb = start_bb;
-        cond = to_cond(s, compile_expr(s, n->for_cond));
+        cond = to_cond(s, compile_expr(s, n->cond));
     }
 
     Scope loop;
@@ -938,14 +938,14 @@ static void compile_for(Scope *s, Node *n) {
         start_bb = body;
         before_br->bb = body;
     }
-    compile_block(&loop, n->for_body);
+    compile_block(&loop, n->body);
     IrIns *end_br = emit(s, IR_BR, NULL);
 
     IrBB *continue_bb = NULL;
-    if (n->for_inc) {
+    if (n->inc) {
         IrBB *inc_bb = emit_bb(s);
         end_br->br = inc_bb;
-        compile_expr(s, n->for_inc);
+        compile_expr(s, n->inc);
         IrIns *inc_br = emit(s, IR_BR, NULL);
         inc_br->br = start_bb;
         continue_bb = inc_bb;
@@ -963,13 +963,13 @@ static void compile_for(Scope *s, Node *n) {
 }
 
 static void compile_switch(Scope *s, Node *n) {
-    IrIns *cond = compile_expr(s, n->switch_cond);
+    IrIns *cond = compile_expr(s, n->cond);
     Vec *brs = vec_new(); // of 'IrBB **'
     IrBB **false_br;
     for (size_t i = 0; i < vec_len(n->cases); i++) {
         Node *case_n = vec_get(n->cases, i);
         if (case_n->k == N_CASE) {
-            IrIns *val = compile_expr(s, case_n->switch_cond);
+            IrIns *val = compile_expr(s, case_n->cond);
             IrIns *cmp = emit(s, IR_EQ, t_num(T_INT, 0));
             cmp->l = cond;
             cmp->r = val;
@@ -986,7 +986,7 @@ static void compile_switch(Scope *s, Node *n) {
 
     Scope swtch;
     enter_scope(&swtch, s, SCOPE_SWITCH);
-    compile_block(&swtch, n->switch_body);
+    compile_block(&swtch, n->body);
 
     IrIns *end_br = emit(s, IR_BR, NULL);
     IrBB *after = emit_bb(s);
@@ -1012,7 +1012,7 @@ static void compile_case(Scope *s, Node *n) {
     IrIns *end_br = emit(s, IR_BR, NULL);
     IrBB *bb = emit_bb(s);
     end_br->br = bb;
-    compile_stmt(s, n->case_body);
+    compile_stmt(s, n->body);
     vec_push(swtch->cases, bb);
 }
 
@@ -1032,8 +1032,8 @@ static void compile_continue(Scope *s) {
 
 static void compile_ret(Scope *s, Node *n) {
     IrIns *v = NULL;
-    if (n->ret_val) {
-        v = discharge(s, compile_expr(s, n->ret_val));
+    if (n->ret) {
+        v = discharge(s, compile_expr(s, n->ret));
     }
     IrIns *ret = emit(s, IR_RET, NULL);
     ret->val = v;
@@ -1096,7 +1096,7 @@ static void compile_fn_def(Scope *s, Node *n) {
     enter_scope(&body, s, SCOPE_BLOCK);
     body.fn = g->fn;
     compile_fn_args(&body, n);
-    compile_block(&body, n->fn_body);
+    compile_block(&body, n->body);
     if (!body.fn->last->last || body.fn->last->last->op != IR_RET) {
         emit(&body, IR_RET, NULL);
     }
@@ -1106,7 +1106,7 @@ static void compile_global_decl(Scope *s, Node *n) {
     char *label = prepend_underscore(n->var->var_name);
     Global *g = new_global(n->var->t, label);
     def_global(s, n->var->var_name, g);
-    g->val = n->init; // May be NULL
+    g->val = n->val; // May be NULL
 }
 
 static void compile_top_level(Scope *s, Node *n) {

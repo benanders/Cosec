@@ -2,8 +2,77 @@
 #ifndef COSEC_PARSE_H
 #define COSEC_PARSE_H
 
-#include "type.h"
 #include "pp.h"
+
+enum { // Storage classes
+    S_NONE,
+    S_TYPEDEF,
+    S_EXTERN,
+    S_STATIC,
+    S_AUTO,
+    S_REGISTER,
+};
+
+enum { // Type qualifiers
+    T_CONST    = 0b001,
+    T_RESTRICT = 0b010,
+    T_VOLATILE = 0b100,
+};
+
+enum { // Function specifiers
+    F_INLINE = 1,
+};
+
+enum { // AST types
+    T_VOID = 1,
+    T_CHAR,
+    T_SHORT,
+    T_INT,
+    T_LONG,
+    T_LLONG,
+    T_FLOAT,
+    T_DOUBLE,
+    T_LDOUBLE,
+
+    T_PTR,
+    T_ARR,
+    T_FN,
+    T_STRUCT,
+    T_UNION,
+    T_ENUM,
+};
+
+enum { // Linkage
+    L_NONE,
+    L_STATIC,
+    L_EXTERN,
+};
+
+typedef struct {
+    struct Type *t;
+    char *name;
+    uint64_t offset; // 0 for T_UNION; enum const value for T_ENUM
+} Field;
+
+typedef struct Type {
+    int k;
+    size_t size, align;
+    int linkage;
+    union {
+        int is_unsigned;  // T_CHAR to T_LLONG
+        struct Type *ptr; // T_PTR
+        struct { // T_ARR
+            struct Type *elem;
+            struct Node *len; // VLA if len->k != N_IMM
+        };
+        struct { // T_FN
+            struct Type *ret;
+            Vec *params; // of 'Type *'
+            int is_vararg;
+        };
+        Vec *fields; // T_STRUCT, T_UNION, T_ENUM
+    };
+} Type;
 
 enum { // AST nodes
     // Constants and variables
@@ -111,20 +180,23 @@ typedef struct Node {
         struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
 
         // Operations
-        struct { struct Node *l, *r; }; // Unary, binary
+        struct { struct Node *l, *r; }; // Unary and binary operations
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
-        struct { struct Node *strct; size_t field_idx; }; // N_FIELD
+        struct { struct Node *obj; size_t field_idx; }; // N_FIELD
 
         // Statements
-        struct { char *fn_name; Vec *param_names; struct Node *fn_body; }; // N_FN_DEF
-        struct { struct Node *var, *init; }; // N_DECL
-        struct { struct Node *if_cond, *if_body, *if_else; }; // N_IF, N_TERNARY
-        struct { struct Node *loop_cond, *loop_body; }; // N_WHILE, N_DO_WHILE
-        struct { struct Node *for_init, *for_cond, *for_inc, *for_body; }; // N_FOR
-        struct { struct Node *switch_cond, *switch_body; Vec *cases; /* of 'Node *' */ }; // N_SWITCH
-        struct { struct Node *case_cond, *case_body; }; // N_CASE, N_DEFAULT
-        struct { char *label; struct Node *label_body; }; // N_GOTO, N_LABEL
-        struct Node *ret_val; // N_RET
+        struct { struct Node *var, *val; }; // N_DECL
+        struct {
+            struct Node *body, *cond; // N_WHILE, N_DO_WHILE, N_CASE
+            union {
+                struct { char *fn_name; Vec *param_names; /* of 'Token *' */ }; // N_FN_DEF
+                struct Node *els; // N_IF, N_TERNARY
+                struct { struct Node *init, *inc; }; // N_FOR
+                Vec *cases; // N_SWITCH
+                char *label; // N_GOTO, N_LABEL
+            };
+        };
+        struct Node *ret; // N_RET
     };
 } Node;
 

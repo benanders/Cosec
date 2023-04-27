@@ -10,6 +10,28 @@
 #include "parse.h"
 
 enum {
+    IRT_VOID,
+    IRT_I8,
+    IRT_I16,
+    IRT_I32,
+    IRT_I64,
+    IRT_F32,
+    IRT_F64,
+    IRT_PTR,
+    IRT_ARR,
+    IRT_STRUCT,
+};
+
+typedef struct IrType {
+    int k;
+    size_t size, align;
+    union {
+        struct { struct IrType *elem; size_t len; }; // IRT_ARR
+        Vec *fields; // IRT_STRUCT; of 'IrType *'
+    };
+} IrType;
+
+enum {
     // Constants, globals, and functions
     IR_IMM,
     IR_FP,
@@ -75,7 +97,7 @@ typedef struct IrIns {
     struct IrIns *next, *prev;
     struct IrBB *bb;
     int op;
-    Type *t;
+    IrType *t;
     union {
         // Constants and globals
         uint64_t imm; // IR_IMM
@@ -125,10 +147,9 @@ typedef struct {
 } IrFn;
 
 typedef struct Global {
-    Type *t;
     char *label;
-    Node *val; // One of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
-    IrFn *fn;  // One of 'val' or 'fn' is NULL
+    Node *val; // NULL if fn def; or one of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
+    IrFn *fn;
 } Global;
 
 Vec * compile(Node *n);

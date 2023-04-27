@@ -177,8 +177,8 @@ static void print_expr(Node *n) {
     case N_FIELD:
         print_type(n->t);
         printf(" ( . ");
-        print_expr(n->strct);
-        Field *f = vec_get(n->strct->t->fields, n->field_idx);
+        print_expr(n->obj);
+        Field *f = vec_get(n->obj->t->fields, n->field_idx);
         printf(" %s )", f->name);
         break;
     case N_TERNARY:
@@ -256,9 +256,9 @@ static void print_node(Node *n, int indent) {
             printf("extern ");
         }
         print_expr(n->var);
-        if (n->init) {
+        if (n->val) {
             printf(" = ");
-            print_expr(n->init);
+            print_expr(n->val);
         }
         printf("\n");
         break;

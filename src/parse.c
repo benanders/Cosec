@@ -35,6 +35,9 @@ static Node * node(int k, Token *tk) {
     return n;
 }
 
+
+// ---- Scope -----------------------------------------------------------------
+
 static Scope new_scope(int k, PP *pp) {
     Scope s = {0};
     s.k = k;
@@ -63,6 +66,192 @@ static Scope * find_scope(Scope *s, int k) {
     }
     return s;
 }
+
+
+// ---- Types -----------------------------------------------------------------
+
+#define NOT_FOUND ((size_t) -1)
+
+static Type * t_new() {
+    Type *t = calloc(1, sizeof(Type));
+    return t;
+}
+
+static Type * t_copy(Type *t) {
+    Type *t2 = t_new();
+    *t2 = *t;
+    return t2;
+}
+
+static Type * t_num(int type, int is_unsigned) {
+    Type *t = t_new();
+    t->k = type;
+    t->is_unsigned = is_unsigned;
+    switch (type) {
+        case T_VOID:  t->size = t->align = 0; break;
+        case T_CHAR:  t->size = t->align = 1; break;
+        case T_SHORT: t->size = t->align = 2; break;
+        case T_INT: case T_LONG: case T_FLOAT: t->size = t->align = 4; break;
+        case T_LLONG: case T_DOUBLE: case T_LDOUBLE: t->size = t->align = 8; break;
+        default: UNREACHABLE();
+    }
+    return t;
+}
+
+static Type * t_ptr(Type *base) {
+    Type *t = t_new();
+    t->k = T_PTR;
+    t->ptr = base;
+    t->size = t->align = 8;
+    return t;
+}
+
+static Type * t_arr(Type *base, Node *len) {
+    Type *t = t_new();
+    t->k = T_ARR;
+    t->elem = base;
+    t->len = len;
+    if (len && len->k == N_IMM) {
+        t->size = t->elem->size * len->imm;
+    }
+    t->align = 8;
+    return t;
+}
+
+static Type * t_fn(Type *ret, Vec *params, int is_vararg) {
+    Type *t = t_new();
+    t->k = T_FN;
+    t->ret = ret;
+    t->params = params;
+    t->is_vararg = is_vararg;
+    t->size = t->align = 8;
+    return t;
+}
+
+static Type * t_struct() {
+    Type *t = t_new();
+    t->k = T_STRUCT;
+    return t;
+}
+
+static Type * t_union() {
+    Type *t = t_new();
+    t->k = T_UNION;
+    return t;
+}
+
+static Type * t_enum() {
+    Type *t = t_new();
+    t->k = T_ENUM;
+    return t;
+}
+
+static Field * new_field(Type *t, char *name, uint64_t offset) {
+    Field *f = malloc(sizeof(Field));
+    f->t = t;
+    f->name = name;
+    f->offset = offset;
+    return f;
+}
+
+static size_t find_field(Type *t, char *name) {
+    assert(t->k == T_STRUCT || t->k == T_UNION);
+    if (!t->fields) {
+        return NOT_FOUND; // Incomplete type
+    }
+    for (size_t i = 0; i < vec_len(t->fields); i++) {
+        Field *f = vec_get(t->fields, i);
+        if (strcmp(f->name, name) == 0) {
+            return i;
+        }
+    }
+    return NOT_FOUND;
+}
+
+static int is_int(Type *t) {
+    return t->k >= T_CHAR && t->k <= T_LLONG;
+}
+
+static int is_fp(Type *t) {
+    return t->k >= T_FLOAT && t->k <= T_LDOUBLE;
+}
+
+static int is_arith(Type *t) {
+    return is_int(t) || is_fp(t);
+}
+
+static int is_void_ptr(Type *t) {
+    return t->k == T_PTR && t->ptr->k == T_VOID;
+}
+
+static int is_string_type(Type *t) {
+    return t->k == T_ARR &&
+           ((t->elem->k == T_CHAR && !t->elem->is_unsigned) ||
+            (t->elem->k == T_SHORT && t->elem->is_unsigned) ||
+            (t->elem->k == T_INT && t->elem->is_unsigned));
+}
+
+static int is_vla(Type *t) {
+    if (t->k != T_ARR) return 0;
+    if (t->len && t->len->k != N_IMM) return 1;
+    return is_vla(t->elem);
+}
+
+static int is_incomplete(Type *t) {
+    switch (t->k) {
+    case T_VOID: return 1;
+    case T_ARR:
+        if (!t->len) return 1;
+        return is_incomplete(t->elem);
+    case T_STRUCT: case T_UNION:
+        if (!t->fields) return 1;
+        for (size_t i = 0; i < vec_len(t->fields); i++) {
+            Type *ft = ((Field *) vec_get(t->fields, i))->t;
+            if (is_incomplete(ft)) {
+                return 1;
+            }
+        }
+    case T_ENUM: return !t->fields;
+    default: return 0;
+    }
+}
+
+static int are_equal(Type *a, Type *b) {
+    if (!a && !b) return 1;
+    if (!a || !b) return 0;
+    if (a->k != b->k) return 0;
+    switch (a->k) {
+    case T_PTR: return are_equal(a->ptr, b->ptr);
+    case T_ARR:
+        if (a->len && b->len && a->len->k == N_IMM && b->len->k == N_IMM &&
+            a->len->k != b->len->k) {
+            return 0;
+        }
+        return are_equal(a->elem, b->elem);
+    case T_FN:
+        if (vec_len(a->params) != vec_len(b->params)) return 0;
+        for (size_t i = 0; i < vec_len(a->params); i++) {
+            if (!are_equal(vec_get(a->params, i), vec_get(b->params, i))) return 0;
+        }
+        return are_equal(a->ret, b->ret);
+    case T_STRUCT: case T_UNION: case T_ENUM:
+        if (!a->fields || !b->fields) return 0;
+        if (vec_len(a->fields) != vec_len(b->fields)) return 0;
+        for (size_t i = 0; i < vec_len(a->fields); i++) {
+            Field *fa = vec_get(a->fields, i);
+            Field *fb = vec_get(b->fields, i);
+            if (!(strcmp(fa->name, fb->name) == 0 && fa->offset == fb->offset &&
+                  are_equal(fa->t, fb->t))) {
+                return 0;
+            }
+        }
+        return 1;
+    default: return a->is_unsigned == b->is_unsigned;
+    }
+}
+
+
+// ---- Variables, Typedefs, and Tags -----------------------------------------
 
 static Node * find_var(Scope *s, char *name) {
     while (s) {
@@ -906,7 +1095,7 @@ static Node * parse_struct_field_access(Scope *s, Node *l) {
     Field *f = vec_get(l->t->fields, f_idx);
     Node *n = node(N_FIELD, op);
     n->t = f->t;
-    n->strct = l;
+    n->obj = l;
     n->field_idx = f_idx;
     return n;
 }
@@ -1162,9 +1351,9 @@ static Node * parse_binop(Scope *s, Token *op, Node *l) {
         Node *binop = emit_binop(N_TERNARY, r, els, op);
         n = node(N_TERNARY, op);
         n->t = binop->t;
-        n->if_cond = l;
-        n->if_body = n->l;
-        n->if_else = n->r;
+        n->cond = l;
+        n->body = n->l;
+        n->els = n->r;
         return n;
     default: UNREACHABLE();
     }
@@ -1363,12 +1552,12 @@ static Node * eval_const_expr(Node *e, Token **err) {
 
         // Ternary operation
     case N_TERNARY:
-        cond = eval_const_expr(e->if_cond, err);
+        cond = eval_const_expr(e->cond, err);
         if (!cond) goto err;
         if (cond->k != N_IMM) goto err;
-        l = eval_const_expr(e->if_body, err);
+        l = eval_const_expr(e->body, err);
         if (!l) goto err;
-        r = eval_const_expr(e->if_else, err);
+        r = eval_const_expr(e->els, err);
         if (!r) goto err;
         n = cond->imm ? l : r;
         break;
@@ -1426,7 +1615,7 @@ static Node * eval_const_expr(Node *e, Token **err) {
         n->offset += (int64_t) (r->imm * n->t->size);
         break;
     case N_FIELD:
-        l = eval_const_expr(e->strct, err);
+        l = eval_const_expr(e->obj, err);
         if (!l) goto err;
         if (l->k != N_KVAL) goto err;
         Field *f = vec_get(l->t->fields, e->field_idx);
@@ -1499,15 +1688,15 @@ static Node * parse_if(Scope *s) {
         } else { // else
             Node *else_body = parse_stmt(s);
             els = node(N_IF, else_tk);
-            els->if_cond = NULL;
-            els->if_body = else_body;
-            els->if_else = NULL;
+            els->cond = NULL;
+            els->body = else_body;
+            els->els = NULL;
         }
     }
     Node *n = node(N_IF, if_tk);
-    n->if_cond = cond;
-    n->if_body = body;
-    n->if_else = els;
+    n->cond = cond;
+    n->body = body;
+    n->els = els;
     return n;
 }
 
@@ -1520,8 +1709,8 @@ static Node * parse_while(Scope *s) {
     enter_scope(&loop, s, SCOPE_LOOP);
     Node *body = parse_stmt(&loop);
     Node *n = node(N_WHILE, while_tk);
-    n->loop_cond = cond;
-    n->loop_body = body;
+    n->cond = cond;
+    n->body = body;
     return n;
 }
 
@@ -1536,8 +1725,8 @@ static Node * parse_do_while(Scope *s) {
     expect_tk(s->pp, ')');
     expect_tk(s->pp, ';');
     Node *n = node(N_DO_WHILE, do_tk);
-    n->loop_cond = cond;
-    n->loop_body = body;
+    n->cond = cond;
+    n->body = body;
     return n;
 }
 
@@ -1569,10 +1758,10 @@ static Node * parse_for(Scope *s) {
 
     Node *body = parse_stmt(&loop);
     Node *n = node(N_FOR, for_tk);
-    n->for_init = init;
-    n->for_cond = cond;
-    n->for_inc = inc;
-    n->for_body = body;
+    n->init = init;
+    n->cond = cond;
+    n->inc = inc;
+    n->body = body;
     return n;
 }
 
@@ -1587,8 +1776,8 @@ static Node * parse_switch(Scope *s) {
     switch_s.cond_t = cond->t;
     Node *body = parse_stmt(&switch_s);
     Node *n = node(N_SWITCH, switch_tk);
-    n->switch_cond = cond;
-    n->switch_body = body;
+    n->cond = cond;
+    n->body = body;
     n->cases = switch_s.cases;
     return n;
 }
@@ -1613,8 +1802,8 @@ static Node * parse_case(Scope *s) {
     imm->t = swtch->cond_t;
     imm->imm = cond;
     Node *n = node(N_CASE, case_tk);
-    n->case_cond = imm;
-    n->case_body = body;
+    n->cond = imm;
+    n->body = body;
     vec_push(swtch->cases, n);
     return n;
 }
@@ -1634,7 +1823,7 @@ static Node * parse_default(Scope *s) {
     expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
     Node *n = node(N_DEFAULT, default_tk);
-    n->case_body = body;
+    n->body = body;
     vec_push(swtch->cases, n);
     return n;
 }
@@ -1674,7 +1863,7 @@ static Node * parse_label(Scope *s) {
     Node *body = parse_stmt(s);
     Node *n = node(N_LABEL, label);
     n->label = label->ident;
-    n->label_body = body;
+    n->body = body;
     return n;
 }
 
@@ -1690,7 +1879,7 @@ static Node * parse_ret(Scope *s) {
     }
     expect_tk(s->pp, ';');
     Node *n = node(N_RET, ret_tk);
-    n->ret_val = val;
+    n->ret = val;
     return n;
 }
 
@@ -1760,7 +1949,7 @@ static Node * parse_fn_def(Scope *s, Type *t, Token *name, Vec *param_names) {
     fn->param_names = param_names;
     Scope fn_scope;
     enter_scope(&fn_scope, s, SCOPE_BLOCK);
-    fn->fn_body = parse_block(&fn_scope);
+    fn->body = parse_block(&fn_scope);
     return fn;
 }
 
@@ -1961,9 +2150,9 @@ static Node * parse_decl_init(Scope *s, Type *t) {
 
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     Node *var = def_var(s, name, t);
-    Node *init = NULL;
+    Node *val = NULL;
     if (next_tk_is(s->pp, '=')) {
-        init = parse_decl_init(s, t);
+        val = parse_decl_init(s, t);
     }
     if (is_incomplete(t)) {
         // Check this after parsing the initializer because arrays without a
@@ -1973,7 +2162,7 @@ static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
     }
     Node *decl = node(N_DECL, name);
     decl->var = var;
-    decl->init = init;
+    decl->val = val;
     return decl;
 }
 
