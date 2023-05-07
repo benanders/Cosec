@@ -128,6 +128,42 @@ static void delete_ir(IrIns *ins) {
     }
 }
 
+
+// ---- IR Types --------------------------------------------------------------
+
+static IrType * irt_new(int k) {
+    IrType *t = calloc(1, sizeof(IrType));
+    t->k = k;
+    switch (k) {
+    case IRT_VOID: t->size = t->align = 0; break;
+    case IRT_I8:   t->size = t->align = 1; break;
+    case IRT_I16:  t->size = t->align = 2; break;
+    case IRT_I32: case IRT_F32: t->size = t->align = 4; break;
+    case IRT_I64: case IRT_F64: case IRT_PTR: case IRT_ARR:
+        t->size = t->align = 8;
+        break;
+    default: break;
+    }
+    return t;
+}
+
+static IrType * irt_arr(IrType *elem, size_t len) {
+    assert(len > 0);
+    IrType *t = irt_new(IRT_ARR);
+    t->elem = elem;
+    t->len = len;
+    return t;
+}
+
+static IrType *irt_struct() {
+    IrType *t = irt_new(IRT_STRUCT);
+    t->fields = vec_new();
+    return t;
+}
+
+
+// ---- Local and Global Variables --------------------------------------------
+
 static void def_local(Scope *s, char *name, IrIns *alloc) {
     assert(alloc->op == IR_ALLOC);
     assert(s->outer); // Not top level
@@ -395,7 +431,7 @@ static int is_const_init(Node *n) {
     assert(n->k == N_INIT);
     for (size_t i = 0; i < vec_len(n->elems); i++) {
         Node *e = vec_get(n->elems, i);
-        if (!(e->k == N_IMM || e->k == N_FP || e->k == N_STR || e->k == N_KPTR ||
+        if (!(e->k == N_IMM || e->k == N_FP || e->k == N_STR || e->k == N_KIDX ||
               (e->k == N_INIT && is_const_init(e)))) {
             return 0;
         }
@@ -433,8 +469,8 @@ static IrIns * compile_init(Scope *s, Node *n) {
 }
 
 static IrIns * compile_kptr(Scope *s, Node *n) {
-    assert(n->global->k == N_GLOBAL);
-    Global *g = find_global(s, n->global->var_name);
+    assert(n->ptr->k == N_GLOBAL);
+    Global *g = find_global(s, n->ptr->var_name);
     assert(g); // Checked by parser
     IrIns *ins = emit(s, IR_GLOBAL, t_ptr(n->t));
     ins->g = g;
@@ -480,7 +516,7 @@ static IrIns * compile_operand(Scope *s, Node *n) {
         ins->g = g;
         ins = emit_load(s, ins);
         break;
-    case N_KPTR:
+    case N_KIDX:
         ins = compile_kptr(s, n);
         break;
     default: UNREACHABLE();

@@ -51,12 +51,15 @@ enum { // Linkage
 typedef struct {
     struct Type *t;
     char *name;
-    uint64_t offset; // 0 for T_UNION; enum const value for T_ENUM
 } Field;
+
+typedef struct {
+    char *name;
+    uint64_t val;
+} EnumConst;
 
 typedef struct Type {
     int k;
-    size_t size, align;
     int linkage;
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
@@ -70,7 +73,11 @@ typedef struct Type {
             Vec *params; // of 'Type *'
             int is_vararg;
         };
-        Vec *fields; // T_STRUCT, T_UNION, T_ENUM
+        Vec *fields; // of 'Field *'; T_STRUCT, T_UNION
+        struct {  // T_ENUM
+            Vec *consts; // of 'EnumConst *'
+            struct Type *num_t;
+        };
     };
 } Type;
 
@@ -82,8 +89,9 @@ enum { // AST nodes
     N_INIT, // Array/struct/union initializer
     N_LOCAL,
     N_GLOBAL,
-    N_KPTR, // Constant pointer to a 'static' variable
-    N_KVAL, // Used by the constant expression calculator only
+    N_SIZEOF,
+    N_KVAL, // Used by the constant expression parser
+    N_KPTR,
 
     // Arithmetic
     N_ADD,
@@ -177,12 +185,13 @@ typedef struct Node {
         };
         Vec *elems;     // N_INIT (array/struct initializer); of 'Node *'
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
-        struct { struct Node *global; /* to N_GLOBAL */ int64_t offset; }; // N_KPTR, N_KVAL
+        struct { struct Node *g; /* N_GLOBAL */ int64_t offset; }; // N_KVAL, N_KPTR
 
         // Operations
         struct { struct Node *l, *r; }; // Unary and binary operations
         struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
         struct { struct Node *obj; size_t field_idx; }; // N_FIELD
+        Type *size_of; // N_SIZEOF
 
         // Statements
         struct { struct Node *var, *val; }; // N_DECL
@@ -192,7 +201,7 @@ typedef struct Node {
                 struct { char *fn_name; Vec *param_names; /* of 'Token *' */ }; // N_FN_DEF
                 struct Node *els; // N_IF, N_TERNARY
                 struct { struct Node *init, *inc; }; // N_FOR
-                Vec *cases; // N_SWITCH
+                Vec *cases;  // N_SWITCH
                 char *label; // N_GOTO, N_LABEL
             };
         };

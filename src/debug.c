@@ -10,7 +10,7 @@
 // ---- AST -------------------------------------------------------------------
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "init", "local", "global", "kptr", "kval",
+    "imm", "fp", "str", "init", "local", "global", "sizeof", "kval", "kptr",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -39,16 +39,13 @@ static void print_struct_fields(Type *t) {
 }
 
 static void print_enum_consts(Type *t) {
-    if (!t->fields) return; // Anonymous
-    printf("{ ");
-    for (size_t i = 0; i < vec_len(t->fields); i++) {
-        Field *f = vec_get(t->fields, i);
-        if (i == 0) { // f->t is same for all enum consts
-            printf("(");
-            print_type(f->t);
-            printf(") ");
-        }
-        printf("%s = %" PRIu64 ", ", f->name, f->offset);
+    if (!t->consts) return; // Anonymous
+    printf("{ (");
+    print_type(t->num_t);
+    printf(") ");
+    for (size_t i = 0; i < vec_len(t->consts); i++) {
+        EnumConst *k = vec_get(t->consts, i);
+        printf("%s = %" PRIu64 ", ", k->name, k->val);
     }
     printf("}");
 }
@@ -146,12 +143,21 @@ static void print_expr(Node *n) {
     case N_KVAL: UNREACHABLE();
     case N_KPTR:
         print_type(n->t);
-        assert(n->global->k == N_GLOBAL);
-        printf(" &%s", n->global->var_name);
-        if (n->offset > 0) {
-            printf(" + %" PRIu64, n->offset);
-        } else if (n->offset < 0) {
-            printf(" - %" PRIu64, -n->offset);
+        assert(!n->g || n->g->k == N_GLOBAL);
+        printf(" ");
+        if (n->g) {
+            printf("&%s ", n->g->var_name);
+            if (n->offset >= 0) {
+                printf("+ %" PRIu64, n->offset);
+            } else if (n->offset < 0) {
+                printf("- %" PRIu64, -n->offset);
+            }
+        } else {
+            if (n->offset >= 0) {
+                printf("+%" PRIu64, n->offset);
+            } else if (n->offset < 0) {
+                printf("%" PRIu64, n->offset);
+            }
         }
         break;
 
@@ -184,11 +190,11 @@ static void print_expr(Node *n) {
     case N_TERNARY:
         print_type(n->t);
         printf(" ( ");
-        print_expr(n->if_cond);
+        print_expr(n->cond);
         printf(" ? ");
-        print_expr(n->if_body);
+        print_expr(n->body);
         printf(" : ");
-        print_expr(n->if_else);
+        print_expr(n->els);
         printf(" )");
         break;
     default:
@@ -228,7 +234,7 @@ static void print_fn_def(Node *n) {
         printf("...");
     }
     printf(")\n");
-    print_nodes(n->fn_body, 1);
+    print_nodes(n->body, 1);
 }
 
 static void print_indent(int indent) {
@@ -266,18 +272,18 @@ static void print_node(Node *n, int indent) {
         print_indent(indent);
         while (1) {
             printf("if ");
-            print_expr(n->if_cond);
+            print_expr(n->cond);
             printf("\n");
-            print_nodes(n->if_body, indent + 1);
-            if (n->if_else) {
+            print_nodes(n->body, indent + 1);
+            if (n->els) {
                 print_indent(indent);
                 printf("else ");
-                if (n->if_else->if_cond) { // else if
-                    n = n->if_else;
+                if (n->els->cond) { // else if
+                    n = n->els;
                     continue;
                 } else {
                     printf("\n");
-                    print_nodes(n->if_else, indent + 1);
+                    print_nodes(n->els, indent + 1);
                 }
             }
             break;
@@ -286,47 +292,47 @@ static void print_node(Node *n, int indent) {
     case N_WHILE:
         print_indent(indent);
         printf("while ");
-        print_expr(n->loop_cond);
+        print_expr(n->cond);
         printf("\n");
-        print_nodes(n->loop_body, indent + 1);
+        print_nodes(n->body, indent + 1);
         break;
     case N_DO_WHILE:
         print_indent(indent);
         printf("do\n");
-        print_nodes(n->loop_body, indent + 1);
+        print_nodes(n->body, indent + 1);
         print_indent(indent);
         printf("while ");
-        print_expr(n->loop_cond);
+        print_expr(n->cond);
         printf("\n");
         break;
     case N_FOR:
-        print_node(n->for_init, indent);
+        print_node(n->init, indent);
         print_indent(indent);
         printf("for ");
-        print_expr(n->for_cond);
+        print_expr(n->cond);
         printf("; ");
-        print_expr(n->for_inc);
+        print_expr(n->inc);
         printf("\n");
-        print_nodes(n->for_body, indent + 1);
+        print_nodes(n->body, indent + 1);
         break;
     case N_SWITCH:
         print_indent(indent);
         printf("switch ");
-        print_expr(n->switch_cond);
+        print_expr(n->cond);
         printf("\n");
-        print_nodes(n->switch_body, indent + 1);
+        print_nodes(n->body, indent + 1);
         break;
     case N_CASE:
         print_indent(indent - 1);
         printf("case ");
-        print_expr(n->case_cond);
+        print_expr(n->cond);
         printf(":\n");
-        print_node(n->case_body, indent);
+        print_node(n->body, indent);
         break;
     case N_DEFAULT:
         print_indent(indent - 1);
         printf("default:\n");
-        print_node(n->case_body, indent);
+        print_node(n->body, indent);
         break;
     case N_BREAK:
         print_indent(indent);
@@ -343,13 +349,13 @@ static void print_node(Node *n, int indent) {
     case N_LABEL:
         print_indent(0);
         printf("%s:\n", n->label);
-        print_node(n->label_body, indent);
+        print_node(n->body, indent);
         break;
     case N_RET:
         print_indent(indent);
         printf("return ");
-        if (n->ret_val) {
-            print_expr(n->ret_val);
+        if (n->ret) {
+            print_expr(n->ret);
         }
         printf("\n");
         break;
@@ -375,109 +381,109 @@ void print_ast(Node *n) {
 
 // ---- SSA IR ----------------------------------------------------------------
 
-#define BB_PREFIX ".BB"
-
-static char *IR_OP_NAMES[IR_LAST] = {
-    "IMM", "FP", "GLOBAL",
-    "FARG", "ALLOC", "LOAD", "STORE", "ELEM",
-    "ADD", "SUB", "MUL", "DIV", "MOD",
-    "AND", "OR", "XOR", "SHL", "SHR",
-    "EQ", "NEQ", "LT", "LE", "GT", "GE",
-    "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
-    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
-    "ZERO", "COPY",
-};
-
-static void print_ins(IrIns *ins) {
-    printf("\t%.4d\t", ins->idx);
-    print_type(ins->t);
-    printf("\t%s\t", IR_OP_NAMES[ins->op]);
-    switch (ins->op) {
-    case IR_IMM:    printf("+%llu", ins->imm); break;
-    case IR_FP:     printf("+%g", ins->fp); break;
-    case IR_GLOBAL: printf("%s", ins->g->label); break;
-    case IR_FARG:   printf("%zu", ins->arg_num); break;
-    case IR_ALLOC:
-        print_type(ins->t->ptr);
-        if (ins->count) {
-            printf("\t%.4d", ins->count->idx);
-        }
-        break;
-    case IR_STORE: printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
-    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
-                          ins->cpy_dst->idx, ins->cpy_size->idx); break;
-    case IR_PHI:
-        for (size_t i = 0; i < vec_len(ins->preds); i++) {
-            IrBB *pred = vec_get(ins->preds, i);
-            IrIns *def = vec_get(ins->defs, i);
-            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->idx, def->idx);
-        }
-        break;
-    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->idx : -1); break;
-    case IR_CONDBR:
-        printf("%.4d\t", ins->cond->idx);
-        printf(BB_PREFIX "%d\t", ins->true ? ins->true->idx : -1);
-        printf(BB_PREFIX "%d", ins->false ? ins->false->idx : -1);
-        break;
-    default:
-        if (ins->l) printf("%.4d", ins->l->idx);
-        if (ins->r) printf("\t%.4d", ins->r->idx);
-        break;
-    }
-    printf("\n");
-}
-
-static void print_bb(IrBB *bb) {
-    printf(BB_PREFIX "%d:\n", bb->idx);
-    for (IrIns *ins = bb->head; ins; ins = ins->next) {
-        print_ins(ins);
-    }
-}
-
-static void number_bbs(IrFn *fn) {
-    int i = 0;
-    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
-        bb->idx = i++;
-    }
-}
-
-static void number_ins(IrFn *fn) {
-    int i = 0;
-    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
-        for (IrIns *ins = bb->head; ins; ins = ins->next) {
-            ins->idx = i++;
-        }
-    }
-}
-
-static void print_fn(Global *g) {
-    number_bbs(g->fn);
-    number_ins(g->fn);
-    print_type(g->t);
-    printf(" %s:\n", g->label);
-    for (IrBB *bb = g->fn->entry; bb; bb = bb->next) {
-        print_bb(bb);
-    }
-}
-
-static void print_global(Global *g) {
-    print_type(g->t);
-    printf(" %s", g->label);
-    if (g->val) {
-        printf(" = ");
-        print_node(g->val, 0);
-    } else {
-        printf("\n");
-    }
-}
-
-void print_ir(Vec *globals) {
-    for (size_t i = 0; i < vec_len(globals); i++) {
-        Global *g = vec_get(globals, i);
-        if (g->fn) {
-            print_fn(g);
-        } else {
-            print_global(g);
-        }
-    }
-}
+//#define BB_PREFIX ".BB"
+//
+//static char *IR_OP_NAMES[IR_LAST] = {
+//    "IMM", "FP", "GLOBAL",
+//    "FARG", "ALLOC", "LOAD", "STORE", "ELEM",
+//    "ADD", "SUB", "MUL", "DIV", "MOD",
+//    "AND", "OR", "XOR", "SHL", "SHR",
+//    "EQ", "NEQ", "LT", "LE", "GT", "GE",
+//    "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
+//    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
+//    "ZERO", "COPY",
+//};
+//
+//static void print_ins(IrIns *ins) {
+//    printf("\t%.4d\t", ins->idx);
+//    print_type(ins->t);
+//    printf("\t%s\t", IR_OP_NAMES[ins->op]);
+//    switch (ins->op) {
+//    case IR_IMM:    printf("+%llu", ins->imm); break;
+//    case IR_FP:     printf("+%g", ins->fp); break;
+//    case IR_GLOBAL: printf("%s", ins->g->label); break;
+//    case IR_FARG:   printf("%zu", ins->arg_num); break;
+//    case IR_ALLOC:
+//        print_type(ins->t->ptr);
+//        if (ins->count) {
+//            printf("\t%.4d", ins->count->idx);
+//        }
+//        break;
+//    case IR_STORE: printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
+//    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
+//                          ins->cpy_dst->idx, ins->cpy_size->idx); break;
+//    case IR_PHI:
+//        for (size_t i = 0; i < vec_len(ins->preds); i++) {
+//            IrBB *pred = vec_get(ins->preds, i);
+//            IrIns *def = vec_get(ins->defs, i);
+//            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->idx, def->idx);
+//        }
+//        break;
+//    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->idx : -1); break;
+//    case IR_CONDBR:
+//        printf("%.4d\t", ins->cond->idx);
+//        printf(BB_PREFIX "%d\t", ins->true ? ins->true->idx : -1);
+//        printf(BB_PREFIX "%d", ins->false ? ins->false->idx : -1);
+//        break;
+//    default:
+//        if (ins->l) printf("%.4d", ins->l->idx);
+//        if (ins->r) printf("\t%.4d", ins->r->idx);
+//        break;
+//    }
+//    printf("\n");
+//}
+//
+//static void print_bb(IrBB *bb) {
+//    printf(BB_PREFIX "%d:\n", bb->idx);
+//    for (IrIns *ins = bb->head; ins; ins = ins->next) {
+//        print_ins(ins);
+//    }
+//}
+//
+//static void number_bbs(IrFn *fn) {
+//    int i = 0;
+//    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+//        bb->idx = i++;
+//    }
+//}
+//
+//static void number_ins(IrFn *fn) {
+//    int i = 0;
+//    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+//        for (IrIns *ins = bb->head; ins; ins = ins->next) {
+//            ins->idx = i++;
+//        }
+//    }
+//}
+//
+//static void print_fn(Global *g) {
+//    number_bbs(g->fn);
+//    number_ins(g->fn);
+//    print_type(g->t);
+//    printf(" %s:\n", g->label);
+//    for (IrBB *bb = g->fn->entry; bb; bb = bb->next) {
+//        print_bb(bb);
+//    }
+//}
+//
+//static void print_global(Global *g) {
+//    print_type(g->t);
+//    printf(" %s", g->label);
+//    if (g->val) {
+//        printf(" = ");
+//        print_node(g->val, 0);
+//    } else {
+//        printf("\n");
+//    }
+//}
+//
+//void print_ir(Vec *globals) {
+//    for (size_t i = 0; i < vec_len(globals); i++) {
+//        Global *g = vec_get(globals, i);
+//        if (g->fn) {
+//            print_fn(g);
+//        } else {
+//            print_global(g);
+//        }
+//    }
+//}

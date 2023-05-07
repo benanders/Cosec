@@ -72,86 +72,51 @@ static Scope * find_scope(Scope *s, int k) {
 
 #define NOT_FOUND ((size_t) -1)
 
-static Type * t_new() {
+static Type * t_new(int k) {
     Type *t = calloc(1, sizeof(Type));
+    t->k = k;
     return t;
 }
 
-static Type * t_copy(Type *t) {
-    Type *t2 = t_new();
-    *t2 = *t;
-    return t2;
-}
-
-static Type * t_num(int type, int is_unsigned) {
-    Type *t = t_new();
-    t->k = type;
+static Type * t_num(int k, int is_unsigned) {
+    Type *t = t_new(k);
     t->is_unsigned = is_unsigned;
-    switch (type) {
-        case T_VOID:  t->size = t->align = 0; break;
-        case T_CHAR:  t->size = t->align = 1; break;
-        case T_SHORT: t->size = t->align = 2; break;
-        case T_INT: case T_LONG: case T_FLOAT: t->size = t->align = 4; break;
-        case T_LLONG: case T_DOUBLE: case T_LDOUBLE: t->size = t->align = 8; break;
-        default: UNREACHABLE();
-    }
     return t;
 }
 
 static Type * t_ptr(Type *base) {
-    Type *t = t_new();
-    t->k = T_PTR;
+    Type *t = t_new(T_PTR);
     t->ptr = base;
-    t->size = t->align = 8;
     return t;
 }
 
 static Type * t_arr(Type *base, Node *len) {
-    Type *t = t_new();
-    t->k = T_ARR;
+    Type *t = t_new(T_ARR);
     t->elem = base;
     t->len = len;
-    if (len && len->k == N_IMM) {
-        t->size = t->elem->size * len->imm;
-    }
-    t->align = 8;
     return t;
 }
 
 static Type * t_fn(Type *ret, Vec *params, int is_vararg) {
-    Type *t = t_new();
-    t->k = T_FN;
+    Type *t = t_new(T_FN);
     t->ret = ret;
     t->params = params;
     t->is_vararg = is_vararg;
-    t->size = t->align = 8;
     return t;
 }
 
-static Type * t_struct() {
-    Type *t = t_new();
-    t->k = T_STRUCT;
-    return t;
-}
-
-static Type * t_union() {
-    Type *t = t_new();
-    t->k = T_UNION;
-    return t;
-}
-
-static Type * t_enum() {
-    Type *t = t_new();
-    t->k = T_ENUM;
-    return t;
-}
-
-static Field * new_field(Type *t, char *name, uint64_t offset) {
+static Field * new_field(Type *t, char *name) {
     Field *f = malloc(sizeof(Field));
     f->t = t;
     f->name = name;
-    f->offset = offset;
     return f;
+}
+
+static EnumConst * new_enum_const(char *name, uint64_t val) {
+    EnumConst *k = malloc(sizeof(EnumConst));
+    k->name = name;
+    k->val = val;
+    return k;
 }
 
 static size_t find_field(Type *t, char *name) {
@@ -176,12 +141,17 @@ static int is_fp(Type *t) {
     return t->k >= T_FLOAT && t->k <= T_LDOUBLE;
 }
 
-static int is_arith(Type *t) {
+static int is_num(Type *t) {
     return is_int(t) || is_fp(t);
 }
 
 static int is_void_ptr(Type *t) {
     return t->k == T_PTR && t->ptr->k == T_VOID;
+}
+
+static int is_null_ptr(Node *n) {
+    while (n->k == N_CONV) n = n->l; // Skip over conversions
+    return n->k == N_IMM && n->imm == 0;
 }
 
 static int is_string_type(Type *t) {
@@ -192,9 +162,13 @@ static int is_string_type(Type *t) {
 }
 
 static int is_vla(Type *t) {
-    if (t->k != T_ARR) return 0;
-    if (t->len && t->len->k != N_IMM) return 1;
-    return is_vla(t->elem);
+    while (t->k == T_ARR) {
+        if (t->len && t->len->k != N_IMM) {
+            return 1;
+        }
+        t = t->elem;
+    }
+    return 0;
 }
 
 static int is_incomplete(Type *t) {
@@ -211,7 +185,8 @@ static int is_incomplete(Type *t) {
                 return 1;
             }
         }
-    case T_ENUM: return !t->fields;
+        return 0;
+    case T_ENUM: return !t->consts;
     default: return 0;
     }
 }
@@ -234,20 +209,144 @@ static int are_equal(Type *a, Type *b) {
             if (!are_equal(vec_get(a->params, i), vec_get(b->params, i))) return 0;
         }
         return are_equal(a->ret, b->ret);
-    case T_STRUCT: case T_UNION: case T_ENUM:
+    case T_STRUCT: case T_UNION:
         if (!a->fields || !b->fields) return 0;
         if (vec_len(a->fields) != vec_len(b->fields)) return 0;
         for (size_t i = 0; i < vec_len(a->fields); i++) {
             Field *fa = vec_get(a->fields, i);
             Field *fb = vec_get(b->fields, i);
-            if (!(strcmp(fa->name, fb->name) == 0 && fa->offset == fb->offset &&
-                  are_equal(fa->t, fb->t))) {
+            if (strcmp(fa->name, fb->name) != 0 || !are_equal(fa->t, fb->t)) {
+                return 0;
+            }
+        }
+        return 1;
+    case T_ENUM:
+        if (!a->consts || !b->consts) return 0;
+        if (vec_len(a->consts) != vec_len(b->consts)) return 0;
+        if (!are_equal(a->num_t, b->num_t)) return 0;
+        for (size_t i = 0; i < vec_len(a->consts); i++) {
+            EnumConst *ka = vec_get(a->consts, i);
+            EnumConst *kb = vec_get(b->consts, i);
+            if (strcmp(ka->name, kb->name) != 0 || ka->val != kb->val) {
                 return 0;
             }
         }
         return 1;
     default: return a->is_unsigned == b->is_unsigned;
     }
+}
+
+static size_t pad(size_t offset, size_t align) {
+    assert(align > 0);
+    return offset % align == 0 ? 0 : align - (offset % align);
+}
+
+// Needed by the constant expression parser to calculate truncations and
+// offsets to globals
+static size_t align_of(Type *t) {
+    switch (t->k) {
+    case T_VOID:  return 0;
+    case T_CHAR:  return 1;
+    case T_SHORT: return 2;
+    case T_INT: case T_LONG: case T_FLOAT: return 4;
+    case T_LLONG: case T_DOUBLE: case T_LDOUBLE: case T_PTR: case T_FN: case T_ARR: return 8;
+    case T_STRUCT: case T_UNION:
+        assert(t->fields);
+        size_t align = 0;
+        for (size_t i = 0; i < vec_len(t->fields); i++) { // Pick largest align
+            Field *f = vec_get(t->fields, i);
+            size_t fa = align_of(f->t);
+            align = fa > align ? fa : align;
+        }
+        return align;
+    case T_ENUM: return align_of(t->num_t);
+    default: UNREACHABLE();
+    }
+}
+
+static size_t size_of(Type *t) {
+    size_t size;
+    switch (t->k) {
+    case T_VOID:  return 0;
+    case T_CHAR:  return 1;
+    case T_SHORT: return 2;
+    case T_INT: case T_LONG: case T_FLOAT: return 4;
+    case T_LLONG: case T_DOUBLE: case T_LDOUBLE: case T_PTR: case T_FN: return 8;
+    case T_ARR:
+        assert(t->len && t->len->k == N_IMM);
+        return size_of(t->elem) * t->len->imm;
+    case T_STRUCT:
+        assert(t->fields);
+        size = 0;
+        for (size_t i = 0; i < vec_len(t->fields); i++) {
+            Field *f = vec_get(t->fields, i);
+            size += pad(size, align_of(f->t)) + size_of(f->t);
+        }
+        return size;
+    case T_UNION:
+        assert(t->fields);
+        size = 0;
+        for (size_t i = 0; i < vec_len(t->fields); i++) { // Pick largest size
+            Field *f = vec_get(t->fields, i);
+            size_t fs = size_of(f->t);
+            size = fs > size ? fs : size;
+        }
+        return size;
+    case T_ENUM:
+        assert(t->num_t);
+        return size_of(t->num_t);
+    default: UNREACHABLE();
+    }
+}
+
+static size_t offset_of(Type *obj, size_t field_idx) {
+    assert(obj->k == T_STRUCT || obj->k == T_UNION);
+    assert(obj->fields);
+    size_t offset = 0;
+    for (size_t i = 0; i < field_idx; i++) {
+        Field *f = vec_get(obj->fields, i);
+        offset += pad(offset, align_of(f->t)) + size_of(f->t);
+    }
+    Field *f = vec_get(obj->fields, field_idx);
+    return offset + pad(offset, align_of(f->t));
+}
+
+static void expect_val(Node *n) {
+    if (n->t->k == T_STRUCT || n->t->k == T_UNION) {
+        error_at(n->tk, "expected pointer or arithmetic type");
+    }
+}
+
+static void expect_num(Node *n) {
+    if (!is_num(n->t)) {
+        error_at(n->tk, "expected arithmetic type");
+    }
+}
+
+static void expect_int(Node *n) {
+    if (!is_int(n->t)) {
+        error_at(n->tk, "expected integer type");
+    }
+}
+
+static void expect_ptr(Node *n) {
+    if (n->t->k != T_PTR) {
+        error_at(n->tk, "expected pointer type");
+    }
+}
+
+static void expect_lval(Node *n) {
+    if (n->k != N_LOCAL && n->k != N_GLOBAL &&
+            n->k != N_DEREF && n->k != N_IDX && n->k != N_FIELD) {
+        error_at(n->tk, "expression is not an lvalue");
+    }
+    if (n->t->k == T_ARR)  error_at(n->tk, "array type is not an lvalue");
+    if (n->t->k == T_VOID) error_at(n->tk, "'void' type is not an lvalue");
+}
+
+static void expect_assignable(Node *n) {
+    expect_lval(n);
+    if (n->t->k == T_FN) error_at(n->tk, "function type is not assignable");
 }
 
 
@@ -279,16 +378,16 @@ static Type * find_tag(Scope *s, char *tag) {
     return NULL;
 }
 
-static void ensure_not_redef(Scope *s, Node *n) {
+static void def_symbol(Scope *s, Node *n) {
     Node *v;
     if (n->t->linkage == L_EXTERN) { // extern needs type checking across scopes
         v = find_var(s, n->var_name);
-        if (v && !are_equal(n->t, v->t)) goto err_types;
+        if (v && !are_equal(n->t, v->t)) goto err_type;
     }
     v = map_get(s->vars, n->var_name);
-    if (!v) return;
-    if (n->k != v->k) goto err_symbols;
-    if (!are_equal(n->t, v->t)) goto err_types;
+    if (!v) goto okay; // No previous definition
+    if (n->k != v->k) goto err_symbol;
+    if (!are_equal(n->t, v->t)) goto err_type;
     if (s->k == SCOPE_FILE) { // File scope
         // ALLOWED: [int a; extern int a;]
         // ALLOWED: [static int a; extern int a;]
@@ -300,20 +399,18 @@ static void ensure_not_redef(Scope *s, Node *n) {
         // ALLOWED: [extern int a; extern int a]
         if (!(n->t->linkage == L_EXTERN && v->t->linkage == L_EXTERN)) goto err_redef;
     }
+    goto okay;
 err_redef:
     error_at(n->tk, "redefinition of '%s'", n->var_name);
-err_symbols:
+err_symbol:
     error_at(n->tk, "redefinition of '%s' as a different kind of symbol", n->var_name);
-err_types:
+err_type:
     error_at(n->tk, "redefinition of '%s' with a different type", n->var_name);
 err_static1:
     error_at(n->tk, "non-static declaration of '%s' follows static declaration", n->var_name);
 err_static2:
     error_at(n->tk, "static declaration of '%s' follows non-static declaration", n->var_name);
-}
-
-static void def_symbol(Scope *s, Node *n) {
-    ensure_not_redef(s, n);
+okay:
     map_put(s->vars, n->var_name, n);
 }
 
@@ -341,21 +438,12 @@ static Node * def_typedef(Scope *s, Token *name, Type *t) {
     return n;
 }
 
-static void def_tag(Scope *s, Token *tag, Type *t) {
-    Type *v = map_get(s->tags, tag->ident);
-    if (v && v->fields) {
-        char *name = t->k == T_STRUCT ? "struct" : t->k == T_UNION ? "union" : "enum";
-        error_at(tag, "redefinition of %s '%s'", name, tag->ident);
-    }
-    map_put(s->tags, tag->ident, t);
-}
-
 static void def_enum_const(Scope *s, Token *name, Type *t, int64_t val) {
     Node *v = map_get(s->vars, name->ident);
-    if (v && v->k != t->k) {
+    if (v && v->k != N_IMM) {
         error_at(name, "redefinition of '%s' as a different kind of symbol", name->ident);
     } else if (v) {
-        error_at(name, "redefinition of enum tag '%s'", name->ident);
+        error_at(name, "redefinition of enum constant '%s'", name->ident);
     }
     Node *n = node(N_IMM, name);
     n->t = t;
@@ -414,7 +502,8 @@ static Node * parse_int(Token *tk) {
         if (!t) {
             error_at(tk, "invalid integer suffix '%s'", suffix);
         }
-        uint64_t invalid_bits = ~((1 << t->size) - 1);
+        size_t bits = size_of(t) * 8;
+        uint64_t invalid_bits = bits >= 64 ? 0 : ~((1 << bits) - 1);
         if ((num & invalid_bits) != 0) {
             warning_at(tk, "integer '%s' too large for specified type", tk->num);
         }
@@ -539,15 +628,8 @@ static int is_type(Scope *s, Token *t) {
     }
 }
 
-static size_t pad(size_t offset, size_t align) {
-    assert(align > 0);
-    return offset % align == 0 ? offset : offset + align - (offset % align);
-}
-
 static void parse_struct_fields(Scope *s, Type *t) {
     expect_tk(s->pp, '{');
-    size_t align = 0;
-    size_t offset = 0;
     Vec *fields = vec_new();
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
         Token *tk = peek_tk(s->pp);
@@ -558,9 +640,7 @@ static void parse_struct_fields(Scope *s, Type *t) {
                      t->k == T_STRUCT ? "struct" : "union");
         }
         if (peek_tk_is(s->pp, ';')) {
-            if (t->k == T_STRUCT) offset = pad(offset, base->align);
-            vec_push(fields, new_field(base, NULL, offset));
-            if (t->k == T_STRUCT) offset += base->size;
+            vec_push(fields, new_field(base, NULL));
         }
         while (!peek_tk_is(s->pp, ';') && !peek_tk_is(s->pp, TK_EOF)) {
             Token *name;
@@ -577,10 +657,7 @@ static void parse_struct_fields(Scope *s, Type *t) {
                 error_at(name, "duplicate field '%s' in %s", name->ident,
                          t->k == T_STRUCT ? "struct" : "union");
             }
-            align = ft->align > align ? ft->align : align;
-            if (t->k == T_STRUCT) offset = pad(offset, ft->align);
-            vec_push(fields, new_field(ft, name->ident, offset));
-            if (t->k == T_STRUCT) offset += ft->size;
+            vec_push(fields, new_field(ft, name->ident));
             if (!next_tk_is(s->pp, ',')) {
                 break;
             }
@@ -588,15 +665,13 @@ static void parse_struct_fields(Scope *s, Type *t) {
         expect_tk(s->pp, ';');
     }
     expect_tk(s->pp, '}');
-    t->align = align;
-    t->size = pad(offset, align);
     t->fields = fields;
 }
 
-static void parse_enum_consts(Scope *s, Type *enum_t) {
+static void parse_enum_consts(Scope *s, Type *t) {
     expect_tk(s->pp, '{');
-    Type *t = t_num(T_INT, 0);
-    Vec *fields = vec_new();
+    Type *num_t = t_num(T_INT, 0);
+    Vec *consts = vec_new();
     int64_t val = 0;
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
         Token *name = expect_tk(s->pp, TK_IDENT);
@@ -605,20 +680,20 @@ static void parse_enum_consts(Scope *s, Type *enum_t) {
             val = calc_int_expr(e);
         }
         Type *min = smallest_type_for_int(val < 0 ? -val : val, val < 0);
-        if (min->k > t->k || (min->k == t->k && min->is_unsigned)) {
-            *t = *min;
+        if (min->k > num_t->k || (min->k == num_t->k && min->is_unsigned)) {
+            *num_t = *min;
         }
-        vec_push(fields, new_field(t, name->ident, val));
-        def_enum_const(s, name, t, val);
+        EnumConst *k = new_enum_const(name->ident, val);
+        vec_push(consts, k);
+        def_enum_const(s, name, num_t, val);
         val++;
         if (!next_tk_is(s->pp, ',')) {
             break;
         }
     }
     expect_tk(s->pp, '}');
-    enum_t->fields = fields;
-    enum_t->size = t->size;
-    enum_t->align = t->align;
+    t->consts = consts;
+    t->num_t = num_t;
 }
 
 static void parse_fields(Scope *s, Type *t) {
@@ -629,43 +704,40 @@ static void parse_fields(Scope *s, Type *t) {
     }
 }
 
-static void parse_struct_union_enum_def(Scope *s, Type *t) {
+static Type * parse_aggr_def(Scope *s, int k) {
     if (!peek_tk_is(s->pp, TK_IDENT)) { // Anonymous
+        Type *t = t_new(k);
         parse_fields(s, t);
-        return;
+        return t;
     }
     Token *tag = next_tk(s->pp);
-    Type *tt = find_tag(s, tag->ident);
     if (peek_tk_is(s->pp, '{')) { // Definition
-        def_tag(s, tag, t);
+        Type *prev = map_get(s->tags, tag->ident);
+        if (prev && prev->k != k) {
+            error_at(tag, "use of tag '%s' does not match previous declaration",
+                     tag->ident);
+        } else if (prev && !is_incomplete(prev)) {
+            error_at(tag, "redefinition of %s tag '%s'",
+                     k == T_STRUCT ? "struct" : k == T_UNION ? "union" : "enum",
+                     tag->ident);
+        }
+        Type *t = prev ? prev : t_new(k);
+        map_put(s->tags, tag->ident, t);
         parse_fields(s, t);
-    } else if (tt && t->k != tt->k) {
-        error_at(tag, "use of tag '%s' does not match previous declaration", tag->ident);
-    } else if (tt) { // Use
-        t->fields = tt->fields;
-        t->size = tt->size;
-        t->align = tt->align;
-    } else { // Forward declaration
-        def_tag(s, tag, t);
+        return t;
+    } else { // Declaration/use
+        Type *prev = find_tag(s, tag->ident);
+        if (prev && prev->k != k) {
+            error_at(tag, "use of tag '%s' does not match previous declaration",
+                     tag->ident);
+        } else if (prev) { // Use of previous declaration
+            return prev;
+        } else { // New declaration
+            Type *t = t_new(k);
+            map_put(s->tags, tag->ident, t);
+            return t;
+        }
     }
-}
-
-static Type * parse_struct_def(Scope *s) {
-    Type *t = t_struct();
-    parse_struct_union_enum_def(s, t);
-    return t;
-}
-
-static Type * parse_union_def(Scope *s) {
-    Type *t = t_union();
-    parse_struct_union_enum_def(s, t);
-    return t;
-}
-
-static Type * parse_enum_def(Scope *s) {
-    Type *t = t_enum();
-    parse_struct_union_enum_def(s, t);
-    return t;
 }
 
 static Type * parse_decl_specs(Scope *s, int *sclass) {
@@ -699,9 +771,9 @@ static Type * parse_decl_specs(Scope *s, int *sclass) {
         case TK_LONG:     if (size > tlong) { goto t_err; } size++; break;
         case TK_SIGNED:   if (sign) { goto t_err; } sign = tsigned; break;
         case TK_UNSIGNED: if (sign) { goto t_err; } sign = tunsigned; break;
-        case TK_STRUCT:   if (t) { goto t_err; } t = parse_struct_def(s); break;
-        case TK_UNION:    if (t) { goto t_err; } t = parse_union_def(s); break;
-        case TK_ENUM:     if (t) { goto t_err; } t = parse_enum_def(s); break;
+        case TK_STRUCT:   if (t) { goto t_err; } t = parse_aggr_def(s, T_STRUCT); break;
+        case TK_UNION:    if (t) { goto t_err; } t = parse_aggr_def(s, T_UNION); break;
+        case TK_ENUM:     if (t) { goto t_err; } t = parse_aggr_def(s, T_ENUM); break;
         case TK_IDENT:
             if (!find_typedef(s, tk->ident)) goto done;
             if (t) goto t_err;
@@ -717,7 +789,9 @@ static Type * parse_decl_specs(Scope *s, int *sclass) {
 done:
     (void) tq; // Unused
     undo_tk(s->pp->l, tk);
-    if (sclass) *sclass = sc;
+    if (sclass) {
+        *sclass = sc;
+    }
     if (t) {
         return t;
     }
@@ -858,7 +932,7 @@ static Type * parse_declarator(Scope *s, Type *base, Token **name, Vec *param_na
             // An empty '()' is a function pointer, not a no-op sub-declarator
             return parse_fn_declarator(s, base, param_names);
         } else { // Sub-declarator
-            Type *inner = t_new();
+            Type *inner = t_new(T_VOID);
             Type *decl = parse_declarator(s, inner, name, param_names);
             expect_tk(s->pp, ')');
             *inner = *parse_declarator_tail(s, base, param_names);
@@ -983,10 +1057,7 @@ static Node * parse_operand(Scope *s) {
     case TK_STR: n = parse_str(s); break;
     case TK_IDENT:
         next_tk(s->pp);
-        Node *v = find_var(s, tk->ident);
-        n = node(N_LOCAL, tk);
-        n->t = v->t;
-        n->var_name = v->var_name;
+        n = find_var(s, tk->ident);
         if (!n) error_at(tk, "undeclared identifier '%s'", tk->ident);
         break;
     case '(':
@@ -999,36 +1070,6 @@ static Node * parse_operand(Scope *s) {
     return n;
 }
 
-static void ensure_arith(Node *n) {
-    if (!is_arith(n->t)) error_at(n->tk, "expected arithmetic type");
-}
-
-static void ensure_int(Node *n) {
-    if (!is_int(n->t)) error_at(n->tk, "expected integer type");
-}
-
-static void ensure_ptr(Node *n) {
-    if (n->t->k != T_PTR) error_at(n->tk, "expected pointer type");
-}
-
-static void ensure_lvalue(Node *n) {
-    if (n->k != N_LOCAL && n->k != N_GLOBAL &&
-            n->k != N_DEREF && n->k != N_IDX && n->k != N_FIELD)
-        error_at(n->tk, "expression is not an lvalue");
-    if (n->t->k == T_ARR)  error_at(n->tk, "array type is not an lvalue");
-    if (n->t->k == T_VOID) error_at(n->tk, "'void' type is not an lvalue");
-}
-
-static void ensure_assignable(Node *n) {
-    ensure_lvalue(n);
-    if (n->t->k == T_FN) error_at(n->tk, "function type is not assignable");
-}
-
-static int is_null_ptr(Node *n) {
-    while (n->k == N_CONV) n = n->l; // Skip over the conversions
-    return n->k == N_IMM && n->imm == 0;
-}
-
 static Node * parse_array_access(Scope *s, Node *l) {
     Token *op = expect_tk(s->pp, '[');
     l = discharge(l);
@@ -1036,8 +1077,8 @@ static Node * parse_array_access(Scope *s, Node *l) {
         error_at(op, "expected pointer or array type");
     }
     Node *idx = parse_subexpr(s, PREC_MIN);
-    ensure_int(idx);
-    idx = conv_to(idx, t_num(T_LLONG, 1));
+    expect_int(idx);
+    idx = conv_to(idx, t_num(T_LLONG, 0));
     expect_tk(s->pp, ']');
     Node *n = node(N_IDX, op);
     n->t = l->t->elem;
@@ -1086,6 +1127,10 @@ static Node * parse_struct_field_access(Scope *s, Node *l) {
     if (l->t->k != T_STRUCT && l->t->k != T_UNION) {
         error_at(op, "expected struct or union type");
     }
+    if (is_incomplete(l->t)) {
+        error_at(op, "incomplete definition of %s",
+                 l->t->k == T_STRUCT ? "struct" : "union");
+    }
     Token *name = expect_tk(s->pp, TK_IDENT);
     size_t f_idx = find_field(l->t, name->ident);
     if (f_idx == NOT_FOUND) {
@@ -1101,7 +1146,7 @@ static Node * parse_struct_field_access(Scope *s, Node *l) {
 }
 
 static Node * parse_struct_field_deref(Scope *s, Node *l) {
-    ensure_ptr(l);
+    expect_ptr(l);
     Node *n = node(N_DEREF, peek_tk(s->pp));
     n->t = l->t->ptr;
     n->l = l;
@@ -1110,7 +1155,7 @@ static Node * parse_struct_field_deref(Scope *s, Node *l) {
 
 static Node * parse_post_inc_dec(Scope *s, Node *l) {
     Token *op = next_tk(s->pp);
-    ensure_assignable(l);
+    expect_assignable(l);
     l = discharge(l);
     Node *n = node(op->k == TK_INC ? N_POST_INC : N_POST_DEC, op);
     n->t = l->t;
@@ -1134,7 +1179,7 @@ static Node * parse_postfix(Scope *s, Node *l) {
 static Node * parse_neg(Scope *s) {
     Token *op = expect_tk(s->pp, '-');
     Node *l = parse_subexpr(s, PREC_UNARY);
-    ensure_arith(l);
+    expect_num(l);
     l = discharge(l);
     Node *unop = node(N_NEG, op);
     unop->t = l->t;
@@ -1151,7 +1196,7 @@ static Node * parse_plus(Scope *s) {
 static Node * parse_bit_not(Scope *s) {
     Token *op = expect_tk(s->pp, '~');
     Node *l = parse_subexpr(s, PREC_UNARY);
-    ensure_int(l);
+    expect_int(l);
     l = discharge(l);
     Node *unop = node(N_BIT_NOT, op);
     unop->t = l->t;
@@ -1172,7 +1217,7 @@ static Node * parse_log_not(Scope *s) {
 static Node * parse_pre_inc_dec(Scope *s) {
     Token *op = next_tk(s->pp);
     Node *l = parse_subexpr(s, PREC_UNARY);
-    ensure_assignable(l);
+    expect_assignable(l);
     l = discharge(l);
     Node *unop = node(op->k == TK_INC ? N_PRE_INC : N_PRE_DEC, op);
     unop->t = l->t;
@@ -1184,7 +1229,7 @@ static Node * parse_deref(Scope *s) {
     Token *op = expect_tk(s->pp, '*');
     Node *l = parse_subexpr(s, PREC_UNARY);
     l = discharge(l);
-    ensure_ptr(l);
+    expect_ptr(l);
     if (l->t->ptr->k == T_FN) return l; // Don't dereference fn ptrs
     Node *unop = node(N_DEREF, op);
     unop->t = l->t->ptr;
@@ -1195,7 +1240,7 @@ static Node * parse_deref(Scope *s) {
 static Node * parse_addr(Scope *s) {
     Token *op = expect_tk(s->pp, '&');
     Node *l = parse_subexpr(s, PREC_UNARY);
-    ensure_lvalue(l);
+    expect_lval(l);
     Node *unop = node(N_ADDR, op);
     unop->t = t_ptr(l->t);
     unop->l = l;
@@ -1214,9 +1259,9 @@ static Node * parse_sizeof(Scope *s) {
         Node *l = parse_subexpr(s, PREC_UNARY);
         t = l->t;
     }
-    Node *n = node(N_IMM, op);
+    Node *n = node(N_SIZEOF, op);
     n->t = t_num(T_LONG, 1);
-    n->imm = t->size;
+    n->size_of = t;
     return n;
 }
 
@@ -1254,20 +1299,20 @@ static Node * parse_unop(Scope *s) {
 }
 
 static Type * promote(Type *l, Type *r) { // Implicit arithmetic conversions
-    assert(is_arith(l));
-    assert(is_arith(r));
+    assert(is_num(l));
+    assert(is_num(r));
     if (l->k < r->k) { // Make 'l' the larger type
         Type *tmp = l; l = r; r = tmp;
     }
     if (is_fp(l)) { // If one is a float, pick the largest float type
         return l;
     }
-    assert(is_int(l) && l->size >= 4); // Both integers bigger than 'int'
-    assert(is_int(r) && r->size >= 4);
-    if (l->size > r->size) { // Pick the larger
+    assert(is_int(l) && l->k >= T_INT); // Both integers bigger than 'int'
+    assert(is_int(r) && r->k >= T_INT); // Handled by 'discharge'
+    if (l->k > r->k) { // Pick the larger
         return l;
     }
-    assert(l->size == r->size); // Both the same size
+    assert(l->k == r->k); // Both the same type
     return l->is_unsigned ? l : r; // Pick the unsigned type
 }
 
@@ -1281,9 +1326,12 @@ static Node * emit_binop(int op, Node *l, Node *r, Token *tk) {
         }
         t = is_void_ptr(l->t) || is_null_ptr(l) ? r->t : l->t;
     } else if (l->t->k == T_PTR || r->t->k == T_PTR) { // One pointer
+        if (op == N_SUB && r->t->k == T_PTR) { // <int> - <ptr> invalid
+            error_at(tk, "invalid operands to binary operation");
+        }
         t = l->t->k == T_PTR ? l->t : r->t;
     } else { // No pointers
-        assert(is_arith(l->t) && is_arith(r->t));
+        assert(is_num(l->t) && is_num(r->t));
         t = promote(l->t, r->t);
     }
     Type *ret = t;
@@ -1292,9 +1340,13 @@ static Node * emit_binop(int op, Node *l, Node *r, Token *tk) {
     } else if (op >= N_EQ && op <= N_LOG_OR) {
         ret = t_num(T_INT, 0); // Comparison
     }
+    if (!((op == N_SUB || op == N_ADD) && ((l->t->k == T_PTR) ^ (r->t->k == T_PTR)))) {
+        l = conv_to(l, t); // Don't convert if we have <ptr> +/- <int>
+        r = conv_to(r, t);
+    }
     Node *n = node(op, tk);
-    n->l = conv_to(l, t);
-    n->r = conv_to(r, t);
+    n->l = l;
+    n->r = r;
     n->t = ret;
     return n;
 }
@@ -1303,39 +1355,39 @@ static Node * parse_binop(Scope *s, Token *op, Node *l) {
     Node *r = parse_subexpr(s, BINOP_PREC[op->k] + IS_RASSOC[op->k]);
     Node *n;
     switch (op->k) {
-    case '+':    return emit_binop(N_ADD, l, r, op);
-    case '-':    return emit_binop(N_SUB, l, r, op);
-    case '*':    ensure_arith(l); ensure_arith(r); return emit_binop(N_MUL, l, r, op);
-    case '/':    ensure_arith(l); ensure_arith(r); return emit_binop(N_DIV, l, r, op);
-    case '%':    ensure_int(l); ensure_int(r); return emit_binop(N_MOD, l, r, op);
-    case '&':    ensure_int(l); ensure_int(r); return emit_binop(N_BIT_AND, l, r, op);
-    case '|':    ensure_int(l); ensure_int(r); return emit_binop(N_BIT_OR, l, r, op);
-    case '^':    ensure_int(l); ensure_int(r); return emit_binop(N_BIT_XOR, l, r, op);
-    case TK_SHL: ensure_int(l); ensure_int(r); return emit_binop(N_SHL, l, r, op);
-    case TK_SHR: ensure_int(l); ensure_int(r); return emit_binop(N_SHR, l, r, op);
+    case '+':    expect_val(l); expect_val(r); return emit_binop(N_ADD, l, r, op);
+    case '-':    expect_val(l); expect_val(r); return emit_binop(N_SUB, l, r, op);
+    case '*':    expect_num(l); expect_num(r); return emit_binop(N_MUL, l, r, op);
+    case '/':    expect_num(l); expect_num(r); return emit_binop(N_DIV, l, r, op);
+    case '%':    expect_int(l); expect_int(r); return emit_binop(N_MOD, l, r, op);
+    case '&':    expect_int(l); expect_int(r); return emit_binop(N_BIT_AND, l, r, op);
+    case '|':    expect_int(l); expect_int(r); return emit_binop(N_BIT_OR, l, r, op);
+    case '^':    expect_int(l); expect_int(r); return emit_binop(N_BIT_XOR, l, r, op);
+    case TK_SHL: expect_int(l); expect_int(r); return emit_binop(N_SHL, l, r, op);
+    case TK_SHR: expect_int(l); expect_int(r); return emit_binop(N_SHR, l, r, op);
 
-    case TK_EQ:      return emit_binop(N_EQ, l, r, op);
-    case TK_NEQ:     return emit_binop(N_NEQ, l, r, op);
-    case '<':        return emit_binop(N_LT, l, r, op);
-    case TK_LE:      return emit_binop(N_LE, l, r, op);
-    case '>':        return emit_binop(N_GT, l, r, op);
-    case TK_GE:      return emit_binop(N_GE, l, r, op);
-    case TK_LOG_AND: return emit_binop(N_LOG_AND, l, r, op);
-    case TK_LOG_OR:  return emit_binop(N_LOG_OR, l, r, op);
+    case TK_EQ:      expect_val(l); expect_val(r); return emit_binop(N_EQ, l, r, op);
+    case TK_NEQ:     expect_val(l); expect_val(r); return emit_binop(N_NEQ, l, r, op);
+    case '<':        expect_val(l); expect_val(r); return emit_binop(N_LT, l, r, op);
+    case TK_LE:      expect_val(l); expect_val(r); return emit_binop(N_LE, l, r, op);
+    case '>':        expect_val(l); expect_val(r); return emit_binop(N_GT, l, r, op);
+    case TK_GE:      expect_val(l); expect_val(r); return emit_binop(N_GE, l, r, op);
+    case TK_LOG_AND: expect_val(l); expect_val(r); return emit_binop(N_LOG_AND, l, r, op);
+    case TK_LOG_OR:  expect_val(l); expect_val(r); return emit_binop(N_LOG_OR, l, r, op);
 
-    case TK_A_ADD:     return emit_binop(N_A_ADD, l, r, op);
-    case TK_A_SUB:     return emit_binop(N_A_SUB, l, r, op);
-    case TK_A_MUL:     ensure_arith(l); ensure_arith(r); return emit_binop(N_A_MUL, l, r, op);
-    case TK_A_DIV:     ensure_arith(l); ensure_arith(r); return emit_binop(N_A_DIV, l, r, op);
-    case TK_A_MOD:     ensure_int(l); ensure_int(r); return emit_binop(N_A_MOD, l, r, op);
-    case TK_A_BIT_AND: ensure_int(l); ensure_int(r); return emit_binop(N_A_BIT_AND, l, r, op);
-    case TK_A_BIT_OR:  ensure_int(l); ensure_int(r); return emit_binop(N_A_BIT_OR, l, r, op);
-    case TK_A_BIT_XOR: ensure_int(l); ensure_int(r); return emit_binop(N_A_BIT_XOR, l, r, op);
-    case TK_A_SHL:     ensure_int(l); ensure_int(r); return emit_binop(N_A_SHL, l, r, op);
-    case TK_A_SHR:     ensure_int(l); ensure_int(r); return emit_binop(N_A_SHR, l, r, op);
+    case TK_A_ADD:     expect_val(l); expect_val(r); return emit_binop(N_A_ADD, l, r, op);
+    case TK_A_SUB:     expect_val(l); expect_val(r); return emit_binop(N_A_SUB, l, r, op);
+    case TK_A_MUL:     expect_num(l); expect_num(r); return emit_binop(N_A_MUL, l, r, op);
+    case TK_A_DIV:     expect_num(l); expect_num(r); return emit_binop(N_A_DIV, l, r, op);
+    case TK_A_MOD:     expect_int(l); expect_int(r); return emit_binop(N_A_MOD, l, r, op);
+    case TK_A_BIT_AND: expect_int(l); expect_int(r); return emit_binop(N_A_BIT_AND, l, r, op);
+    case TK_A_BIT_OR:  expect_int(l); expect_int(r); return emit_binop(N_A_BIT_OR, l, r, op);
+    case TK_A_BIT_XOR: expect_int(l); expect_int(r); return emit_binop(N_A_BIT_XOR, l, r, op);
+    case TK_A_SHL:     expect_int(l); expect_int(r); return emit_binop(N_A_SHL, l, r, op);
+    case TK_A_SHR:     expect_int(l); expect_int(r); return emit_binop(N_A_SHR, l, r, op);
 
     case '=':
-        ensure_assignable(l);
+        expect_assignable(l);
         n = node(N_ASSIGN, op);
         n->t = l->t;
         n->l = l;
@@ -1390,7 +1442,7 @@ static Node * parse_expr_no_commas(Scope *s) {
     }                               \
     break;
 
-#define CALC_UNOP_ARITH(op)         \
+#define CALC_UNOP_INT_FP(op)        \
     l = eval_const_expr(e->l, err); \
     if (!l) goto err;               \
     if (l->k == N_IMM) {            \
@@ -1417,7 +1469,7 @@ static Node * parse_expr_no_commas(Scope *s) {
     }                                     \
     break;
 
-#define CALC_BINOP_ARITH(op)                   \
+#define CALC_BINOP_INT_FP(op)                  \
     l = eval_const_expr(e->l, err);            \
     if (!l) goto err;                          \
     r = eval_const_expr(e->r, err);            \
@@ -1433,52 +1485,54 @@ static Node * parse_expr_no_commas(Scope *s) {
     }                                          \
     break;
 
-#define CALC_BINOP_ARITH_PTR(op)                                       \
-    l = eval_const_expr(e->l, err);                                    \
-    if (!l) goto err;                                                  \
-    r = eval_const_expr(e->r, err);                                    \
-    if (!r) goto err;                                                  \
-    if (l->k == N_IMM && r->k == N_IMM) {                              \
-        n->k = N_IMM;                                                  \
-        n->imm = l->imm op r->imm;                                     \
-    } else if (l->k == N_FP && r->k == N_FP) {                         \
-        n->k = N_FP;                                                   \
-        n->fp = l->fp op r->fp;                                        \
-    } else if (l->k == N_KPTR && r->k == N_IMM) {                      \
-        n->k = N_KPTR;                                                 \
-        n->global = l->global;                                         \
-        n->offset = l->offset op (r->imm * e->t->ptr->size); \
-    } else if (l->k == N_IMM && r->k == N_KPTR) {                      \
-        n->k = N_KPTR;                                                 \
-        n->global = r->global;                                         \
-        n->offset = r->offset op (l->imm * e->t->ptr->size); \
-    } else {                                                           \
-        goto err;                                                      \
-    }                                                                  \
+#define CALC_BINOP_INT_FP_PTR(op)                                             \
+    l = eval_const_expr(e->l, err);                                           \
+    if (!l) goto err;                                                         \
+    r = eval_const_expr(e->r, err);                                           \
+    if (!r) goto err;                                                         \
+    if (l->k == N_IMM && r->k == N_IMM) {                                     \
+        n->k = N_IMM;                                                         \
+        n->imm = l->imm op r->imm;                                            \
+    } else if (l->k == N_FP && r->k == N_FP) {                                \
+        n->k = N_FP;                                                          \
+        n->fp = l->fp op r->fp;                                               \
+    } else if ((l->k == N_KPTR && r->k == N_IMM) ||                           \
+               (l->k == N_IMM && r->k == N_KPTR)) {                           \
+        Node *ptr = (l->k == N_KPTR) ? l : r, *imm = (ptr == l) ? r : l;      \
+        n->k = N_KPTR;                                                        \
+        n->g = ptr->g;                                                        \
+        n->offset = ptr->offset op (int64_t) imm->imm * size_of(ptr->t->ptr); \
+    } else if (e->k == N_SUB && l->k == N_KPTR && r->k == N_KPTR &&           \
+               globals_are_equal(l->g, r->g)) {                               \
+        n->k = N_IMM;                                                         \
+        n->imm = (l->offset op r->offset) / size_of(l->t->ptr);               \
+    } else {                                                                  \
+        goto err;                                                             \
+    }                                                                         \
     break;
 
-#define CALC_BINOP_EQ(op)                                          \
-    l = eval_const_expr(e->l, err);                                \
-    if (!l) goto err;                                              \
-    r = eval_const_expr(e->r, err);                                \
-    if (!r) goto err;                                              \
-    if (l->k == N_IMM && r->k == N_IMM) {                          \
-        n->k = N_IMM;                                              \
-        n->imm = op (l->imm == r->imm);                            \
-    } else if (l->k == N_FP && r->k == N_FP) {                     \
-        n->k = N_IMM;                                              \
-        n->imm = op (l->fp == r->fp);                              \
-    } else if (l->k == N_KPTR && r->k == N_KPTR) {                 \
-        n->k = N_IMM;                                              \
-        n->imm = op (l->global == r->global &&                     \
-                     l->offset == r->offset);            \
-    } else if ((l->k == N_KPTR && r->k == N_IMM && r->imm == 0) || \
-               (r->k == N_KPTR && l->k == N_IMM && l->imm == 0)) { \
-        n->k = N_IMM;                                              \
-        n->imm = op (0);                                           \
-    } else {                                                       \
-        goto err;                                                  \
-    }                                                              \
+#define CALC_BINOP_EQ(op)                                                      \
+    l = eval_const_expr(e->l, err);                                            \
+    if (!l) goto err;                                                          \
+    r = eval_const_expr(e->r, err);                                            \
+    if (!r) goto err;                                                          \
+    if (l->k == N_IMM && r->k == N_IMM) {                                      \
+        n->k = N_IMM;                                                          \
+        n->imm = op (l->imm == r->imm);                                        \
+    } else if (l->k == N_FP && r->k == N_FP) {                                 \
+        n->k = N_IMM;                                                          \
+        n->imm = op (l->fp == r->fp);                                          \
+    } else if (l->k == N_KPTR && r->k == N_KPTR) {                             \
+        n->k = N_IMM;                                                          \
+        n->imm = op (globals_are_equal(l->g, r->g) && l->offset == r->offset); \
+    } else if ((l->k == N_KPTR && r->k == N_IMM) ||                            \
+               (l->k == N_IMM && r->k == N_KPTR)) {                            \
+        Node *ptr = (l->k == N_KPTR) ? l : r, *imm = (ptr == l) ? r : l;       \
+        n->k = N_IMM;                                                          \
+        n->imm = op (ptr->g == NULL && ptr->offset == (int64_t) imm->imm);     \
+    } else {                                                                   \
+        goto err;                                                              \
+    }                                                                          \
     break;
 
 #define CALC_BINOP_REL(op)                     \
@@ -1497,13 +1551,21 @@ static Node * parse_expr_no_commas(Scope *s) {
     }                                          \
     break;
 
+static int globals_are_equal(Node *g1, Node *g2) {
+    return (g1 == NULL && g2 == NULL) ||
+           (g1 && g2 && strcmp(g1->var_name, g2->var_name) == 0);
+}
+
+// Only allowable 'Node' types are N_IMM, N_FP, N_STR, N_INIT, N_SIZEOF,
+// N_KVAL, N_KPTR
 static Node * eval_const_expr(Node *e, Token **err) {
     Node *cond, *l, *r;
     Node *n = node(e->k, e->tk);
-    n->t = e->t;
     switch (e->k) {
         // Constants
-    case N_IMM: case N_FP: case N_KPTR: *n = *e; break;
+    case N_IMM: case N_FP: case N_STR: case N_SIZEOF:
+        *n = *e;
+        break;
     case N_INIT:
         n->elems = vec_new();
         for (size_t i = 0; i < vec_len(e->elems); i++) {
@@ -1513,41 +1575,38 @@ static Node * eval_const_expr(Node *e, Token **err) {
                 continue;
             }
             v = eval_const_expr(v, err);
-            if (!v) goto err;
-            if (v->k == N_KVAL) goto err;
+            if (!v || v->k == N_KVAL) goto err;
             vec_push(n->elems, v);
         }
         break;
     case N_GLOBAL:
         n->k = N_KVAL;
-        n->global = e;
+        n->g = e;
         break;
 
         // Binary operations
-    case N_ADD: CALC_BINOP_ARITH_PTR(+)
-    case N_SUB: CALC_BINOP_ARITH_PTR(-)
-    case N_MUL: CALC_BINOP_ARITH(*)
-    case N_DIV: CALC_BINOP_ARITH(/)
-    case N_MOD: CALC_BINOP_INT(%)
-    case N_SHL: CALC_BINOP_INT(<<)
-    case N_SHR: CALC_BINOP_INT(>>)
+    case N_ADD:     CALC_BINOP_INT_FP_PTR(+)
+    case N_SUB:     CALC_BINOP_INT_FP_PTR(-)
+    case N_MUL:     CALC_BINOP_INT_FP(*)
+    case N_DIV:     CALC_BINOP_INT_FP(/)
+    case N_MOD:     CALC_BINOP_INT(%)
+    case N_SHL:     CALC_BINOP_INT(<<)
+    case N_SHR:     CALC_BINOP_INT(>>)
     case N_BIT_AND: CALC_BINOP_INT(&)
     case N_BIT_OR:  CALC_BINOP_INT(|)
     case N_BIT_XOR: CALC_BINOP_INT(^)
-    case N_EQ:  CALC_BINOP_EQ()
-    case N_NEQ: CALC_BINOP_EQ(!)
-    case N_LT:  CALC_BINOP_REL(<)
-    case N_LE:  CALC_BINOP_REL(<=)
-    case N_GT:  CALC_BINOP_REL(>)
-    case N_GE:  CALC_BINOP_REL(>=)
+    case N_EQ:      CALC_BINOP_EQ()
+    case N_NEQ:     CALC_BINOP_EQ(!)
+    case N_LT:      CALC_BINOP_REL(<)
+    case N_LE:      CALC_BINOP_REL(<=)
+    case N_GT:      CALC_BINOP_REL(>)
+    case N_GE:      CALC_BINOP_REL(>=)
     case N_LOG_AND: CALC_BINOP_INT(&&)
     case N_LOG_OR:  CALC_BINOP_INT(||)
     case N_COMMA:
-        l = eval_const_expr(e->l, err);
-        if (!l) goto err;
         r = eval_const_expr(e->r, err);
         if (!r) goto err;
-        n = r;
+        *n = *r; // Ignore LHS
         break;
 
         // Ternary operation
@@ -1559,71 +1618,74 @@ static Node * eval_const_expr(Node *e, Token **err) {
         if (!l) goto err;
         r = eval_const_expr(e->els, err);
         if (!r) goto err;
-        n = cond->imm ? l : r;
+        *n = cond->imm ? *l : *r;
         break;
 
         // Unary operations
-    case N_NEG:     CALC_UNOP_ARITH(-)
+    case N_NEG:     CALC_UNOP_INT_FP(-)
     case N_BIT_NOT: CALC_UNOP_INT(~)
-    case N_LOG_NOT:
-        CALC_UNOP_INT(!)
+    case N_LOG_NOT: CALC_UNOP_INT(!)
     case N_ADDR:
         l = eval_const_expr(e->l, err);
-        if (!l) goto err;
-        if (l->k != N_KVAL) goto err;
-        n = l;
+        if (!l || l->k != N_KVAL) goto err;
+        *n = *l;
         n->k = N_KPTR;
         break;
     case N_DEREF:
         l = eval_const_expr(e->l, err);
-        if (!l) goto err;
-        if (l->k != N_KPTR) goto err;
-        n = l;
+        if (!l || l->k != N_KPTR) goto err;
+        *n = *l;
         n->k = N_KVAL;
         break;
     case N_CONV:
         l = eval_const_expr(e->l, err);
         if (!l) goto err;
-        if (is_fp(n->t) && l->k == N_IMM) { // int -> float
+        if (is_fp(e->t) && l->k == N_IMM) { // int -> float
             n->k = N_FP;
             n->fp = (double) l->imm;
-        } else if (is_int(n->t) && l->k == N_FP) { // float -> int
+        } else if (is_int(e->t) && l->k == N_FP) { // float -> int
             n->k = N_IMM;
             n->imm = (int64_t) l->fp;
-        } else if (is_int(n->t) && l->k == N_IMM) { // int -> int
+        } else if (is_int(e->t) && l->k == N_IMM) { // int -> int
             n->k = N_IMM;
-            size_t b = n->t->size * 8; // Bits
-            n->imm = l->imm & (((int64_t) 1 << b) - 1); // Truncate
+            uint64_t b = size_of(e->t) * 8; // Bits
+            uint64_t mask = b >= 64 ? -1 : ((uint64_t) 1 << b) - 1;
+            n->imm = l->imm & mask; // Truncate
             if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (b - 1)))) {
                 n->imm |= ~(((int64_t) 1 << b) - 1); // Sign extend
             }
+        } else if (e->t->k == T_PTR && l->k == N_IMM) { // int -> ptr
+            n->k = N_KPTR;
+            n->g = NULL;
+            n->offset = (int64_t) l->imm;
+        } else if (is_int(e->t) && l->k == N_KPTR) { // ptr -> int
+            if (l->g) goto err;
+            n->k = N_IMM;
+            n->imm = l->offset;
         } else { // Direct conversion
             *n = *l;
-            n->t = e->t;
         }
         break;
 
         // Postfix operations
     case N_IDX:
         l = eval_const_expr(e->l, err);
-        if (!l) goto err;
-        if (l->k != N_KVAL && l->k != N_KPTR) goto err;
+        if (!l || (l->k != N_KPTR && l->k != N_KVAL)) goto err;
         r = eval_const_expr(e->r, err);
-        if (!r) goto err;
-        if (r->k != N_IMM) goto err;
-        n = l;
-        n->offset += (int64_t) (r->imm * n->t->size);
+        if (!r || r->k != N_IMM) goto err;
+        *n = *l;
+        n->offset += (int64_t) (r->imm * size_of(l->t->elem));
         break;
     case N_FIELD:
         l = eval_const_expr(e->obj, err);
-        if (!l) goto err;
-        if (l->k != N_KVAL) goto err;
-        Field *f = vec_get(l->t->fields, e->field_idx);
-        e = l;
-        e->offset += (int64_t) f->offset;
+        if (!l || l->k != N_KVAL) goto err;
+        *n = *l;
+        n->offset += (int64_t) offset_of(l->t, e->field_idx);
         break;
     default: goto err;
     }
+    n->t = e->t;
+    n->tk = e->tk;
     return n;
 err:
     if (err && !*err) *err = e->tk;
@@ -1784,14 +1846,14 @@ static Node * parse_switch(Scope *s) {
 
 static Node * parse_case(Scope *s) {
     Token *case_tk = expect_tk(s->pp, TK_CASE);
-    Scope *swtch = find_scope(s, SCOPE_SWITCH);
-    if (!swtch) {
+    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
+    if (!switch_s) {
         error_at(case_tk, "'case' not allowed here");
     }
-    Node *cond_expr = conv_to(parse_expr(s), swtch->cond_t);
+    Node *cond_expr = conv_to(parse_expr(s), switch_s->cond_t);
     int64_t cond = calc_int_expr(cond_expr);
-    for (size_t i = 0; i < vec_len(swtch->cases); i++) {
-        Node *c = vec_get(swtch->cases, i);
+    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
+        Node *c = vec_get(switch_s->cases, i);
         if (c && c->imm == (uint64_t) cond) {
             error_at(cond_expr->tk, "duplicate case value '%ll'", cond);
         }
@@ -1799,23 +1861,23 @@ static Node * parse_case(Scope *s) {
     expect_tk(s->pp, ':');
     Node *body = parse_stmt(s);
     Node *imm = node(N_IMM, cond_expr->tk);
-    imm->t = swtch->cond_t;
+    imm->t = switch_s->cond_t;
     imm->imm = cond;
     Node *n = node(N_CASE, case_tk);
     n->cond = imm;
     n->body = body;
-    vec_push(swtch->cases, n);
+    vec_push(switch_s->cases, n);
     return n;
 }
 
 static Node * parse_default(Scope *s) {
     Token *default_tk = expect_tk(s->pp, TK_DEFAULT);
-    Scope *swtch = find_scope(s, SCOPE_SWITCH);
-    if (!swtch) {
+    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
+    if (!switch_s) {
         error_at(default_tk, "'default' not allowed here");
     }
-    for (size_t i = 0; i < vec_len(swtch->cases); i++) {
-        Node *c = vec_get(swtch->cases, i);
+    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
+        Node *c = vec_get(switch_s->cases, i);
         if (c->k == N_DEFAULT) {
             error_at(default_tk, "cannot have more than one 'default' in a switch");
         }
@@ -1824,7 +1886,7 @@ static Node * parse_default(Scope *s) {
     Node *body = parse_stmt(s);
     Node *n = node(N_DEFAULT, default_tk);
     n->body = body;
-    vec_push(swtch->cases, n);
+    vec_push(switch_s->cases, n);
     return n;
 }
 
@@ -1966,7 +2028,6 @@ static Node * parse_string_init(Scope *s, Type *t) {
     if (!t->len) {
         assert(str->t->len->k == N_IMM);
         t->len = str->t->len;
-        t->size = t->len->imm * t->elem->size;
     }
     if (t->len->imm < str->len) {
         warning_at(str->tk, "initializer string is too long");
@@ -2042,7 +2103,6 @@ static Node * parse_array_init(Scope *s, Type *t, int designated) {
         t->len = node(N_IMM, NULL);
         t->len->t = t_num(T_LLONG, 1);
         t->len->imm = idx;
-        t->size = t->len->imm * t->elem->size;
     }
     if (idx < t->len->imm) {
         vec_put(n->elems, t->len->imm - 1, NULL);
@@ -2128,24 +2188,23 @@ static Node * parse_decl_init(Scope *s, Type *t) {
     if (is_vla(t)) {
         error_at(err, "cannot initialize variable-length array");
     }
-    Node *init;
+    Node *val;
     if (peek_tk_is(s->pp, '{') || is_string_type(t)) {
-        init = parse_init_list(s, t);
+        val = parse_init_list(s, t);
     } else {
-        init = parse_expr_no_commas(s);
+        val = parse_expr_no_commas(s);
     }
-    if (t->k == T_ARR && init->t->k != T_ARR) {
+    if (t->k == T_ARR && val->t->k != T_ARR) {
         error_at(err, "array initializer must be an initializer list or string literal");
     }
     if (t->k == T_ARR && !t->len) { // Complete an incomplete array type
-        t->len = init->t->len;
-        t->size = t->len->imm * t->elem->size;
+        t->len = val->t->len;
     }
-    init = conv_to(init, t);
+    val = conv_to(val, t);
     if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
-        init = calc_const_expr(init);
+        val = calc_const_expr(val);
     }
-    return init;
+    return val;
 }
 
 static Node * parse_decl_var(Scope *s, Type *t, Token *name) {
@@ -2195,7 +2254,7 @@ static Node * parse_decl(Scope *s) {
     Node *head = NULL;
     Node **cur = &head;
     while (1) {
-        *cur = parse_init_decl(s, t_copy(base), sclass);
+        *cur = parse_init_decl(s, base, sclass);
         if ((*cur)->k == N_FN_DEF) {
             return head;
         }
