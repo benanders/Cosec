@@ -79,4 +79,6 @@ char * concat_paths(char *dir, char *file);
 char * get_dir(char *path);
 char * full_path(char *path);
 
+size_t pad(size_t offset, size_t align);
+
 #endif

@@ -9,8 +9,7 @@
 
 #include "parse.h"
 
-enum {
-    IRT_VOID,
+typedef enum {
     IRT_I8,
     IRT_I16,
     IRT_I32,
@@ -20,10 +19,10 @@ enum {
     IRT_PTR,
     IRT_ARR,
     IRT_STRUCT,
-};
+} IrTypeT;
 
 typedef struct IrType {
-    int k;
+    IrTypeT k;
     size_t size, align;
     union {
         struct { struct IrType *elem; size_t len; }; // IRT_ARR
@@ -31,7 +30,7 @@ typedef struct IrType {
     };
 } IrType;
 
-enum {
+typedef enum {
     // Constants, globals, and functions
     IR_IMM,
     IR_FP,
@@ -86,7 +85,7 @@ enum {
     IR_COPY,
 
     IR_LAST, // For tables indexed by opcode
-};
+} IrOp;
 
 typedef struct {
     struct IrBB **bb;
@@ -96,7 +95,7 @@ typedef struct {
 typedef struct IrIns {
     struct IrIns *next, *prev;
     struct IrBB *bb;
-    int op;
+    IrOp op;
     IrType *t;
     union {
         // Constants and globals
@@ -106,7 +105,11 @@ typedef struct IrIns {
 
         // Memory access
         size_t arg_num; // IR_FARG
-        struct { struct IrIns *count; int stack_slot; /* for assembler */ }; // IR_ALLOC
+        struct { // IR_ALLOC
+            IrType *alloc_t;
+            struct IrIns *count;
+            int stack_slot; /* for assembler */
+        };
         struct { struct IrIns *src, *dst; };     // IR_LOAD, IR_STORE
         struct { struct IrIns *base, *offset; }; // IR_ELEM
 
@@ -148,10 +151,10 @@ typedef struct {
 
 typedef struct Global {
     char *label;
-    Node *val; // NULL if fn def; or one of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
+    AstNode *val; // NULL if fn def; or one of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
     IrFn *fn;
 } Global;
 
-Vec * compile(Node *n);
+Vec * compile(AstNode *n);
 
 #endif

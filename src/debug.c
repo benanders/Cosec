@@ -21,12 +21,12 @@ static char * AST_NAMES[N_LAST] = {
     "case", "default", "break", "continue", "goto", "label", "return",
 };
 
-static void print_nodes(Node *n, int indent);
-static void print_node(Node *n, int indent);
-static void print_type(Type *t);
-static void print_expr(Node *n);
+static void print_nodes(AstNode *n, int indent);
+static void print_node(AstNode *n, int indent);
+static void print_type(AstType *t);
+static void print_expr(AstNode *n);
 
-static void print_struct_fields(Type *t) {
+static void print_struct_fields(AstType *t) {
     if (!t->fields) return; // Anonymous
     printf("{ ");
     for (size_t i = 0; i < vec_len(t->fields); i++) {
@@ -38,7 +38,7 @@ static void print_struct_fields(Type *t) {
     printf("}");
 }
 
-static void print_enum_consts(Type *t) {
+static void print_enum_consts(AstType *t) {
     if (!t->consts) return; // Anonymous
     printf("{ (");
     print_type(t->num_t);
@@ -50,7 +50,7 @@ static void print_enum_consts(Type *t) {
     printf("}");
 }
 
-static void print_type(Type *t) {
+static void print_type(AstType *t) {
     if (!t) return;
     switch (t->k) {
     case T_VOID:    printf("void"); break;
@@ -74,7 +74,7 @@ static void print_type(Type *t) {
         print_type(t->ret);
         printf("(");
         for (size_t i = 0; i < vec_len(t->params); i++) {
-            Type *arg = vec_get(t->params, i);
+            AstType *arg = vec_get(t->params, i);
             print_type(arg);
             if (i < vec_len(t->params) - 1 || t->is_vararg) {
                 printf(", ");
@@ -91,7 +91,7 @@ static void print_type(Type *t) {
     }
 }
 
-static void print_expr(Node *n) {
+static void print_expr(AstNode *n) {
     switch (n->k) {
         // Operands
     case N_IMM:
@@ -122,7 +122,7 @@ static void print_expr(Node *n) {
         print_type(n->t);
         printf(" { ");
         for (size_t i = 0; i < vec_len(n->elems); i++) {
-            Node *elem = vec_get(n->elems, i);
+            AstNode *elem = vec_get(n->elems, i);
             if (n->t->k == T_STRUCT) {
                 Field *ft = vec_get(n->t->fields, i);
                 printf(".%s = ", ft->name);
@@ -174,7 +174,7 @@ static void print_expr(Node *n) {
         print_expr(n->fn);
         printf(" ");
         for (size_t i = 0; i < vec_len(n->args); i++) {
-            Node *arg = vec_get(n->args, i);
+            AstNode *arg = vec_get(n->args, i);
             print_expr(arg);
             printf(", ");
         }
@@ -210,7 +210,7 @@ static void print_expr(Node *n) {
     }
 }
 
-static void print_fn_def(Node *n) {
+static void print_fn_def(AstNode *n) {
     assert(n->t->k == T_FN);
     if (n->t->linkage == L_STATIC) {
         printf("static ");
@@ -243,7 +243,7 @@ static void print_indent(int indent) {
     }
 }
 
-static void print_node(Node *n, int indent) {
+static void print_node(AstNode *n, int indent) {
     switch (n->k) {
     case N_FN_DEF:
         print_fn_def(n);
@@ -367,123 +367,149 @@ static void print_node(Node *n, int indent) {
     }
 }
 
-static void print_nodes(Node *n, int indent) {
+static void print_nodes(AstNode *n, int indent) {
     while (n) {
         print_node(n, indent);
         n = n->next;
     }
 }
 
-void print_ast(Node *n) {
+void print_ast(AstNode *n) {
     print_nodes(n, 0);
 }
 
 
 // ---- SSA IR ----------------------------------------------------------------
 
-//#define BB_PREFIX ".BB"
-//
-//static char *IR_OP_NAMES[IR_LAST] = {
-//    "IMM", "FP", "GLOBAL",
-//    "FARG", "ALLOC", "LOAD", "STORE", "ELEM",
-//    "ADD", "SUB", "MUL", "DIV", "MOD",
-//    "AND", "OR", "XOR", "SHL", "SHR",
-//    "EQ", "NEQ", "LT", "LE", "GT", "GE",
-//    "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
-//    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
-//    "ZERO", "COPY",
-//};
-//
-//static void print_ins(IrIns *ins) {
-//    printf("\t%.4d\t", ins->idx);
-//    print_type(ins->t);
-//    printf("\t%s\t", IR_OP_NAMES[ins->op]);
-//    switch (ins->op) {
-//    case IR_IMM:    printf("+%llu", ins->imm); break;
-//    case IR_FP:     printf("+%g", ins->fp); break;
-//    case IR_GLOBAL: printf("%s", ins->g->label); break;
-//    case IR_FARG:   printf("%zu", ins->arg_num); break;
-//    case IR_ALLOC:
-//        print_type(ins->t->ptr);
-//        if (ins->count) {
-//            printf("\t%.4d", ins->count->idx);
-//        }
-//        break;
-//    case IR_STORE: printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
-//    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
-//                          ins->cpy_dst->idx, ins->cpy_size->idx); break;
-//    case IR_PHI:
-//        for (size_t i = 0; i < vec_len(ins->preds); i++) {
-//            IrBB *pred = vec_get(ins->preds, i);
-//            IrIns *def = vec_get(ins->defs, i);
-//            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->idx, def->idx);
-//        }
-//        break;
-//    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->idx : -1); break;
-//    case IR_CONDBR:
-//        printf("%.4d\t", ins->cond->idx);
-//        printf(BB_PREFIX "%d\t", ins->true ? ins->true->idx : -1);
-//        printf(BB_PREFIX "%d", ins->false ? ins->false->idx : -1);
-//        break;
-//    default:
-//        if (ins->l) printf("%.4d", ins->l->idx);
-//        if (ins->r) printf("\t%.4d", ins->r->idx);
-//        break;
-//    }
-//    printf("\n");
-//}
-//
-//static void print_bb(IrBB *bb) {
-//    printf(BB_PREFIX "%d:\n", bb->idx);
-//    for (IrIns *ins = bb->head; ins; ins = ins->next) {
-//        print_ins(ins);
-//    }
-//}
-//
-//static void number_bbs(IrFn *fn) {
-//    int i = 0;
-//    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
-//        bb->idx = i++;
-//    }
-//}
-//
-//static void number_ins(IrFn *fn) {
-//    int i = 0;
-//    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
-//        for (IrIns *ins = bb->head; ins; ins = ins->next) {
-//            ins->idx = i++;
-//        }
-//    }
-//}
-//
-//static void print_fn(Global *g) {
-//    number_bbs(g->fn);
-//    number_ins(g->fn);
-//    print_type(g->t);
-//    printf(" %s:\n", g->label);
-//    for (IrBB *bb = g->fn->entry; bb; bb = bb->next) {
-//        print_bb(bb);
-//    }
-//}
-//
-//static void print_global(Global *g) {
-//    print_type(g->t);
-//    printf(" %s", g->label);
-//    if (g->val) {
-//        printf(" = ");
-//        print_node(g->val, 0);
-//    } else {
-//        printf("\n");
-//    }
-//}
-//
-//void print_ir(Vec *globals) {
-//    for (size_t i = 0; i < vec_len(globals); i++) {
-//        Global *g = vec_get(globals, i);
-//        if (g->fn) {
-//            print_fn(g);
-//        } else {
-//            print_global(g);
-//        }
-//    }
-//}
+#define BB_PREFIX "._BB"
+
+static char *IR_OP_NAMES[IR_LAST] = {
+    "IMM", "FP", "GLOBAL",
+    "FARG", "ALLOC", "LOAD", "STORE", "ELEM",
+    "ADD", "SUB", "MUL", "DIV", "MOD",
+    "AND", "OR", "XOR", "SHL", "SHR",
+    "EQ", "NEQ", "LT", "LE", "GT", "GE",
+    "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
+    "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
+    "ZERO", "COPY",
+};
+
+static void print_irt(IrType *t) {
+    if (!t) return;
+    switch (t->k) {
+    case IRT_I8: printf("i8"); break;
+    case IRT_I16: printf("i16"); break;
+    case IRT_I32: printf("i32"); break;
+    case IRT_I64: printf("i64"); break;
+    case IRT_F32: printf("f32"); break;
+    case IRT_F64: printf("f64"); break;
+    case IRT_PTR: printf("ptr"); break;
+    case IRT_ARR:
+        printf("[");
+        print_irt(t->elem);
+        printf(" x %zu]", t->len);
+        break;
+    case IRT_STRUCT:
+        printf("struct { ");
+        for (size_t i = 0; i < vec_len(t->fields); i++) {
+            IrType *ft = vec_get(t->fields, i);
+            print_irt(ft);
+            printf(", ");
+        }
+        printf("}");
+        break;
+    }
+}
+
+static void print_ins(IrIns *ins) {
+    printf("\t%.4d\t", ins->idx);
+    print_irt(ins->t);
+    printf("\t%s\t", IR_OP_NAMES[ins->op]);
+    switch (ins->op) {
+    case IR_IMM:    printf("+%llu", ins->imm); break;
+    case IR_FP:     printf("+%g", ins->fp); break;
+    case IR_GLOBAL: printf("%s", ins->g->label); break;
+    case IR_FARG:   printf("%zu", ins->arg_num); break;
+    case IR_ALLOC:
+        print_irt(ins->alloc_t);
+        if (ins->count) {
+            printf("\t%.4d", ins->count->idx);
+        }
+        break;
+    case IR_STORE: printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
+    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
+                          ins->cpy_dst->idx, ins->cpy_size->idx); break;
+    case IR_PHI:
+        for (size_t i = 0; i < vec_len(ins->preds); i++) {
+            IrBB *pred = vec_get(ins->preds, i);
+            IrIns *def = vec_get(ins->defs, i);
+            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->idx, def->idx);
+        }
+        break;
+    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->idx : -1); break;
+    case IR_CONDBR:
+        printf("%.4d\t", ins->cond->idx);
+        printf(BB_PREFIX "%d\t", ins->true ? ins->true->idx : -1);
+        printf(BB_PREFIX "%d", ins->false ? ins->false->idx : -1);
+        break;
+    default:
+        if (ins->l) printf("%.4d", ins->l->idx);
+        if (ins->r) printf("\t%.4d", ins->r->idx);
+        break;
+    }
+    printf("\n");
+}
+
+static void print_bb(IrBB *bb) {
+    printf(BB_PREFIX "%d:\n", bb->idx);
+    for (IrIns *ins = bb->head; ins; ins = ins->next) {
+        print_ins(ins);
+    }
+}
+
+static void number_bbs(IrFn *fn) {
+    int i = 0;
+    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+        bb->idx = i++;
+    }
+}
+
+static void number_ins(IrFn *fn) {
+    int i = 0;
+    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+        for (IrIns *ins = bb->head; ins; ins = ins->next) {
+            ins->idx = i++;
+        }
+    }
+}
+
+static void print_fn(Global *g) {
+    number_bbs(g->fn);
+    number_ins(g->fn);
+    printf("%s:\n", g->label);
+    for (IrBB *bb = g->fn->entry; bb; bb = bb->next) {
+        print_bb(bb);
+    }
+}
+
+static void print_global(Global *g) {
+    print_type(g->val->t);
+    printf(" %s", g->label);
+    if (g->val) {
+        printf(" = ");
+        print_node(g->val, 0);
+    } else {
+        printf("\n");
+    }
+}
+
+void print_ir(Vec *globals) {
+    for (size_t i = 0; i < vec_len(globals); i++) {
+        Global *g = vec_get(globals, i);
+        if (g->fn) {
+            print_fn(g);
+        } else {
+            print_global(g);
+        }
+    }
+}

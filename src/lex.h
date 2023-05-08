@@ -5,6 +5,8 @@
 #include "file.h"
 #include "util.h"
 
+typedef int TokenT;
+
 enum {
     // Symbols
     TK_SHL = 256, // First 256 characters are for ASCII
@@ -92,15 +94,15 @@ enum {
     TK_LAST, // For tables indexed by token
 };
 
-enum { // In order of element size
+typedef enum { // In order of element size
     ENC_NONE,   // UTF-8 (default)
     ENC_CHAR16, // u"..." (UTF-16)
     ENC_WCHAR,  // L"..." (UTF-32)
     ENC_CHAR32, // U"..." (UTF-32)
-};
+} Enc;
 
 typedef struct {
-    int k;
+    TokenT k;
     File *f;
     int line, col;
     int has_preceding_space;
@@ -108,7 +110,7 @@ typedef struct {
         char *ident; // TK_IDENT
         char *num;   // TK_NUM
         struct {
-            int enc;
+            Enc enc;
             union {
                 int ch; // TK_CH
                 struct { char *str; size_t len; }; // TK_STR
@@ -138,9 +140,9 @@ char * lex_include_path(Lexer *l, int *search_cwd); // For '#include' and '#impo
 Token * glue_tks(Lexer *l, Token *t1, Token *t2); // For '##' operator
 
 // Token printing
-char * tk2str(int t);
+char * tk2str(TokenT t);
 char * token2str(Token *t);
-char * tk2pretty(int t);
+char * tk2pretty(TokenT t);
 char * token2pretty(Token *t);
 
 #endif

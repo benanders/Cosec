@@ -4,26 +4,42 @@
 
 #include "pp.h"
 
-enum { // Storage classes
+typedef enum {
     S_NONE,
     S_TYPEDEF,
     S_EXTERN,
     S_STATIC,
     S_AUTO,
     S_REGISTER,
-};
+} StorageClass;
 
-enum { // Type qualifiers
+typedef enum {
     T_CONST    = 0b001,
     T_RESTRICT = 0b010,
     T_VOLATILE = 0b100,
-};
+} TypeQualifier;
 
-enum { // Function specifiers
+typedef enum {
     F_INLINE = 1,
-};
+} FnSpecifier;
 
-enum { // AST types
+typedef enum {
+    L_NONE,
+    L_STATIC,
+    L_EXTERN,
+} Linkage;
+
+typedef struct {
+    struct AstType *t;
+    char *name;
+} Field;
+
+typedef struct {
+    char *name;
+    uint64_t val;
+} EnumConst;
+
+typedef enum {
     T_VOID = 1,
     T_CHAR,
     T_SHORT,
@@ -40,48 +56,32 @@ enum { // AST types
     T_STRUCT,
     T_UNION,
     T_ENUM,
-};
+} AstTypeT;
 
-enum { // Linkage
-    L_NONE,
-    L_STATIC,
-    L_EXTERN,
-};
-
-typedef struct {
-    struct Type *t;
-    char *name;
-} Field;
-
-typedef struct {
-    char *name;
-    uint64_t val;
-} EnumConst;
-
-typedef struct Type {
-    int k;
-    int linkage;
+typedef struct AstType {
+    AstTypeT k;
+    Linkage linkage;
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
-        struct Type *ptr; // T_PTR
+        struct AstType *ptr; // T_PTR
         struct { // T_ARR
-            struct Type *elem;
-            struct Node *len; // VLA if len->k != N_IMM
+            struct AstType *elem;
+            struct AstNode *len; // VLA if len->k != N_IMM
         };
         struct { // T_FN
-            struct Type *ret;
+            struct AstType *ret;
             Vec *params; // of 'Type *'
             int is_vararg;
         };
         Vec *fields; // of 'Field *'; T_STRUCT, T_UNION
         struct {  // T_ENUM
             Vec *consts; // of 'EnumConst *'
-            struct Type *num_t;
+            struct AstType *num_t;
         };
     };
-} Type;
+} AstType;
 
-enum { // AST nodes
+typedef enum {
     // Constants and variables
     N_IMM,
     N_FP,
@@ -167,12 +167,12 @@ enum { // AST nodes
     N_RET,
 
     N_LAST,
-};
+} AstNodeT;
 
-typedef struct Node {
-    struct Node *next;
-    int k;
-    Type *t;
+typedef struct AstNode {
+    struct AstNode *next;
+    AstNodeT k;
+    AstType *t;
     Token *tk;
     union {
         // Constants and variables
@@ -181,35 +181,35 @@ typedef struct Node {
         struct {      // N_STR
             union { char *str; uint16_t *str16; uint32_t *str32; };
             size_t len;
-            int enc;
+            Enc enc;
         };
         Vec *elems;     // N_INIT (array/struct initializer); of 'Node *'
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
-        struct { struct Node *g; /* N_GLOBAL */ int64_t offset; }; // N_KVAL, N_KPTR
+        struct { struct AstNode *g; /* N_GLOBAL */ int64_t offset; }; // N_KVAL, N_KPTR
 
         // Operations
-        struct { struct Node *l, *r; }; // Unary and binary operations
-        struct { struct Node *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
-        struct { struct Node *obj; size_t field_idx; }; // N_FIELD
-        Type *size_of; // N_SIZEOF
+        struct { struct AstNode *l, *r; }; // Unary and binary operations
+        struct { struct AstNode *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
+        struct { struct AstNode *obj; size_t field_idx; }; // N_FIELD
+        AstType *size_of_t; // N_SIZEOF
 
         // Statements
-        struct { struct Node *var, *val; }; // N_DECL
+        struct { struct AstNode *var, *val; }; // N_DECL
         struct {
-            struct Node *body, *cond; // N_WHILE, N_DO_WHILE, N_CASE
+            struct AstNode *body, *cond; // N_WHILE, N_DO_WHILE, N_CASE
             union {
                 struct { char *fn_name; Vec *param_names; /* of 'Token *' */ }; // N_FN_DEF
-                struct Node *els; // N_IF, N_TERNARY
-                struct { struct Node *init, *inc; }; // N_FOR
+                struct AstNode *els; // N_IF, N_TERNARY
+                struct { struct AstNode *init, *inc; }; // N_FOR
                 Vec *cases;  // N_SWITCH
                 char *label; // N_GOTO, N_LABEL
             };
         };
-        struct Node *ret; // N_RET
+        struct AstNode *ret; // N_RET
     };
-} Node;
+} AstNode;
 
-Node * parse(File *f);
+AstNode * parse(File *f);
 
 // Used by the preprocessor for '#if' directives
 int64_t parse_const_int_expr(PP *pp);

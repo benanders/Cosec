@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "parse.h"
-//#include "compile.h"
+#include "compile.h"
 #include "error.h"
 #include "debug.h"
 
@@ -46,12 +46,12 @@ static void pipeline(char *in, char *out) {
     }
     File *f = new_file(fp, in);
 
-    Node *ast = parse(f);
+    AstNode *ast = parse(f);
     print_ast(ast);
     printf("\n");
 
-//    Vec *globals = compile(ast);
-//    print_ir(globals);
+    Vec *globals = compile(ast);
+    print_ir(globals);
 }
 
 int main(int argc, char *argv[]) {

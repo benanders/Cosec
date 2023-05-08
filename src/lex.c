@@ -19,7 +19,7 @@ Lexer * new_lexer(File *f) {
     return l;
 }
 
-static Token * new_tk(Lexer *l, int k) {
+static Token * new_tk(Lexer *l, TokenT k) {
     Token *t = calloc(1, sizeof(Token));
     t->k = k;
     t->f = l->f;
@@ -185,7 +185,7 @@ static int lex_esc_seq(Lexer *l, int *is_utf8) {
     }
 }
 
-static int lex_enc(Lexer *l) {
+static Enc lex_enc(Lexer *l) {
     switch (peek_ch(l->f)) {
         case 'L': next_ch(l->f); return ENC_WCHAR;
         case 'u': next_ch(l->f); return ENC_CHAR16;
@@ -195,7 +195,7 @@ static int lex_enc(Lexer *l) {
 }
 
 static Token * lex_ch(Lexer *l) {
-    int enc = lex_enc(l);
+    Enc enc = lex_enc(l);
     Token *t = new_tk(l, TK_CH);
     next_ch(l->f); // Skip '
     t->ch = next_ch(l->f);
@@ -211,7 +211,7 @@ static Token * lex_ch(Lexer *l) {
 }
 
 static Token * lex_str(Lexer *l) {
-    int enc = lex_enc(l);
+    Enc enc = lex_enc(l);
     Token *t = new_tk(l, TK_STR);
     next_ch(l->f); // Skip "
     Buf *b = buf_new();
@@ -421,7 +421,7 @@ static char *TK_NAMES[TK_LAST - TK_FIRST] = {
     "identifier", "end of file", "space", "newline", "macro parameter",
 };
 
-char * tk2str(int t) {
+char * tk2str(TokenT t) {
     Buf *b = buf_new();
     if (t < 256) {
         buf_print(b, quote_ch((char) t));
@@ -432,7 +432,7 @@ char * tk2str(int t) {
     return b->data;
 }
 
-static void write_encoding(Buf *b, int enc) {
+static void write_encoding(Buf *b, Enc enc) {
     switch (enc) {
         case ENC_NONE: break;
         case ENC_CHAR16: buf_push(b, 'u'); break;
@@ -459,7 +459,7 @@ char * token2str(Token *t) {
     return b->data;
 }
 
-char * tk2pretty(int t) {
+char * tk2pretty(TokenT t) {
     Buf *b = buf_new();
     if (t < TK_NUM) {
         buf_push(b, '\'');
