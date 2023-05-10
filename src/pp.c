@@ -30,7 +30,7 @@ static void def_built_ins(PP *pp);
 static void def_default_include_paths(PP *pp);
 
 PP * new_pp(Lexer *l) {
-    PP *pp = calloc(1, sizeof(PP));
+    PP *pp = malloc(sizeof(PP));
     pp->l = l;
     pp->macros = map_new();
     pp->conds = vec_new();
@@ -44,8 +44,9 @@ PP * new_pp(Lexer *l) {
 }
 
 Macro * new_macro(int k) {
-    Macro *m = calloc(1, sizeof(Macro));
+    Macro *m = malloc(sizeof(Macro));
     m->k = k;
+    m->body = NULL;
     return m;
 }
 

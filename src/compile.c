@@ -54,20 +54,32 @@ static Scope * find_scope(Scope *s, int k) {
 }
 
 static Global * new_global(char *label) {
-    Global *g = calloc(1, sizeof(Global));
+    Global *g = malloc(sizeof(Global));
     g->label = label;
+    g->val = NULL;
+    g->fn = NULL;
     return g;
 }
 
 static IrBB * new_bb() {
-    IrBB *bb = calloc(1, sizeof(IrBB));
+    IrBB *bb = malloc(sizeof(IrBB));
+    bb->next = bb->prev = NULL;
+    bb->head = bb->last = NULL;
     return bb;
 }
 
 static IrFn * new_fn() {
-    IrFn *fn = calloc(1, sizeof(IrFn));
+    IrFn *fn = malloc(sizeof(IrFn));
     fn->entry = fn->last = new_bb();
     return fn;
+}
+
+static IrIns * new_ins(int op, IrType *t) {
+    IrIns *ins = calloc(1, sizeof(IrIns));
+    ins->op = op;
+    ins->t = t;
+    ins->vreg = -1;
+    return ins;
 }
 
 static IrBB * emit_bb(Scope *s) {
@@ -86,34 +98,32 @@ static IrBB * emit_bb(Scope *s) {
     return bb;
 }
 
-static IrIns * emit_to_bb(IrBB *bb, IrIns *i) {
-    i->bb = bb;
-    i->prev = bb->last;
-    i->next = NULL; // Just in case
+static IrIns * emit_to_bb(IrBB *bb, IrIns *ins) {
+    ins->bb = bb;
+    ins->prev = bb->last;
+    ins->next = NULL; // Just in case
     if (bb->last) {
-        bb->last->next = i;
+        bb->last->next = ins;
     } else {
-        bb->head = i;
+        bb->head = ins;
     }
-    bb->last = i;
-    return i;
+    bb->last = ins;
+    return ins;
 }
 
 static IrIns * emit(Scope *s, int op, IrType *t) {
     assert(s->fn->last);
-    IrIns *i = calloc(1, sizeof(IrIns));
-    i->op = op;
-    i->t = t;
+    IrIns *ins = new_ins(op, t);
     if (op == IR_CONDBR) {
-        i->true_chain = vec_new();
-        i->false_chain = vec_new();
+        ins->true_chain = vec_new();
+        ins->false_chain = vec_new();
     }
     if (op == IR_PHI) {
-        i->preds = vec_new();
-        i->defs = vec_new();
+        ins->preds = vec_new();
+        ins->defs = vec_new();
     }
-    emit_to_bb(s->fn->last, i);
-    return i;
+    emit_to_bb(s->fn->last, ins);
+    return ins;
 }
 
 static void delete_ir(IrIns *ins) {
@@ -143,9 +153,7 @@ static IrType * irt_new(int k) {
     case IRT_I64: case IRT_F64: case IRT_PTR:
         t->size = t->align = 8;
         break;
-    case IRT_ARR:
-        t->align = 8;
-        break;
+    case IRT_ARR: t->align = 8; break;
     default: break;
     }
     return t;

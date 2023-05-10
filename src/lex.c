@@ -13,7 +13,8 @@ static Token *NEWLINE_TK = &(Token) { .k = TK_NEWLINE };
 static Token *EOF_TK     = &(Token) { .k = TK_EOF };
 
 Lexer * new_lexer(File *f) {
-    Lexer *l = calloc(1, sizeof(Lexer));
+    Lexer *l = malloc(sizeof(Lexer));
+    l->parent = NULL;
     l->f = f;
     l->buf = vec_new();
     return l;
