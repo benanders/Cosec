@@ -8,16 +8,16 @@
 #include "pp.h"
 #include "error.h"
 
-typedef enum {
+enum {
     SCOPE_FILE,
     SCOPE_BLOCK,
     SCOPE_LOOP,
     SCOPE_SWITCH,
-} ScopeT;
+};
 
 typedef struct Scope {
     struct Scope *outer;
-    ScopeT k;
+    int k;
     PP *pp;
     Map *vars;  // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
     Map *tags;  // of 'Type *'
@@ -28,7 +28,7 @@ typedef struct Scope {
     AstType *cond_t; // Type of the condition
 } Scope;
 
-static AstNode * node(AstNodeT k, Token *tk) {
+static AstNode * node(int k, Token *tk) {
     AstNode *n = calloc(1, sizeof(AstNode));
     n->k = k;
     n->tk = tk;
@@ -38,7 +38,7 @@ static AstNode * node(AstNodeT k, Token *tk) {
 
 // ---- Scope -----------------------------------------------------------------
 
-static Scope new_scope(ScopeT k, PP *pp) {
+static Scope new_scope(int k, PP *pp) {
     Scope s = {0};
     s.k = k;
     s.pp = pp;
@@ -47,7 +47,7 @@ static Scope new_scope(ScopeT k, PP *pp) {
     return s;
 }
 
-static void enter_scope(Scope *inner, Scope *outer, ScopeT k) {
+static void enter_scope(Scope *inner, Scope *outer, int k) {
     *inner = (Scope) {0};
     inner->k = k;
     inner->pp = outer->pp;
@@ -60,7 +60,7 @@ static void enter_scope(Scope *inner, Scope *outer, ScopeT k) {
     }
 }
 
-static Scope * find_scope(Scope *s, ScopeT k) {
+static Scope * find_scope(Scope *s, int k) {
     while (s && s->k != k) {
         s = s->outer;
     }
@@ -72,7 +72,7 @@ static Scope * find_scope(Scope *s, ScopeT k) {
 
 #define NOT_FOUND ((size_t) -1)
 
-static AstType * t_new(AstTypeT k) {
+static AstType * t_new(int k) {
     AstType *t = calloc(1, sizeof(AstType));
     t->k = k;
     switch (t->k) {
@@ -88,7 +88,7 @@ static AstType * t_new(AstTypeT k) {
     return t;
 }
 
-static AstType * t_num(AstTypeT k, int is_unsigned) {
+static AstType * t_num(int k, int is_unsigned) {
     AstType *t = t_new(k);
     t->is_unsigned = is_unsigned;
     return t;
@@ -591,7 +591,7 @@ static AstNode * parse_ch(Scope *s) {
 
 // ---- Declaration Specifiers ------------------------------------------------
 
-static AstType * parse_decl_specs(Scope *s, StorageClass *sclass);
+static AstType * parse_decl_specs(Scope *s, int *sclass);
 static AstType * parse_declarator(Scope *s, AstType *base, Token **name, Vec *param_names);
 
 static AstNode * parse_expr_no_commas(Scope *s);
@@ -610,7 +610,7 @@ static void parse_aggr_fields(Scope *s, AstType *t) {
     Vec *fields = vec_new();
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
         Token *tk = peek_tk(s->pp);
-        StorageClass sclass;
+        int sclass;
         AstType *base = parse_decl_specs(s, &sclass);
         if (sclass != S_NONE) {
             error_at(tk, "illegal storage class specifier in %s field",
@@ -684,7 +684,7 @@ static void parse_aggr_def(Scope *s, AstType *t) {
     }
 }
 
-static AstType * parse_aggr(Scope *s, AstTypeT k) {
+static AstType * parse_aggr(Scope *s, int k) {
     if (!peek_tk_is(s->pp, TK_IDENT)) { // Anonymous
         AstType *t = t_new(k);
         parse_aggr_def(s, t);
@@ -720,7 +720,7 @@ static AstType * parse_aggr(Scope *s, AstTypeT k) {
     }
 }
 
-static AstType * parse_decl_specs(Scope *s, StorageClass *sclass) {
+static AstType * parse_decl_specs(Scope *s, int *sclass) {
     if (!is_type(s, peek_tk(s->pp))) {
         error_at(peek_tk(s->pp), "expected type name");
     }
@@ -952,7 +952,7 @@ static AstType * parse_abstract_declarator(Scope *s, AstType *base) {
 
 // ---- Expressions -----------------------------------------------------------
 
-typedef enum {
+enum {
     PREC_MIN,
     PREC_COMMA,   // ,
     PREC_ASSIGN,  // =, +=, -=, *=, /=, %=, &=, |=, ^=, >>=, <<=
@@ -968,9 +968,9 @@ typedef enum {
     PREC_ADD,     // +, -
     PREC_MUL,     // *, /, %
     PREC_UNARY,   // ++, -- (prefix), -, + (unary), !, ~, casts, *, &, sizeof
-} Prec;
+};
 
-static Prec BINOP_PREC[TK_LAST] = {
+static int BINOP_PREC[TK_LAST] = {
     ['+'] = PREC_ADD, ['-'] = PREC_ADD,
     ['*'] = PREC_MUL, ['/'] = PREC_MUL, ['%'] = PREC_MUL,
     ['&'] = PREC_BIT_AND, ['|'] = PREC_BIT_OR, ['^'] = PREC_BIT_XOR,
@@ -996,7 +996,7 @@ static int IS_RASSOC[TK_LAST] = {
     [TK_A_SHL] = 1, [TK_A_SHR] = 1,
 };
 
-static AstNode * parse_subexpr(Scope *s, Prec min_prec);
+static AstNode * parse_subexpr(Scope *s, int min_prec);
 static AstNode * parse_decl_init(Scope *s, AstType *t);
 
 static AstNode * conv_to(AstNode *l, AstType *t) {
@@ -1302,7 +1302,7 @@ static AstType * promote(AstType *l, AstType *r) { // Implicit arithmetic conver
     return l->is_unsigned ? l : r; // Pick the unsigned type
 }
 
-static AstNode * emit_binop(AstNodeT op, AstNode *l, AstNode *r, Token *tk) {
+static AstNode * emit_binop(int op, AstNode *l, AstNode *r, Token *tk) {
     l = discharge(l);
     r = discharge(r);
     AstType *t;
@@ -1406,7 +1406,7 @@ static AstNode * parse_binop(Scope *s, Token *op, AstNode *l) {
     }
 }
 
-static AstNode * parse_subexpr(Scope *s, Prec min_prec) {
+static AstNode * parse_subexpr(Scope *s, int min_prec) {
     AstNode *l = parse_unop(s);
     while (BINOP_PREC[peek_tk(s->pp)->k] > min_prec) {
         Token *op = next_tk(s->pp);
@@ -2220,7 +2220,7 @@ static AstNode * parse_decl_var(Scope *s, AstType *t, Token *name) {
     return decl;
 }
 
-static AstNode * parse_init_decl(Scope *s, AstType *base, StorageClass sclass) {
+static AstNode * parse_init_decl(Scope *s, AstType *base, int sclass) {
     Token *name = NULL;
     Vec *param_names = vec_new();
     AstType *t = parse_named_declarator(s, base, &name, param_names);
@@ -2242,7 +2242,7 @@ static AstNode * parse_init_decl(Scope *s, AstType *base, StorageClass sclass) {
 }
 
 static AstNode * parse_decl(Scope *s) {
-    StorageClass sclass;
+    int sclass;
     AstType *base = parse_decl_specs(s, &sclass);
     if (next_tk_is(s->pp, ';')) {
         return NULL;

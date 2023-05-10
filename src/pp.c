@@ -43,7 +43,7 @@ PP * new_pp(Lexer *l) {
     return pp;
 }
 
-Macro * new_macro(MacroT k) {
+Macro * new_macro(int k) {
     Macro *m = calloc(1, sizeof(Macro));
     m->k = k;
     return m;
@@ -74,7 +74,7 @@ static Token * lex_peek(PP *pp) {
     return t;
 }
 
-static Token * lex_expect(PP *pp, TokenT k) {
+static Token * lex_expect(PP *pp, int k) {
     Token *t = lex_next(pp);
     if (t->k != k) {
         error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));
@@ -777,7 +777,7 @@ Token * next_tk(PP *pp) {
     return t;
 }
 
-Token * next_tk_is(PP *pp, TokenT k) {
+Token * next_tk_is(PP *pp, int k) {
     Token *t = next_tk(pp);
     if (t->k == k) {
         return t;
@@ -792,7 +792,7 @@ Token * peek_tk(PP *pp) {
     return t;
 }
 
-Token * peek_tk_is(PP *pp, TokenT k) {
+Token * peek_tk_is(PP *pp, int k) {
     Token *t = peek_tk(pp);
     return t->k == k ? t : NULL;
 }
@@ -804,12 +804,12 @@ Token * peek2_tk(PP *pp) {
     return t2;
 }
 
-Token * peek2_tk_is(PP *pp, TokenT k) {
+Token * peek2_tk_is(PP *pp, int k) {
     Token *t = peek2_tk(pp);
     return t->k == k ? t : NULL;
 }
 
-Token * expect_tk(PP *pp, TokenT k) {
+Token * expect_tk(PP *pp, int k) {
     Token *t = next_tk(pp);
     if (t->k != k) {
         error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));

@@ -14,7 +14,7 @@ typedef struct {
     size_t offset;
 } IrField;
 
-typedef enum {
+enum {
     IRT_I8,
     IRT_I16,
     IRT_I32,
@@ -24,10 +24,10 @@ typedef enum {
     IRT_PTR,
     IRT_ARR,
     IRT_STRUCT,
-} IrTypeT;
+};
 
 typedef struct IrType {
-    IrTypeT k;
+    int k;
     size_t size, align;
     union {
         struct { struct IrType *elem; size_t len; }; // IRT_ARR
@@ -35,7 +35,7 @@ typedef struct IrType {
     };
 } IrType;
 
-typedef enum {
+enum {
     // Constants, globals, and functions
     IR_IMM,
     IR_FP,
@@ -88,7 +88,7 @@ typedef enum {
     IR_RET,
 
     IR_LAST, // For tables indexed by opcode
-} IrOp;
+};
 
 typedef struct {
     struct IrBB **bb;
@@ -98,7 +98,7 @@ typedef struct {
 typedef struct IrIns {
     struct IrIns *next, *prev;
     struct IrBB *bb;
-    IrOp op;
+    int op;
     IrType *t;
     union {
         // Constants and globals

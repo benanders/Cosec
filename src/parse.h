@@ -4,30 +4,30 @@
 
 #include "pp.h"
 
-typedef enum {
+enum {
     S_NONE,
     S_TYPEDEF,
     S_EXTERN,
     S_STATIC,
     S_AUTO,
     S_REGISTER,
-} StorageClass;
+};
 
-typedef enum {
+enum {
     T_CONST    = 0b001,
     T_RESTRICT = 0b010,
     T_VOLATILE = 0b100,
-} TypeQualifier;
+};
 
-typedef enum {
+enum {
     F_INLINE = 1,
-} FnSpecifier;
+};
 
-typedef enum {
+enum {
     L_NONE,
     L_STATIC,
     L_EXTERN,
-} Linkage;
+};
 
 typedef struct {
     struct AstType *t;
@@ -40,7 +40,7 @@ typedef struct {
     uint64_t val;
 } EnumConst;
 
-typedef enum {
+enum {
     T_VOID = 1,
     T_CHAR,
     T_SHORT,
@@ -57,11 +57,11 @@ typedef enum {
     T_STRUCT,
     T_UNION,
     T_ENUM,
-} AstTypeT;
+};
 
 typedef struct AstType {
-    AstTypeT k;
-    Linkage linkage;
+    int k;
+    int linkage;
     size_t size, align;
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
@@ -83,7 +83,7 @@ typedef struct AstType {
     };
 } AstType;
 
-typedef enum {
+enum {
     // Constants and variables
     N_IMM,
     N_FP,
@@ -168,11 +168,11 @@ typedef enum {
     N_RET,
 
     N_LAST,
-} AstNodeT;
+};
 
 typedef struct AstNode {
     struct AstNode *next;
-    AstNodeT k;
+    int k;
     AstType *t;
     Token *tk;
     union {
@@ -182,7 +182,7 @@ typedef struct AstNode {
         struct {      // N_STR
             union { char *str; uint16_t *str16; uint32_t *str32; };
             size_t len;
-            Enc enc;
+            int enc;
         };
         Vec *elems;     // N_INIT (array/struct initializer); of 'Node *'
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF

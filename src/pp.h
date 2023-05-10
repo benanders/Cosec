@@ -18,14 +18,14 @@ typedef struct { // C pre-processor
 
 typedef void (*BuiltIn)(PP *pp, Token *t);
 
-typedef enum {
+enum {
     MACRO_OBJ,
     MACRO_FN,
     MACRO_BUILT_IN,
-} MacroT;
+};
 
 typedef struct {
-    MacroT k;
+    int k;
     Vec *body; // of 'Token *'
     union {
         struct { size_t num_params; int is_vararg; }; // MACRO_FN
@@ -33,24 +33,24 @@ typedef struct {
     };
 } Macro;
 
-typedef enum {
+enum {
     COND_IF,
     COND_ELIF,
     COND_ELSE,
-} CondT;
+};
 
 typedef struct {
-    CondT k;
+    int k;
     int is_true;
 } Cond;
 
 PP * new_pp(Lexer *l);
 Token * next_tk(PP *pp);
-Token * next_tk_is(PP *pp, TokenT k);
+Token * next_tk_is(PP *pp, int k);
 Token * peek_tk(PP *pp);
-Token * peek_tk_is(PP *pp, TokenT k);
+Token * peek_tk_is(PP *pp, int k);
 Token * peek2_tk(PP *pp);
-Token * peek2_tk_is(PP *pp, TokenT k);
-Token * expect_tk(PP *pp, TokenT k);
+Token * peek2_tk_is(PP *pp, int k);
+Token * expect_tk(PP *pp, int k);
 
 #endif

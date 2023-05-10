@@ -7,16 +7,16 @@
 
 #define GLOBAL_PREFIX "_G."
 
-typedef enum {
+enum {
     SCOPE_FILE   = 0b0001,
     SCOPE_BLOCK  = 0b0010,
     SCOPE_LOOP   = 0b0100,
     SCOPE_SWITCH = 0b1000,
-} ScopeT;
+};
 
 typedef struct Scope {
     struct Scope *outer;
-    ScopeT k;
+    int k;
     Vec *globals;
     IrFn *fn;
     Map *vars;   // Block: 'IrIns *' k = IR_ALLOC; file: 'Global *'
@@ -30,7 +30,7 @@ typedef struct Scope {
 
 // ---- Scopes, Globals, Functions, Basic Blocks, and Instructions ------------
 
-static void enter_scope(Scope *inner, Scope *outer, ScopeT k) {
+static void enter_scope(Scope *inner, Scope *outer, int k) {
     *inner = (Scope) {0};
     inner->outer = outer;
     inner->k = k;
@@ -46,7 +46,7 @@ static void enter_scope(Scope *inner, Scope *outer, ScopeT k) {
     }
 }
 
-static Scope * find_scope(Scope *s, ScopeT k) {
+static Scope * find_scope(Scope *s, int k) {
     while (s && !(s->k & k)) {
         s = s->outer;
     }
@@ -99,7 +99,7 @@ static IrIns * emit_to_bb(IrBB *bb, IrIns *i) {
     return i;
 }
 
-static IrIns * emit(Scope *s, IrOp op, IrType *t) {
+static IrIns * emit(Scope *s, int op, IrType *t) {
     assert(s->fn->last);
     IrIns *i = calloc(1, sizeof(IrIns));
     i->op = op;
@@ -133,7 +133,7 @@ static void delete_ir(IrIns *ins) {
 
 // ---- IR Types --------------------------------------------------------------
 
-static IrType * irt_new(IrTypeT k) {
+static IrType * irt_new(int k) {
     IrType *t = calloc(1, sizeof(IrType));
     t->k = k;
     switch (k) {
@@ -197,6 +197,7 @@ static IrType * irt_conv(AstType *t) {
         assert(t->size == max->size && t->align == max->align);
         return max;
     case T_ENUM: return irt_conv(t->num_t);
+    default: UNREACHABLE();
     }
 }
 
@@ -267,7 +268,7 @@ static Global * find_global(Scope *s, char *name) {
 
 // ---- Expressions -----------------------------------------------------------
 
-static IrOp INVERT_COND[IR_LAST] = {
+static int INVERT_COND[IR_LAST] = {
     [IR_EQ] = IR_NEQ, [IR_NEQ] = IR_EQ,
     [IR_LT] = IR_GE, [IR_LE] = IR_GT, [IR_GT] = IR_LE, [IR_GE] = IR_LT,
 };
@@ -361,7 +362,7 @@ static IrIns * to_cond(Scope *s, IrIns *cond) {
 }
 
 static IrIns * emit_conv(Scope *s, IrIns *src, IrType *dt) {
-    IrOp op;
+    int op;
     IrType *st = src->t;
     if (is_int(st) && is_fp(dt)) {
         op = IR_I2FP;
@@ -583,7 +584,7 @@ static IrIns * compile_operand(Scope *s, AstNode *n) {
     return ins;
 }
 
-static IrIns * compile_binop(Scope *s, AstNode *n, IrOp op) {
+static IrIns * compile_binop(Scope *s, AstNode *n, int op) {
     IrIns *l = discharge(s, compile_expr(s, n->l));
     IrIns *r = discharge(s, compile_expr(s, n->r));
     IrIns *ins = emit(s, op, irt_conv(n->t));
@@ -666,7 +667,7 @@ static IrIns * compile_assign(Scope *s, AstNode *n) {
     return r; // Assignment evaluates to its right operand
 }
 
-static IrIns * compile_arith_assign(Scope *s, AstNode *n, IrOp op) {
+static IrIns * compile_arith_assign(Scope *s, AstNode *n, int op) {
     IrIns *binop = compile_binop(s, n, op);
 
     IrIns *lvalue = binop->l;
