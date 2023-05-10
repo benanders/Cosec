@@ -9,6 +9,11 @@
 
 #include "parse.h"
 
+typedef struct {
+    struct IrType *t;
+    size_t offset;
+} IrField;
+
 typedef enum {
     IRT_I8,
     IRT_I16,
@@ -26,7 +31,7 @@ typedef struct IrType {
     size_t size, align;
     union {
         struct { struct IrType *elem; size_t len; }; // IRT_ARR
-        Vec *fields; // IRT_STRUCT; of 'IrType *'
+        Vec *fields; // IRT_STRUCT; of 'IrField *'
     };
 } IrType;
 
@@ -41,7 +46,9 @@ typedef enum {
     IR_ALLOC, // Allocates stack space similar to LLVM's 'alloca'
     IR_LOAD,
     IR_STORE,
-    IR_ELEM, // Pointer offset calculations similar to LLVM's 'getelementptr'
+    IR_COPY,
+    IR_ZERO,
+    IR_IDX,   // Pointer addition (offset in bytes)
 
     // Arithmetic
     IR_ADD,
@@ -80,10 +87,6 @@ typedef enum {
     IR_CARG,   // Immediately after IR_CALL
     IR_RET,
 
-    // Intrinsics
-    IR_ZERO,
-    IR_COPY,
-
     IR_LAST, // For tables indexed by opcode
 } IrOp;
 
@@ -100,7 +103,7 @@ typedef struct IrIns {
     union {
         // Constants and globals
         uint64_t imm; // IR_IMM
-        struct { double fp; size_t fp_idx; }; // IR_FP
+        struct { double fp; size_t fp_idx; /* for assembler */ }; // IR_FP
         struct Global *g; // IR_GLOBAL
 
         // Memory access
@@ -110,8 +113,9 @@ typedef struct IrIns {
             struct IrIns *count;
             int stack_slot; /* for assembler */
         };
-        struct { struct IrIns *src, *dst; };     // IR_LOAD, IR_STORE
-        struct { struct IrIns *base, *offset; }; // IR_ELEM
+        struct { struct IrIns *src, *dst, *len; }; // IR_LOAD, IR_STORE, IR_COPY
+        struct { struct IrIns *ptr, *size; };      // IR_ZERO
+        struct { struct IrIns *base, *offset; };   // IR_IDX
 
         // Unary and binary operations
         struct { struct IrIns *l, *r; };
@@ -129,20 +133,16 @@ typedef struct IrIns {
         };
         struct IrIns *fn;  // IR_CALL
         struct IrIns *arg; // IR_CARG
-        struct IrIns *val; // IR_RET
-
-        // Intrinsics
-        struct { struct IrIns *ptr, *size; }; // IR_ZERO
-        struct { struct IrIns *cpy_src, *cpy_dst, *cpy_size; }; // IR_COPY
+        struct IrIns *ret; // IR_RET
     };
-    int vreg; // For the assembler
-    int idx;  // For printing
+    int vreg; // For assembler
+    int n;    // For printing
 } IrIns;
 
 typedef struct IrBB {
     struct IrBB *next, *prev;
     IrIns *head, *last;
-    int idx; // For printing
+    int n; // For printing
 } IrBB;
 
 typedef struct {

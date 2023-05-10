@@ -32,6 +32,7 @@ typedef enum {
 typedef struct {
     struct AstType *t;
     char *name;
+    size_t offset;
 } Field;
 
 typedef struct {
@@ -61,6 +62,7 @@ typedef enum {
 typedef struct AstType {
     AstTypeT k;
     Linkage linkage;
+    size_t size, align;
     union {
         int is_unsigned;  // T_CHAR to T_LLONG
         struct AstType *ptr; // T_PTR
@@ -89,7 +91,6 @@ typedef enum {
     N_INIT, // Array/struct/union initializer
     N_LOCAL,
     N_GLOBAL,
-    N_SIZEOF,
     N_KVAL, // Used by the constant expression parser
     N_KPTR,
 
@@ -191,7 +192,6 @@ typedef struct AstNode {
         struct { struct AstNode *l, *r; }; // Unary and binary operations
         struct { struct AstNode *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
         struct { struct AstNode *obj; size_t field_idx; }; // N_FIELD
-        AstType *size_of_t; // N_SIZEOF
 
         // Statements
         struct { struct AstNode *var, *val; }; // N_DECL

@@ -10,7 +10,7 @@
 // ---- AST -------------------------------------------------------------------
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "init", "local", "global", "sizeof", "kval", "kptr",
+    "imm", "fp", "str", "init", "local", "global", "kval", "kptr",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -385,13 +385,12 @@ void print_ast(AstNode *n) {
 
 static char *IR_OP_NAMES[IR_LAST] = {
     "IMM", "FP", "GLOBAL",
-    "FARG", "ALLOC", "LOAD", "STORE", "ELEM",
+    "FARG", "ALLOC", "LOAD", "STORE", "COPY", "ZERO", "IDX",
     "ADD", "SUB", "MUL", "DIV", "MOD",
     "AND", "OR", "XOR", "SHL", "SHR",
     "EQ", "NEQ", "LT", "LE", "GT", "GE",
     "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
     "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
-    "ZERO", "COPY",
 };
 
 static void print_irt(IrType *t) {
@@ -405,9 +404,9 @@ static void print_irt(IrType *t) {
     case IRT_F64: printf("f64"); break;
     case IRT_PTR: printf("ptr"); break;
     case IRT_ARR:
-        printf("[");
+        printf("[%zu x ", t->len);
         print_irt(t->elem);
-        printf(" x %zu]", t->len);
+        printf("]");
         break;
     case IRT_STRUCT:
         printf("struct { ");
@@ -422,7 +421,7 @@ static void print_irt(IrType *t) {
 }
 
 static void print_ins(IrIns *ins) {
-    printf("\t%.4d\t", ins->idx);
+    printf("\t%.4d\t", ins->n);
     print_irt(ins->t);
     printf("\t%s\t", IR_OP_NAMES[ins->op]);
     switch (ins->op) {
@@ -433,35 +432,35 @@ static void print_ins(IrIns *ins) {
     case IR_ALLOC:
         print_irt(ins->alloc_t);
         if (ins->count) {
-            printf("\t%.4d", ins->count->idx);
+            printf("\t%.4d", ins->count->n);
         }
         break;
-    case IR_STORE: printf("%.4d -> %.4d", ins->src->idx, ins->dst->idx); break;
-    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->cpy_src->idx,
-                          ins->cpy_dst->idx, ins->cpy_size->idx); break;
+    case IR_STORE: printf("%.4d -> %.4d", ins->src->n, ins->dst->n); break;
+    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->src->n,
+                          ins->dst->n, ins->len->n); break;
     case IR_PHI:
         for (size_t i = 0; i < vec_len(ins->preds); i++) {
             IrBB *pred = vec_get(ins->preds, i);
             IrIns *def = vec_get(ins->defs, i);
-            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->idx, def->idx);
+            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->n, def->n);
         }
         break;
-    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->idx : -1); break;
+    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->n : -1); break;
     case IR_CONDBR:
-        printf("%.4d\t", ins->cond->idx);
-        printf(BB_PREFIX "%d\t", ins->true ? ins->true->idx : -1);
-        printf(BB_PREFIX "%d", ins->false ? ins->false->idx : -1);
+        printf("%.4d\t", ins->cond->n);
+        printf(BB_PREFIX "%d\t", ins->true ? ins->true->n : -1);
+        printf(BB_PREFIX "%d", ins->false ? ins->false->n : -1);
         break;
     default:
-        if (ins->l) printf("%.4d", ins->l->idx);
-        if (ins->r) printf("\t%.4d", ins->r->idx);
+        if (ins->l) printf("%.4d", ins->l->n);
+        if (ins->r) printf("\t%.4d", ins->r->n);
         break;
     }
     printf("\n");
 }
 
 static void print_bb(IrBB *bb) {
-    printf(BB_PREFIX "%d:\n", bb->idx);
+    printf(BB_PREFIX "%d:\n", bb->n);
     for (IrIns *ins = bb->head; ins; ins = ins->next) {
         print_ins(ins);
     }
@@ -470,7 +469,7 @@ static void print_bb(IrBB *bb) {
 static void number_bbs(IrFn *fn) {
     int i = 0;
     for (IrBB *bb = fn->entry; bb; bb = bb->next) {
-        bb->idx = i++;
+        bb->n = i++;
     }
 }
 
@@ -478,7 +477,7 @@ static void number_ins(IrFn *fn) {
     int i = 0;
     for (IrBB *bb = fn->entry; bb; bb = bb->next) {
         for (IrIns *ins = bb->head; ins; ins = ins->next) {
-            ins->idx = i++;
+            ins->n = i++;
         }
     }
 }

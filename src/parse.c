@@ -75,6 +75,16 @@ static Scope * find_scope(Scope *s, ScopeT k) {
 static AstType * t_new(AstTypeT k) {
     AstType *t = calloc(1, sizeof(AstType));
     t->k = k;
+    switch (t->k) {
+    case T_CHAR:  t->size = t->align = 1; break;
+    case T_SHORT: t->size = t->align = 2; break;
+    case T_INT: case T_LONG: case T_FLOAT: t->size = t->align = 4; break;
+    case T_LLONG: case T_DOUBLE: case T_LDOUBLE: case T_PTR: case T_FN:
+        t->size = t->align = 8;
+        break;
+    case T_ARR: t->align = 8; break;
+    default: break;
+    }
     return t;
 }
 
@@ -90,10 +100,17 @@ static AstType * t_ptr(AstType *base) {
     return t;
 }
 
-static AstType * t_arr(AstType *base, AstNode *len) {
-    AstType *t = t_new(T_ARR);
-    t->elem = base;
+static void set_arr_len(AstType *t, AstNode *len) {
     t->len = len;
+    if (len && len->k == N_IMM) {
+        t->size = t->elem->size * len->imm;
+    }
+}
+
+static AstType * t_arr(AstType *elem, AstNode *len) {
+    AstType *t = t_new(T_ARR);
+    t->elem = elem;
+    set_arr_len(t, len);
     return t;
 }
 
@@ -105,10 +122,41 @@ static AstType * t_fn(AstType *ret, Vec *params, int is_vararg) {
     return t;
 }
 
+static void set_struct_fields(AstType *t, Vec *fields) {
+    t->fields = fields;
+    for (size_t i = 0; i < vec_len(fields); i++) { // Pick largest align
+        Field *f = vec_get(fields, i);
+        t->size += pad(t->size, f->t->align);
+        f->offset = t->size;
+        t->size += f->t->size;
+        t->align = f->t->align > t->align ? f->t->align : t->align;
+    }
+}
+
+static void set_union_fields(AstType *t, Vec *fields) {
+    t->fields = fields;
+    for (size_t i = 0; i < vec_len(fields); i++) { // Pick largest align
+        Field *f = vec_get(fields, i);
+        f->offset = 0;
+        if (f->t->size > t->size) {
+            t->size = f->t->size;
+            t->align = f->t->align;
+        }
+    }
+}
+
+static void set_enum_consts(AstType *t, Vec *consts, AstType *num_t) {
+    t->consts = consts;
+    t->num_t = num_t;
+    t->size = num_t->size;
+    t->align = num_t->align;
+}
+
 static Field * new_field(AstType *t, char *name) {
     Field *f = malloc(sizeof(Field));
     f->t = t;
     f->name = name;
+    f->offset = 0;
     return f;
 }
 
@@ -238,76 +286,6 @@ static int are_equal(AstType *a, AstType *b) {
         return 1;
     default: return a->is_unsigned == b->is_unsigned;
     }
-}
-
-// Needed by the constant expression parser to calculate truncations and
-// offsets to globals
-static size_t align_of(AstType *t) {
-    switch (t->k) {
-    case T_VOID:  return 0;
-    case T_CHAR:  return 1;
-    case T_SHORT: return 2;
-    case T_INT: case T_LONG: case T_FLOAT: return 4;
-    case T_LLONG: case T_DOUBLE: case T_LDOUBLE: case T_PTR: case T_FN: case T_ARR: return 8;
-    case T_STRUCT: case T_UNION:
-        assert(t->fields);
-        size_t align = 0;
-        for (size_t i = 0; i < vec_len(t->fields); i++) { // Pick largest align
-            Field *f = vec_get(t->fields, i);
-            size_t fa = align_of(f->t);
-            align = fa > align ? fa : align;
-        }
-        return align;
-    case T_ENUM: return align_of(t->num_t);
-    default: UNREACHABLE();
-    }
-}
-
-static size_t size_of(AstType *t) {
-    size_t size;
-    switch (t->k) {
-    case T_VOID:  return 0;
-    case T_CHAR:  return 1;
-    case T_SHORT: return 2;
-    case T_INT: case T_LONG: case T_FLOAT: return 4;
-    case T_LLONG: case T_DOUBLE: case T_LDOUBLE: case T_PTR: case T_FN: return 8;
-    case T_ARR:
-        assert(t->len && t->len->k == N_IMM);
-        return size_of(t->elem) * t->len->imm;
-    case T_STRUCT:
-        assert(t->fields);
-        size = 0;
-        for (size_t i = 0; i < vec_len(t->fields); i++) {
-            Field *f = vec_get(t->fields, i);
-            size += pad(size, align_of(f->t)) + size_of(f->t);
-        }
-        return size;
-    case T_UNION:
-        assert(t->fields);
-        size = 0;
-        for (size_t i = 0; i < vec_len(t->fields); i++) { // Pick largest size
-            Field *f = vec_get(t->fields, i);
-            size_t fs = size_of(f->t);
-            size = fs > size ? fs : size;
-        }
-        return size;
-    case T_ENUM:
-        assert(t->num_t);
-        return size_of(t->num_t);
-    default: UNREACHABLE();
-    }
-}
-
-static size_t offset_of(AstType *obj, size_t field_idx) {
-    assert(obj->k == T_STRUCT || obj->k == T_UNION);
-    assert(obj->fields);
-    size_t offset = 0;
-    for (size_t i = 0; i < field_idx; i++) {
-        Field *f = vec_get(obj->fields, i);
-        offset += pad(offset, align_of(f->t)) + size_of(f->t);
-    }
-    Field *f = vec_get(obj->fields, field_idx);
-    return offset + pad(offset, align_of(f->t));
 }
 
 static void expect_val(AstNode *n) {
@@ -501,7 +479,7 @@ static AstNode * parse_int(Token *tk) {
         if (!t) {
             error_at(tk, "invalid integer suffix '%s'", suffix);
         }
-        size_t bits = size_of(t) * 8;
+        size_t bits = t->size * 8;
         uint64_t invalid_bits = bits >= 64 ? 0 : ~((1 << bits) - 1);
         if ((num & invalid_bits) != 0) {
             warning_at(tk, "integer '%s' too large for specified type", tk->num);
@@ -627,7 +605,7 @@ static int is_type(Scope *s, Token *t) {
     }
 }
 
-static void parse_struct_fields(Scope *s, AstType *t) {
+static void parse_aggr_fields(Scope *s, AstType *t) {
     expect_tk(s->pp, '{');
     Vec *fields = vec_new();
     while (!peek_tk_is(s->pp, '}') && !peek_tk_is(s->pp, TK_EOF)) {
@@ -664,7 +642,11 @@ static void parse_struct_fields(Scope *s, AstType *t) {
         expect_tk(s->pp, ';');
     }
     expect_tk(s->pp, '}');
-    t->fields = fields;
+    if (t->k == T_STRUCT) {
+        set_struct_fields(t, fields);
+    } else { // T_UNION
+        set_union_fields(t, fields);
+    }
 }
 
 static void parse_enum_consts(Scope *s, AstType *t) {
@@ -691,22 +673,21 @@ static void parse_enum_consts(Scope *s, AstType *t) {
         }
     }
     expect_tk(s->pp, '}');
-    t->consts = consts;
-    t->num_t = num_t;
+    set_enum_consts(t, consts, num_t);
 }
 
-static void parse_fields(Scope *s, AstType *t) {
+static void parse_aggr_def(Scope *s, AstType *t) {
     if (t->k == T_STRUCT || t->k == T_UNION) {
-        parse_struct_fields(s, t);
+        parse_aggr_fields(s, t);
     } else { // T_ENUM
         parse_enum_consts(s, t);
     }
 }
 
-static AstType * parse_aggr_def(Scope *s, AstTypeT k) {
+static AstType * parse_aggr(Scope *s, AstTypeT k) {
     if (!peek_tk_is(s->pp, TK_IDENT)) { // Anonymous
         AstType *t = t_new(k);
-        parse_fields(s, t);
+        parse_aggr_def(s, t);
         return t;
     }
     Token *tag = next_tk(s->pp);
@@ -722,7 +703,7 @@ static AstType * parse_aggr_def(Scope *s, AstTypeT k) {
         }
         AstType *t = prev ? prev : t_new(k);
         map_put(s->tags, tag->ident, t);
-        parse_fields(s, t);
+        parse_aggr_def(s, t);
         return t;
     } else { // Declaration/use
         AstType *prev = find_tag(s, tag->ident);
@@ -770,9 +751,9 @@ static AstType * parse_decl_specs(Scope *s, StorageClass *sclass) {
         case TK_LONG:     if (size > tlong) { goto t_err; } size++; break;
         case TK_SIGNED:   if (sign) { goto t_err; } sign = tsigned; break;
         case TK_UNSIGNED: if (sign) { goto t_err; } sign = tunsigned; break;
-        case TK_STRUCT:   if (t) { goto t_err; } t = parse_aggr_def(s, T_STRUCT); break;
-        case TK_UNION:    if (t) { goto t_err; } t = parse_aggr_def(s, T_UNION); break;
-        case TK_ENUM:     if (t) { goto t_err; } t = parse_aggr_def(s, T_ENUM); break;
+        case TK_STRUCT:   if (t) { goto t_err; } t = parse_aggr(s, T_STRUCT); break;
+        case TK_UNION:    if (t) { goto t_err; } t = parse_aggr(s, T_UNION); break;
+        case TK_ENUM:     if (t) { goto t_err; } t = parse_aggr(s, T_ENUM); break;
         case TK_IDENT:
             if (!find_typedef(s, tk->ident)) goto done;
             if (t) goto t_err;
@@ -1071,8 +1052,10 @@ static AstNode * parse_operand(Scope *s) {
 
 static AstNode * parse_array_access(Scope *s, AstNode *l) {
     Token *op = expect_tk(s->pp, '[');
-    l = discharge(l);
-    if (l->t->k != T_PTR) {
+    if (l->t->k != T_ARR) {
+        l = discharge(l);
+    }
+    if (l->t->k != T_ARR && l->t->k != T_PTR) {
         error_at(op, "expected pointer or array type");
     }
     AstNode *idx = parse_subexpr(s, PREC_MIN);
@@ -1155,6 +1138,7 @@ static AstNode * parse_struct_field_deref(Scope *s, AstNode *l) {
 static AstNode * parse_post_inc_dec(Scope *s, AstNode *l) {
     Token *op = next_tk(s->pp);
     expect_assignable(l);
+    expect_val(l);
     l = discharge(l);
     AstNode *n = node(op->k == TK_INC ? N_POST_INC : N_POST_DEC, op);
     n->t = l->t;
@@ -1189,6 +1173,7 @@ static AstNode * parse_neg(Scope *s) {
 static AstNode * parse_plus(Scope *s) {
     expect_tk(s->pp, '+');
     AstNode *l = parse_subexpr(s, PREC_UNARY);
+    expect_num(l);
     return discharge(l); // Type promotion
 }
 
@@ -1206,6 +1191,7 @@ static AstNode * parse_bit_not(Scope *s) {
 static AstNode * parse_log_not(Scope *s) {
     Token *op = expect_tk(s->pp, '!');
     AstNode *l = parse_subexpr(s, PREC_UNARY);
+    expect_val(l);
     l = discharge(l);
     AstNode *unop = node(N_LOG_NOT, op);
     unop->t = t_num(T_INT, 0);
@@ -1217,6 +1203,7 @@ static AstNode * parse_pre_inc_dec(Scope *s) {
     Token *op = next_tk(s->pp);
     AstNode *l = parse_subexpr(s, PREC_UNARY);
     expect_assignable(l);
+    expect_val(l);
     l = discharge(l);
     AstNode *unop = node(op->k == TK_INC ? N_PRE_INC : N_PRE_DEC, op);
     unop->t = l->t;
@@ -1258,9 +1245,9 @@ static AstNode * parse_sizeof(Scope *s) {
         AstNode *l = parse_subexpr(s, PREC_UNARY);
         t = l->t;
     }
-    AstNode *n = node(N_SIZEOF, op);
+    AstNode *n = node(N_IMM, op);
     n->t = t_num(T_LONG, 1);
-    n->size_of_t = t;
+    n->imm = t->size;
     return n;
 }
 
@@ -1324,18 +1311,27 @@ static AstNode * emit_binop(AstNodeT op, AstNode *l, AstNode *r, Token *tk) {
             error_at(tk, "invalid operands to binary operation");
         }
         t = is_void_ptr(l->t) || is_null_ptr(l) ? r->t : l->t;
-    } else if (l->t->k == T_PTR || r->t->k == T_PTR) { // One pointer
+    } else if ((op == N_ADD || op == N_SUB) &&
+            (l->t->k == T_PTR || r->t->k == T_PTR)) { // Pointer arithmetic
         if (op == N_SUB && r->t->k == T_PTR) { // <int> - <ptr> invalid
             error_at(tk, "invalid operands to binary operation");
         }
         t = l->t->k == T_PTR ? l->t : r->t;
+        AstNode **num = l->t->k == T_PTR ? &r : &l;
+        *num = conv_to(*num, t_num(T_LLONG, 1));
+    } else if (l->t->k == T_PTR || r->t->k == T_PTR) { // Pointer comparison
+        t = l->t->k == T_PTR ? l->t : r->t;
+        l = conv_to(l, t);
+        r = conv_to(r, t);
     } else { // No pointers
         assert(is_num(l->t) && is_num(r->t));
         t = promote(l->t, r->t);
+        l = conv_to(l, t);
+        r = conv_to(r, t);
     }
     AstType *ret = t;
     if (l->t->k == T_PTR && r->t->k == T_PTR && op == N_SUB) {
-        ret = t_num(T_LLONG, 0); // Pointer diff
+        ret = t_num(T_LLONG, 0); // Pointer difference
     } else if (op >= N_EQ && op <= N_LOG_OR) {
         ret = t_num(T_INT, 0); // Comparison
     }
@@ -1484,30 +1480,30 @@ static AstNode * parse_expr_no_commas(Scope *s) {
     }                                          \
     break;
 
-#define CALC_BINOP_INT_FP_PTR(op)                                             \
-    l = eval_const_expr(e->l, err);                                           \
-    if (!l) goto err;                                                         \
-    r = eval_const_expr(e->r, err);                                           \
-    if (!r) goto err;                                                         \
-    if (l->k == N_IMM && r->k == N_IMM) {                                     \
-        n->k = N_IMM;                                                         \
-        n->imm = l->imm op r->imm;                                            \
-    } else if (l->k == N_FP && r->k == N_FP) {                                \
-        n->k = N_FP;                                                          \
-        n->fp = l->fp op r->fp;                                               \
-    } else if ((l->k == N_KPTR && r->k == N_IMM) ||                           \
-               (l->k == N_IMM && r->k == N_KPTR)) {                           \
-        AstNode *ptr = (l->k == N_KPTR) ? l : r, *imm = (ptr == l) ? r : l;      \
-        n->k = N_KPTR;                                                        \
-        n->g = ptr->g;                                                        \
-        n->offset = ptr->offset op (int64_t) imm->imm * size_of(ptr->t->ptr); \
-    } else if (e->k == N_SUB && l->k == N_KPTR && r->k == N_KPTR &&           \
-               globals_are_equal(l->g, r->g)) {                               \
-        n->k = N_IMM;                                                         \
-        n->imm = (l->offset op r->offset) / size_of(l->t->ptr);               \
-    } else {                                                                  \
-        goto err;                                                             \
-    }                                                                         \
+#define CALC_BINOP_INT_FP_PTR(op)                                           \
+    l = eval_const_expr(e->l, err);                                         \
+    if (!l) goto err;                                                       \
+    r = eval_const_expr(e->r, err);                                         \
+    if (!r) goto err;                                                       \
+    if (l->k == N_IMM && r->k == N_IMM) {                                   \
+        n->k = N_IMM;                                                       \
+        n->imm = l->imm op r->imm;                                          \
+    } else if (l->k == N_FP && r->k == N_FP) {                              \
+        n->k = N_FP;                                                        \
+        n->fp = l->fp op r->fp;                                             \
+    } else if ((l->k == N_KPTR && r->k == N_IMM) ||                         \
+               (l->k == N_IMM && r->k == N_KPTR)) {                         \
+        AstNode *ptr = (l->k == N_KPTR) ? l : r, *imm = (ptr == l) ? r : l; \
+        n->k = N_KPTR;                                                      \
+        n->g = ptr->g;                                                      \
+        n->offset = ptr->offset op (int64_t) imm->imm * ptr->t->ptr->size;  \
+    } else if (e->k == N_SUB && l->k == N_KPTR && r->k == N_KPTR &&         \
+               globals_are_equal(l->g, r->g)) {                             \
+        n->k = N_IMM;                                                       \
+        n->imm = (l->offset op r->offset) / l->t->ptr->size;                \
+    } else {                                                                \
+        goto err;                                                           \
+    }                                                                       \
     break;
 
 #define CALC_BINOP_EQ(op)                                                      \
@@ -1526,7 +1522,7 @@ static AstNode * parse_expr_no_commas(Scope *s) {
         n->imm = op (globals_are_equal(l->g, r->g) && l->offset == r->offset); \
     } else if ((l->k == N_KPTR && r->k == N_IMM) ||                            \
                (l->k == N_IMM && r->k == N_KPTR)) {                            \
-        AstNode *ptr = (l->k == N_KPTR) ? l : r, *imm = (ptr == l) ? r : l;       \
+        AstNode *ptr = (l->k == N_KPTR) ? l : r, *imm = (ptr == l) ? r : l;    \
         n->k = N_IMM;                                                          \
         n->imm = op (ptr->g == NULL && ptr->offset == (int64_t) imm->imm);     \
     } else {                                                                   \
@@ -1562,9 +1558,7 @@ static AstNode * eval_const_expr(AstNode *e, Token **err) {
     AstNode *n = node(e->k, e->tk);
     switch (e->k) {
         // Constants
-    case N_IMM: case N_FP: case N_STR: case N_SIZEOF:
-        *n = *e;
-        break;
+    case N_IMM: case N_FP: case N_STR: *n = *e; break;
     case N_INIT:
         n->elems = vec_new();
         for (size_t i = 0; i < vec_len(e->elems); i++) {
@@ -1647,11 +1641,11 @@ static AstNode * eval_const_expr(AstNode *e, Token **err) {
             n->imm = (int64_t) l->fp;
         } else if (is_int(e->t) && l->k == N_IMM) { // int -> int
             n->k = N_IMM;
-            uint64_t b = size_of(e->t) * 8; // Bits
-            uint64_t mask = b >= 64 ? -1 : ((uint64_t) 1 << b) - 1;
+            uint64_t bits = e->t->size * 8; // Bits
+            uint64_t mask = bits >= 64 ? -1 : ((uint64_t) 1 << bits) - 1;
             n->imm = l->imm & mask; // Truncate
-            if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (b - 1)))) {
-                n->imm |= ~(((int64_t) 1 << b) - 1); // Sign extend
+            if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (bits - 1)))) {
+                n->imm |= ~(((int64_t) 1 << bits) - 1); // Sign extend
             }
         } else if (e->t->k == T_PTR && l->k == N_IMM) { // int -> ptr
             n->k = N_KPTR;
@@ -1673,13 +1667,14 @@ static AstNode * eval_const_expr(AstNode *e, Token **err) {
         r = eval_const_expr(e->r, err);
         if (!r || r->k != N_IMM) goto err;
         *n = *l;
-        n->offset += (int64_t) (r->imm * size_of(l->t->elem));
+        n->offset += (int64_t) (r->imm * l->t->elem->size);
         break;
     case N_FIELD:
         l = eval_const_expr(e->obj, err);
         if (!l || l->k != N_KVAL) goto err;
         *n = *l;
-        n->offset += (int64_t) offset_of(l->t, e->field_idx);
+        Field *f = vec_get(l->t->fields, e->field_idx);
+        n->offset += (int64_t) f->offset;
         break;
     default: goto err;
     }
@@ -2026,7 +2021,7 @@ static AstNode * parse_string_init(Scope *s, AstType *t) {
     }
     if (!t->len) {
         assert(str->t->len->k == N_IMM);
-        t->len = str->t->len;
+        set_arr_len(t, str->t->len);
     }
     if (t->len->imm < str->len) {
         warning_at(str->tk, "initializer string is too long");
@@ -2099,9 +2094,10 @@ static AstNode * parse_array_init(Scope *s, AstType *t, int designated) {
         expect_tk(s->pp, '}');
     }
     if (!t->len) {
-        t->len = node(N_IMM, NULL);
-        t->len->t = t_num(T_LLONG, 1);
-        t->len->imm = idx;
+        AstNode *len = node(N_IMM, NULL);
+        len->t = t_num(T_LLONG, 1);
+        len->imm = idx;
+        set_arr_len(t, len);
     }
     if (idx < t->len->imm) {
         vec_put(n->elems, t->len->imm - 1, NULL);
@@ -2197,7 +2193,7 @@ static AstNode * parse_decl_init(Scope *s, AstType *t) {
         error_at(err, "array initializer must be an initializer list or string literal");
     }
     if (t->k == T_ARR && !t->len) { // Complete an incomplete array type
-        t->len = val->t->len;
+        set_arr_len(t, val->t->len);
     }
     val = conv_to(val, t);
     if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
