@@ -942,6 +942,32 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
 static void compile_block(Scope *s, AstNode *n);
 static void compile_stmt(Scope *s, AstNode *n);
 
+static IrIns * compile_vla(Scope *s, AstType *t) {
+    assert(is_vla(t));
+    Vec *to_mul = vec_new();
+    while (is_vla(t)) {
+        IrIns *count = discharge(s, compile_expr(s, t->len));
+        vec_push(to_mul, count);
+        IrIns *len = emit(s, IR_ALLOC, irt_new(IRT_PTR));
+        len->alloc_t = irt_conv(t->len->t);
+        emit_store(s, len, count, t->len->t);
+        t->len_val = len;
+        t = t->elem;
+    }
+    assert(vec_len(to_mul) > 0); // Is actually a VLA
+    IrIns *total = vec_get(to_mul, 0);
+    for (size_t i = 1; i < vec_len(to_mul); i++) {
+        IrIns *mul = emit(s, IR_MUL, total->t);
+        mul->l = vec_get(to_mul, i);
+        mul->r = total;
+        total = mul;
+    }
+    IrIns *alloc = emit(s, IR_ALLOC, irt_new(IRT_PTR));
+    alloc->alloc_t = irt_conv(t);
+    alloc->count = total;
+    return alloc;
+}
+
 static void compile_decl(Scope *s, AstNode *n) {
     if (n->var->t->k == T_FN) {
         return; // Not an object; doesn't need stack space
@@ -950,27 +976,8 @@ static void compile_decl(Scope *s, AstNode *n) {
     IrIns *alloc;
     if (n->val && n->val->k == N_INIT) { // Array/struct initializer list
         alloc = compile_init(s, n->val);
-//    } else if (is_vla(n->var->t)) { // VLA
-//        Vec *to_mul = vec_new();
-//        Type *t = n->var->t;
-//        while (is_vla(t)) {
-//            IrIns *count = discharge(s, compile_expr(s, t->len));
-//            vec_push(to_mul, count);
-//            t->len_ins = emit(s, IR_ALLOC, t_ptr(count->t));
-//            emit_store(s, t->len_ins, count);
-//            t = t->elem;
-//        }
-//        assert(vec_len(to_mul) > 0); // Is actually a VLA
-//        IrIns *total = vec_get(to_mul, 0);
-//        for (size_t i = 1; i < vec_len(to_mul); i++) {
-//            IrIns *mul = emit(s, IR_MUL, total->t);
-//            mul->l = vec_get(to_mul, i);
-//            mul->r = total;
-//            total = mul;
-//        }
-//        alloc = emit(s, IR_ALLOC, irt_new(IRT_PTR));
-//        alloc->alloc_t = irt_conv(t);
-//        alloc->count = total;
+    } else if (is_vla(n->var->t)) { // VLA
+        alloc = compile_vla(s, n->var->t);
     } else { // Everything else
         alloc = emit(s, IR_ALLOC, irt_new(IRT_PTR));
         alloc->alloc_t = irt_conv(n->var->t);

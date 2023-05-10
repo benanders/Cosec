@@ -209,7 +209,7 @@ static int is_string_type(AstType *t) {
             (t->elem->k == T_INT && t->elem->is_unsigned));
 }
 
-static int is_vla(AstType *t) {
+int is_vla(AstType *t) {
     while (t->k == T_ARR) {
         if (t->len && t->len->k != N_IMM) {
             return 1;

@@ -68,7 +68,8 @@ typedef struct AstType {
         struct AstType *ptr; // T_PTR
         struct { // T_ARR
             struct AstType *elem;
-            struct AstNode *len; // VLA if len->k != N_IMM
+            struct AstNode *len;   // VLA if len->k != N_IMM
+            struct IrIns *len_val; // For the compiler for VLAs
         };
         struct { // T_FN
             struct AstType *ret;
@@ -210,6 +211,9 @@ typedef struct AstNode {
 } AstNode;
 
 AstNode * parse(File *f);
+
+// Used by the compiler to handle VLAs separately
+int is_vla(AstType *t);
 
 // Used by the preprocessor for '#if' directives
 int64_t parse_const_int_expr(PP *pp);
