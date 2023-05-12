@@ -411,8 +411,8 @@ static void print_irt(IrType *t) {
     case IRT_STRUCT:
         printf("struct { ");
         for (size_t i = 0; i < vec_len(t->fields); i++) {
-            IrType *ft = vec_get(t->fields, i);
-            print_irt(ft);
+            IrField *f = vec_get(t->fields, i);
+            print_irt(f->t);
             printf(", ");
         }
         printf("}");

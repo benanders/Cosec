@@ -498,8 +498,8 @@ static int is_const_init(AstNode *n) {
     assert(n->k == N_INIT);
     for (size_t i = 0; i < vec_len(n->elems); i++) {
         AstNode *e = vec_get(n->elems, i);
-        if (!(e->k == N_IMM || e->k == N_FP || e->k == N_STR || e->k == N_KPTR ||
-              (e->k == N_INIT && is_const_init(e)))) {
+        if (!(!e || e->k == N_IMM || e->k == N_FP || e->k == N_STR ||
+                e->k == N_KPTR || (e->k == N_INIT && is_const_init(e)))) {
             return 0;
         }
     }
