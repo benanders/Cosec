@@ -1001,41 +1001,6 @@ static int IS_RASSOC[TK_LAST] = {
 static AstNode * parse_subexpr(Scope *s, int min_prec);
 static AstNode * parse_decl_init(Scope *s, AstType *t);
 
-// int:
-//   int -> int fine
-//   int -> fp fine
-//   int -> ptr fine
-//   NO int -> struct
-//   int -> union ONLY if member
-//   int -> enum fine
-// fp:
-//   fp -> int fine
-//   fp -> fp fine
-//   NO fp -> ptr
-//   NO fp -> struct
-//   fp -> union ONLY if member
-//   fp -> enum fine
-// ptr:
-//   ptr -> int; warn if int too small
-//   NO ptr -> fp
-//   ptr -> ptr; warn if incompatible
-//   NO ptr -> struct
-//   ptr -> enum; warn if enum too small
-// struct:
-//   NO struct -> not a struct
-//   NO not a struct -> struct
-//   struct -> struct ONLY if compatible
-// union:
-//   NO union -> not a union
-//   not a union -> union ONLY if member
-//   union -> union ONLY if compatible
-// enum:
-//   enum -> int fine
-//   enum -> fp fine
-//   enum -> ptr fine
-//   NO enum -> struct
-//   enum -> union ONLY if member
-//   enum -> enum fine
 static void check_conv(AstNode *l, AstType *dst) {
     AstType *src = l->t;
     if (is_fp(src) && (dst->k == T_PTR || dst->k == T_ARR || dst->k == T_FN)) {
@@ -1048,20 +1013,6 @@ static void check_conv(AstNode *l, AstType *dst) {
         error_at(l->tk, "cannot convert non-struct value to struct");
     } else if (src->k == T_STRUCT && dst->k == T_STRUCT) {
         error_at(l->tk, "cannot convert between incompatible struct types");
-    } else if (src->k == T_UNION && dst->k != T_UNION) {
-        error_at(l->tk, "cannot convert union to non-union value");
-    } else if (src->k != T_UNION && dst->k == T_UNION) {
-        int found = 0;
-        for (size_t i = 0; i < vec_len(dst->fields); i++) {
-            Field *f = vec_get(dst->fields, i);
-            if (are_equal(f->t, src)) {
-                found = 1;
-                break;
-            }
-        }
-        if (!found) {
-            error_at(l->tk, "cannot cast to union from type not present in union");
-        }
     } else if (src->k == T_UNION && dst->k == T_UNION) {
         error_at(l->tk, "cannot convert between incompatible union types");
     } else if (src->k == T_VOID) {
@@ -1072,27 +1023,61 @@ static void check_conv(AstNode *l, AstType *dst) {
 static void warn_implicit_conv(AstNode *l, AstType *dst) {
     AstType *src = l->t;
     if ((src->k == T_PTR || src->k == T_ARR || src->k == T_FN) &&
-            (is_int(dst) || dst->k == T_ENUM)) {
-        if (dst->size < 8) {
-            warning_at(l->tk, "integer type too small to represent range of pointer values");
-        }
+            (is_int(dst) || dst->k == T_ENUM) && dst->size < 8) {
+        warning_at(l->tk, "integer type too small to represent range of pointer values");
     } else if ((src->k == T_PTR || src->k == T_ARR) &&
-               (dst->k == T_PTR || dst->k == T_ARR)) {
-        if (!is_void_ptr(src) && !is_void_ptr(dst) && !are_equal(src->ptr, dst->ptr)) {
-            warning_at(l->tk, "conversion between incompatible pointer types");
+               (dst->k == T_PTR || dst->k == T_ARR) &&
+               !is_void_ptr(src) && !is_void_ptr(dst) &&
+               !are_equal(src->ptr, dst->ptr)) {
+        warning_at(l->tk, "conversion between incompatible pointer types");
+    }
+}
+
+static AstNode * conv_union(AstNode *l, AstType *dst) {
+    AstType *union_t = (l->t->k == T_UNION) ? l->t : dst;
+    AstType *val_t = (union_t == l->t) ? dst : l->t;
+    if (is_incomplete(union_t)) {
+        error_at(l->tk, "cannot convert incomplete union type");
+    }
+    size_t idx = -1;
+    for (size_t i = 0; i < vec_len(union_t->fields); i++) {
+        Field *f = vec_get(union_t->fields, i);
+        if (are_equal(f->t, val_t)) {
+            idx = i;
+            break;
         }
+    }
+    if (idx == (size_t) -1) {
+        error_at(l->tk, "cannot convert between union and type not present in union");
+    }
+    if (l->t->k == T_UNION) { // union -> member (field access)
+        AstNode *n = node(N_FIELD, l->tk);
+        n->t = dst;
+        n->obj = l;
+        n->field_idx = idx;
+        return n;
+    } else { // member -> union (init)
+        AstNode *n = node(N_INIT, l->tk);
+        n->t = dst;
+        n->elems = vec_new();
+        vec_push(n->elems, l);
+        return n;
     }
 }
 
 static AstNode * conv_explicit(AstNode *l, AstType *dst) {
-    if (!are_equal(l->t, dst)) {
-        check_conv(l, dst);
+    if (are_equal(l->t, dst)) {
+        return l;
+    }
+    check_conv(l, dst);
+    if ((l->t->k == T_UNION || dst->k == T_UNION) && l->t->k != dst->k) {
+        return conv_union(l, dst);
+    } else {
         AstNode *n = node(N_CONV, l->tk);
         n->t = dst;
         n->l = l;
         return n;
     }
-    return l;
 }
 
 static AstNode * conv_to(AstNode *l, AstType *dst) {
@@ -1195,7 +1180,7 @@ static AstNode * parse_call(Scope *s, AstNode *l) {
     return n;
 }
 
-static AstNode * parse_struct_field_access(Scope *s, AstNode *l) {
+static AstNode * parse_field_access(Scope *s, AstNode *l) {
     Token *op = next_tk(s->pp);
     if (l->t->k != T_STRUCT && l->t->k != T_UNION) {
         error_at(op, "expected struct or union type");
@@ -1218,12 +1203,12 @@ static AstNode * parse_struct_field_access(Scope *s, AstNode *l) {
     return n;
 }
 
-static AstNode * parse_struct_field_deref(Scope *s, AstNode *l) {
+static AstNode * parse_field_deref(Scope *s, AstNode *l) {
     expect_ptr(l);
     AstNode *n = node(N_DEREF, peek_tk(s->pp));
     n->t = l->t->ptr;
     n->l = l;
-    return parse_struct_field_access(s, n);
+    return parse_field_access(s, n);
 }
 
 static AstNode * parse_post_inc_dec(Scope *s, AstNode *l) {
@@ -1242,8 +1227,8 @@ static AstNode * parse_postfix(Scope *s, AstNode *l) {
         switch (peek_tk(s->pp)->k) {
         case '[': l = parse_array_access(s, l); break;
         case '(': l = parse_call(s, l); break;
-        case '.': l = parse_struct_field_access(s, l); break;
-        case TK_ARROW: l = parse_struct_field_deref(s, l); break;
+        case '.': l = parse_field_access(s, l); break;
+        case TK_ARROW: l = parse_field_deref(s, l); break;
         case TK_INC: case TK_DEC: l = parse_post_inc_dec(s, l); break;
         default: return l;
         }
