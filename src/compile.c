@@ -389,9 +389,11 @@ static IrIns * emit_conv(Scope *s, IrIns *src, IrType *dt) {
         idx->base = src;
         idx->offset = zero;
         return idx;
+    } else if (st->k == IRT_PTR && dt->k == IRT_ARR) {
+        op = IR_BITCAST;
     } else if ((st->k == IRT_PTR || st->k == IRT_ARR) &&
                (dt->k == IRT_PTR || dt->k == IRT_ARR)) {
-        op = IR_BITCAST;
+        return src; // No conversion necessary
     } else {
         UNREACHABLE();
     }
@@ -404,17 +406,17 @@ static IrIns * emit_load(Scope *s, IrIns *src, AstType *t) {
     // 't' is the type of the object to load from the pointer 'src'
     // The only valid operations on aggregate types are:
     // * T_STRUCT/T_UNION: field access (., ->), assign (=), addr (&), comma (,), ternary (?)
-    // * T_ARR: member access ([]), addr (&), comma (,), ternary (?)
+    // * T_ARR: member access ([]), addr (&), comma (,), ternary (?), ptr arith
     assert(src->t->k == IRT_PTR);
-    if (t->k == T_ARR) {
+    if (is_vla(t) || t->k == T_STRUCT || t->k == T_UNION || t->k == T_FN) {
+        return src; // Aggregates loaded on field access
+    } else if (t->k == T_ARR) { // Not VLA
         IrIns *zero = emit(s, IR_IMM, irt_new(IRT_I64));
         zero->imm = 0;
         IrIns *arr = emit(s, IR_IDX, irt_conv(t));
         arr->base = src;
         arr->offset = zero;
         return arr;
-    } else if (t->k == T_STRUCT || t->k == T_UNION || t->k == T_FN) {
-        return src; // Aggregates loaded on field access
     } else { // Base types
         IrIns *load = emit(s, IR_LOAD, irt_conv(t));
         load->src = src;
@@ -455,11 +457,11 @@ static void compile_struct_init_raw(Scope *s, AstNode *n, IrIns *obj) {
         Field *f = vec_get(n->t->fields, i);
         IrIns *offset = emit(s, IR_IMM, irt_new(IRT_I64));
         offset->imm = f->offset;
-        IrIns *elem = emit(s, IR_IDX, irt_new(IRT_PTR));
-        elem->base = obj;
-        elem->offset = offset;
+        IrIns *idx = emit(s, IR_IDX, irt_new(IRT_PTR));
+        idx->base = obj;
+        idx->offset = offset;
         AstNode *v = vec_get(n->elems, i);
-        compile_init_elem(s, v, f->t, elem);
+        compile_init_elem(s, v, f->t, idx);
     }
 }
 
@@ -632,15 +634,35 @@ static IrIns * compile_ptr_arith(Scope *s, AstNode *n) { // <ptr> +/- <int>
         sub->r = offset;
         offset = sub;
     }
+    IrIns *vla = NULL;
+    AstType *elem = (ptr == l) ? n->l->t->ptr : n->r->t->ptr;
+    if (is_vla(elem)) {
+        vla = emit_load(s, elem->vla_len, elem->len->t);
+        elem = elem->elem;
+        while (is_vla(elem)) {
+            IrIns *len = emit_load(s, elem->vla_len, elem->len->t);
+            IrIns *mul = emit(s, IR_MUL, vla->t);
+            mul->l = vla;
+            mul->r = len;
+            vla = mul;
+            elem = elem->elem;
+        }
+    }
     IrIns *scale = emit(s, IR_IMM, offset->t);
-    scale->imm = (ptr == l) ? n->l->t->ptr->size : n->r->t->ptr->size;
+    scale->imm = elem->size;
+    if (vla) {
+        IrIns *mul = emit(s, IR_MUL, vla->t);
+        mul->l = vla;
+        mul->r = scale;
+        scale = mul;
+    }
     IrIns *mul = emit(s, IR_MUL, offset->t);
     mul->l = offset;
     mul->r = scale;
-    IrIns *elem = emit(s, IR_IDX, irt_new(IRT_PTR));
-    elem->base = ptr;
-    elem->offset = mul;
-    return elem;
+    IrIns *idx = emit(s, IR_IDX, irt_new(IRT_PTR));
+    idx->base = ptr;
+    idx->offset = mul;
+    return idx;
 }
 
 static void emit_store(Scope *s, IrIns *dst, IrIns *src, AstType *t) {
@@ -828,10 +850,10 @@ static IrIns * compile_struct_field_access(Scope *s, AstNode *n) {
     obj->offset = zero;
     IrIns *offset = emit(s, IR_IMM, irt_new(IRT_I64));
     offset->imm = f->offset;
-    IrIns *elem = emit(s, IR_IDX, irt_new(IRT_PTR)); // Pointer to field in struct
-    elem->base = obj;
-    elem->offset = offset;
-    return emit_load(s, elem, f->t);
+    IrIns *idx = emit(s, IR_IDX, irt_new(IRT_PTR)); // Pointer to field in struct
+    idx->base = obj;
+    idx->offset = offset;
+    return emit_load(s, idx, f->t);
 }
 
 static IrIns * compile_union_field_access(Scope *s, AstNode *n) {
@@ -951,15 +973,15 @@ static IrIns * compile_vla(Scope *s, AstType *t) {
         IrIns *len = emit(s, IR_ALLOC, irt_new(IRT_PTR));
         len->alloc_t = irt_conv(t->len->t);
         emit_store(s, len, count, t->len->t);
-        t->len_val = len;
+        t->vla_len = len;
         t = t->elem;
     }
     assert(vec_len(to_mul) > 0); // Is actually a VLA
     IrIns *total = vec_get(to_mul, 0);
     for (size_t i = 1; i < vec_len(to_mul); i++) {
         IrIns *mul = emit(s, IR_MUL, total->t);
-        mul->l = vec_get(to_mul, i);
-        mul->r = total;
+        mul->l = total;
+        mul->r = vec_get(to_mul, i);
         total = mul;
     }
     IrIns *alloc = emit(s, IR_ALLOC, irt_new(IRT_PTR));

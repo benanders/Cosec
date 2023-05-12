@@ -317,13 +317,13 @@ static void expect_lval(AstNode *n) {
             n->k != N_DEREF && n->k != N_IDX && n->k != N_FIELD) {
         error_at(n->tk, "expression is not an lvalue");
     }
-    if (n->t->k == T_ARR)  error_at(n->tk, "array type is not an lvalue");
     if (n->t->k == T_VOID) error_at(n->tk, "'void' type is not an lvalue");
 }
 
 static void expect_assignable(AstNode *n) {
     expect_lval(n);
-    if (n->t->k == T_FN) error_at(n->tk, "function type is not assignable");
+    if (n->t->k == T_ARR) error_at(n->tk, "array type is not assignable");
+    if (n->t->k == T_FN)  error_at(n->tk, "function type is not assignable");
 }
 
 

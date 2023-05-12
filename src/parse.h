@@ -69,7 +69,7 @@ typedef struct AstType {
         struct { // T_ARR
             struct AstType *elem;
             struct AstNode *len;   // VLA if len->k != N_IMM
-            struct IrIns *len_val; // For the compiler for VLAs
+            struct IrIns *vla_len; // Length of VLA at init (for compiler)
         };
         struct { // T_FN
             struct AstType *ret;
