@@ -253,6 +253,7 @@ static int are_equal(AstType *a, AstType *b) {
         return are_equal(a->elem, b->elem);
     case T_FN:
         if (vec_len(a->params) != vec_len(b->params)) return 0;
+        if (a->is_vararg != b->is_vararg) return 0;
         for (size_t i = 0; i < vec_len(a->params); i++) {
             AstType *ta = vec_get(a->params, i);
             AstType *tb = vec_get(b->params, i);
@@ -267,7 +268,8 @@ static int are_equal(AstType *a, AstType *b) {
         for (size_t i = 0; i < vec_len(a->fields); i++) {
             Field *fa = vec_get(a->fields, i);
             Field *fb = vec_get(b->fields, i);
-            if (strcmp(fa->name, fb->name) != 0 || !are_equal(fa->t, fb->t)) {
+            if (strcmp(fa->name, fb->name) != 0 || !are_equal(fa->t, fb->t) ||
+                    fa->offset != fb->offset) {
                 return 0;
             }
         }
@@ -802,7 +804,7 @@ t_err:
 static AstType * parse_declarator_tail(Scope *s, AstType *base, Vec *param_names);
 static AstNode * parse_expr(Scope *s);
 static int try_calc_int_expr(AstNode *e, int64_t *val);
-static AstNode * conv_to(AstNode *l, AstType *t);
+static AstNode * conv_to(AstNode *l, AstType *dst);
 
 static AstType * parse_array_declarator(Scope *s, AstType *base) {
     expect_tk(s->pp, '[');
@@ -999,14 +1001,103 @@ static int IS_RASSOC[TK_LAST] = {
 static AstNode * parse_subexpr(Scope *s, int min_prec);
 static AstNode * parse_decl_init(Scope *s, AstType *t);
 
-static AstNode * conv_to(AstNode *l, AstType *t) {
-    AstNode *n = l;
-    if (!are_equal(l->t, t)) {
-        n = node(N_CONV, l->tk);
-        n->t = t;
-        n->l = l;
+// int:
+//   int -> int fine
+//   int -> fp fine
+//   int -> ptr fine
+//   NO int -> struct
+//   int -> union ONLY if member
+//   int -> enum fine
+// fp:
+//   fp -> int fine
+//   fp -> fp fine
+//   NO fp -> ptr
+//   NO fp -> struct
+//   fp -> union ONLY if member
+//   fp -> enum fine
+// ptr:
+//   ptr -> int; warn if int too small
+//   NO ptr -> fp
+//   ptr -> ptr; warn if incompatible
+//   NO ptr -> struct
+//   ptr -> enum; warn if enum too small
+// struct:
+//   NO struct -> not a struct
+//   NO not a struct -> struct
+//   struct -> struct ONLY if compatible
+// union:
+//   NO union -> not a union
+//   not a union -> union ONLY if member
+//   union -> union ONLY if compatible
+// enum:
+//   enum -> int fine
+//   enum -> fp fine
+//   enum -> ptr fine
+//   NO enum -> struct
+//   enum -> union ONLY if member
+//   enum -> enum fine
+static void check_conv(AstNode *l, AstType *dst) {
+    AstType *src = l->t;
+    if (is_fp(src) && (dst->k == T_PTR || dst->k == T_ARR || dst->k == T_FN)) {
+        error_at(l->tk, "cannot convert floating point value to pointer");
+    } else if ((src->k == T_PTR || src->k == T_ARR || src->k == T_FN) && is_fp(dst)) {
+        error_at(l->tk, "cannot convert pointer to floating point value");
+    } else if (src->k == T_STRUCT && dst->k != T_STRUCT) {
+        error_at(l->tk, "cannot convert struct to non-struct value");
+    } else if (src->k != T_STRUCT && dst->k == T_STRUCT) {
+        error_at(l->tk, "cannot convert non-struct value to struct");
+    } else if (src->k == T_STRUCT && dst->k == T_STRUCT) {
+        error_at(l->tk, "cannot convert between incompatible struct types");
+    } else if (src->k == T_UNION && dst->k != T_UNION) {
+        error_at(l->tk, "cannot convert union to non-union value");
+    } else if (src->k != T_UNION && dst->k == T_UNION) {
+        int found = 0;
+        for (size_t i = 0; i < vec_len(dst->fields); i++) {
+            Field *f = vec_get(dst->fields, i);
+            if (are_equal(f->t, src)) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            error_at(l->tk, "cannot cast to union from type not present in union");
+        }
+    } else if (src->k == T_UNION && dst->k == T_UNION) {
+        error_at(l->tk, "cannot convert between incompatible union types");
+    } else if (src->k == T_VOID) {
+        error_at(l->tk, "cannot convert from 'void' type");
     }
-    return n;
+}
+
+static void warn_implicit_conv(AstNode *l, AstType *dst) {
+    AstType *src = l->t;
+    if ((src->k == T_PTR || src->k == T_ARR || src->k == T_FN) &&
+            (is_int(dst) || dst->k == T_ENUM)) {
+        if (dst->size < 8) {
+            warning_at(l->tk, "integer type too small to represent range of pointer values");
+        }
+    } else if ((src->k == T_PTR || src->k == T_ARR) &&
+               (dst->k == T_PTR || dst->k == T_ARR)) {
+        if (!is_void_ptr(src) && !is_void_ptr(dst) && !are_equal(src->ptr, dst->ptr)) {
+            warning_at(l->tk, "conversion between incompatible pointer types");
+        }
+    }
+}
+
+static AstNode * conv_explicit(AstNode *l, AstType *dst) {
+    if (!are_equal(l->t, dst)) {
+        check_conv(l, dst);
+        AstNode *n = node(N_CONV, l->tk);
+        n->t = dst;
+        n->l = l;
+        return n;
+    }
+    return l;
+}
+
+static AstNode * conv_to(AstNode *l, AstType *dst) {
+    warn_implicit_conv(l, dst);
+    return conv_explicit(l, dst);
 }
 
 static AstNode * discharge(AstNode *l) {
