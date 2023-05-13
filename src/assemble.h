@@ -110,44 +110,44 @@ enum { // x86-64 opcodes
 };
 
 enum { // Operand types
-    OP_IMM,   // Immediate
-    OP_F32,   // Per-function floating point constant (float)
-    OP_F64,   // (double or ldouble)
-    OP_GPR,   // General purpose register
-    OP_XMM,   // Floating point SSE register
-    OP_MEM,   // Memory access: [base + idx * scale + disp]
-    OP_JMP,   // Jump to BB label
-    OP_LABEL, // Label
-    OP_DEREF, // Value at a label: [label]
+    OPR_IMM,   // Immediate
+    OPR_F32,   // Per-function floating point constant (float)
+    OPR_F64,   // (double or ldouble)
+    OPR_GPR,   // General purpose register
+    OPR_XMM,   // Floating point SSE register
+    OPR_MEM,   // Memory access: [base + idx * scale + disp]
+    OPR_JMP,   // Jump to BB label
+    OPR_LABEL, // Label
+    OPR_DEREF, // Value at a label: [label]
 };
 
 typedef struct {
     int k;
     union {
-        uint64_t imm; // OP_IMM
-        size_t fp;    // OP_FP
-        struct { int reg, size; }; // OP_GPR, OP_XMM
+        uint64_t imm; // OPR_IMM
+        size_t fp;    // OPR_FP
+        struct { int reg, size; }; // OPR_GPR, OPR_XMM
         struct {
             size_t bytes; // 1, 2, 4, or 8 bytes for memory access
             union {
-                struct { // OP_MEM
+                struct { // OPR_MEM
                     int base, base_size;
                     int idx, idx_size;
                     int scale; // 1, 2, 4, or 8
                     int64_t disp;
                 };
-                char *label; // OP_LABEL, OP_DEREF
+                char *label; // OPR_LABEL, OPR_DEREF
             };
         };
-        IrBB *bb; // OP_JMP
+        IrBB *bb; // OPR_JMP
     };
-} AsmOp;
+} AsmOpr;
 
 typedef struct AsmIns {
     struct AsmIns *next, *prev;
     struct AsmBB *bb;
     int op;
-    AsmOp *l, *r;
+    AsmOpr *l, *r;
     int n; // For register allocator
 } AsmIns;
 
