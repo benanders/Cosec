@@ -3,9 +3,13 @@
 
 #include "assemble.h"
 
+// macOS requires stack to be 16-byte aligned before calls
+#define STACK_ALIGN 16
+
 typedef struct { // Per-function assembler
     AsmFn *fn;
-    int next_gpr, next_sse, next_stack;
+    int next_gpr, next_sse;
+    size_t next_stack;
     Vec *patch_with_stack_size; // of 'AsmIns *'
 } Assembler;
 
@@ -184,7 +188,7 @@ static AsmOpr * opr_mem_from_alloc(IrIns *alloc) {
     mem->base = RBP;
     mem->base_size = R64;
     mem->scale = 1;
-    mem->disp = -alloc->stack_slot;
+    mem->disp = -((int64_t) alloc->stack_slot);
     return mem;
 }
 
@@ -273,9 +277,205 @@ static AsmOpr * inline_imm_mem(Assembler *a, IrIns *ir) {
 }
 
 
+// ---- Instructions ----------------------------------------------------------
+
+static int INT_OP[IR_LAST] = {
+    [IR_ADD] = X64_ADD,
+    [IR_SUB] = X64_SUB,
+    [IR_MUL] = X64_IMUL,
+    [IR_BIT_AND] = X64_AND,
+    [IR_BIT_OR] = X64_OR,
+    [IR_BIT_XOR] = X64_XOR,
+};
+
+static int F32_OP[IR_LAST] = {
+    [IR_ADD] = X64_ADDSS,
+    [IR_SUB] = X64_SUBSS,
+    [IR_MUL] = X64_MULSS,
+    [IR_DIV] = X64_DIVSS,
+};
+
+static int F64_OP[IR_LAST] = {
+    [IR_ADD] = X64_ADDSD,
+    [IR_SUB] = X64_SUBSD,
+    [IR_MUL] = X64_MULSD,
+    [IR_DIV] = X64_DIVSD,
+};
+
+static void asm_fp(Assembler *a, IrIns *ir) {
+    size_t idx;
+    if (ir->t->k == T_FLOAT) {
+        idx = vec_len(a->fn->f32s);
+        float *fp = malloc(sizeof(float));
+        *fp = (float) ir->fp;
+        vec_push(a->fn->f32s, fp);
+    } else {
+        idx = vec_len(a->fn->f64s);
+        double *fp = malloc(sizeof(double));
+        *fp = ir->fp;
+        vec_push(a->fn->f64s, fp);
+    }
+    ir->fp_idx = idx;
+}
+
+static size_t align_to(size_t val, size_t align) {
+    if (align > 0) {
+        return val % align == 0 ? val : val + align - (val % align);
+    } else {
+        return val;
+    }
+}
+
+static void asm_alloc(Assembler *a, IrIns *ir) {
+    assert(ir->t->k == IRT_PTR);
+    a->next_stack = align_to(a->next_stack, ir->alloc_t->align) + ir->alloc_t->size;
+    ir->stack_slot = a->next_stack;
+}
+
+static void asm_load(Assembler *a, IrIns *ir) {
+    // TODO: discharge IR_LOADs with more than one use here
+}
+
+static void asm_store(Assembler *a, IrIns *ir) {
+    AsmOpr *l = load_ptr(a, ir->dst);
+    AsmOpr *r = inline_imm(a, ir->src);
+    emit(a, asm2(mov_for(ir->src->t), l, r));
+}
+
+static void asm_arith(Assembler *a, IrIns *ir) {
+    AsmOpr *l = discharge(a, ir->l); // Left operand always a vreg
+    AsmOpr *r = inline_imm_mem(a, ir->r);
+
+    AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
+    ir->vreg = dst->reg;
+    emit(a, asm2(mov_for(ir->t), dst, l));
+
+    int op;
+    switch (ir->t->k) {
+        case IRT_F32: op = F32_OP[ir->op]; break;
+        case IRT_F64: op = F64_OP[ir->op]; break;
+        default:      op = INT_OP[ir->op]; break;
+    }
+    assert(op != 0);
+    emit(a, asm2(op, dst, r));
+}
+
+static void asm_div_mod(Assembler *a, IrIns *ir) {
+    // TODO
+}
+
+static void asm_sh(Assembler *a, IrIns *ir) {
+    // TODO
+}
+
+static void asm_postamble(Assembler *a);
+
+static void asm_ret(Assembler *a, IrIns *ir) {
+    if (ir->ret) {
+        AsmOpr *val = inline_imm_mem(a, ir->ret);
+        if (ir->ret->t->k == IRT_F32 || ir->ret->t->k == IRT_F64) {
+            emit(a, asm2(mov_for(ir->ret->t), opr_xmm(XMM0), val));
+        } else {
+            // Zero the rest of eax using movsx if the function returns
+            // something smaller than an int
+            AsmOpr *dst = opr_gpr(RAX, ir->ret->t->size == 8 ? R64 : R32);
+            int mov_op = ir->ret->t->size < 4 ? X64_MOVSX : X64_MOV;
+            emit(a, asm2(mov_op, dst, val));
+        }
+    }
+    asm_postamble(a);
+    emit(a, asm0(X64_RET));
+}
+
+static void asm_ins(Assembler *a, IrIns *ir) {
+    switch (ir->op) {
+    // Constants and globals
+    case IR_IMM:    break; // Always inlined
+    case IR_FP:     asm_fp(a, ir); break;
+    case IR_GLOBAL: break; // Always inlined
+
+        // Memory access
+    case IR_FARG:  assert(0); // TODO
+    case IR_ALLOC: asm_alloc(a, ir); break;
+    case IR_LOAD:  asm_load(a, ir); break;
+    case IR_STORE: asm_store(a, ir); break;
+    case IR_IDX:   assert(0); // TODO
+
+        // Arithmetic
+    case IR_ADD: case IR_SUB: case IR_MUL:
+    case IR_BIT_AND: case IR_BIT_OR: case IR_BIT_XOR:
+        asm_arith(a, ir);
+        break;
+    case IR_DIV:
+        if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
+            asm_arith(a, ir);
+        } else {
+            asm_div_mod(a, ir);
+        }
+        break;
+    case IR_MOD: asm_div_mod(a, ir); break;
+    case IR_SHL: case IR_SHR: asm_sh(a, ir); break;
+
+        // Comparisons
+    case IR_EQ: case IR_NEQ: case IR_LT: case IR_LE: case IR_GT: case IR_GE:
+        break; // Handled by CONDBR
+
+        // Control flow
+    case IR_RET: asm_ret(a, ir); break;
+    default: assert(0); // TODO
+    }
+}
+
+static void asm_bb(Assembler *a, IrBB *ir_bb) {
+    for (IrIns *ins = ir_bb->head; ins; ins = ins->next) {
+        asm_ins(a, ins);
+    }
+}
+
+
 // ---- Functions -------------------------------------------------------------
 
+static void asm_preamble(Assembler *a) {
+    emit(a, asm1(X64_PUSH, opr_gpr(RBP, R64)));                            // push rbp
+    emit(a, asm2(X64_MOV, opr_gpr(RBP, R64), opr_gpr(RSP, R64)));          // mov rbp, rsp
+    AsmIns *patch = emit(a, asm2(X64_SUB, opr_gpr(RSP, R64), opr_imm(0))); // sub rsp, <stack size>
+    vec_push(a->patch_with_stack_size, patch);
+}
+
+static void asm_postamble(Assembler *a) {
+    AsmIns *patch = emit(a, asm2(X64_ADD, opr_gpr(RSP, R64), opr_imm(0))); // add rsp, <stack size>
+    emit(a, asm1(X64_POP, opr_gpr(RBP, R64)));                             // pop rbp
+    vec_push(a->patch_with_stack_size, patch);
+}
+
+static void patch_stack_sizes(Assembler *a) {
+    a->next_stack = align_to(a->next_stack, STACK_ALIGN);
+    if (a->next_stack == 0) {
+        for (size_t i = 0; i < vec_len(a->patch_with_stack_size); i++) {
+            AsmIns *ins = vec_get(a->patch_with_stack_size, i);
+            delete_asm(ins);
+        }
+    } else {
+        for (size_t i = 0; i < vec_len(a->patch_with_stack_size); i++) {
+            AsmIns *ins = vec_get(a->patch_with_stack_size, i);
+            assert(ins->r->k == OPR_IMM);
+            ins->r->imm = a->next_stack;
+        }
+    }
+}
+
 static AsmFn * asm_fn(IrFn *ir_fn) {
+    AsmFn *fn = new_fn();
+    Assembler *a = new_asm(fn);
+    asm_preamble(a);
+    for (IrBB *ir_bb = ir_fn->entry; ir_bb; ir_bb = ir_bb->next) {
+        emit_bb(a);
+        asm_bb(a, ir_bb);
+    }
+    patch_stack_sizes(a);
+    fn->num_gprs = a->next_gpr;
+    fn->num_sse = a->next_sse;
+    return fn;
 }
 
 Vec * assemble(Vec *global) {

@@ -111,7 +111,7 @@ typedef struct IrIns {
         struct { // IR_ALLOC
             IrType *alloc_t;
             struct IrIns *count;
-            int stack_slot; /* for assembler */
+            size_t stack_slot; // For assembler
         };
         struct { struct IrIns *src, *dst, *len; }; // IR_LOAD, IR_STORE, IR_COPY
         struct { struct IrIns *ptr, *size; };      // IR_ZERO
@@ -151,7 +151,7 @@ typedef struct {
 
 typedef struct Global {
     char *label;
-    AstNode *val; // NULL if fn def; or one of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
+    AstNode *val; // NULL if fn def; or N_IMM, N_FP, N_STR, N_INIT, N_KPTR
     IrFn *ir_fn;
     struct AsmFn *asm_fn;
 } Global;
