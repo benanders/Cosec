@@ -15,6 +15,7 @@ add_executable(Cosec
         src/parse.c src/parse.h
         src/compile.c src/compile.h
         src/assemble.c src/assemble.h
+        src/encode.c src/encode.h
         src/error.c src/error.h
         src/debug.c src/debug.h
         src/util.c src/util.h)

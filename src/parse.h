@@ -4,29 +4,29 @@
 
 #include "pp.h"
 
-enum {
-    S_NONE,
-    S_TYPEDEF,
-    S_EXTERN,
-    S_STATIC,
-    S_AUTO,
-    S_REGISTER,
+enum { // Storage classes
+    SC_NONE,
+    SC_TYPEDEF,
+    SC_EXTERN,
+    SC_STATIC,
+    SC_AUTO,
+    SC_REGISTER,
 };
 
-enum {
-    T_CONST    = 0b001,
-    T_RESTRICT = 0b010,
-    T_VOLATILE = 0b100,
+enum { // Type qualifiers
+    TQ_CONST    = 0b001,
+    TQ_RESTRICT = 0b010,
+    TQ_VOLATILE = 0b100,
 };
 
-enum {
-    F_INLINE = 1,
+enum { // Function specifiers
+    FS_INLINE = 1,
 };
 
-enum {
-    L_NONE,
-    L_STATIC,
-    L_EXTERN,
+enum { // Linkage
+    LINK_NONE,
+    LINK_STATIC,
+    LINK_EXTERN,
 };
 
 typedef struct {

@@ -212,7 +212,7 @@ static void print_expr(AstNode *n) {
 
 static void print_fn_def(AstNode *n) {
     assert(n->t->k == T_FN);
-    if (n->t->linkage == L_STATIC) {
+    if (n->t->linkage == LINK_STATIC) {
         printf("static ");
     }
     print_type(n->t);
@@ -256,9 +256,9 @@ static void print_node(AstNode *n, int indent) {
         break;
     case N_DECL:
         print_indent(indent);
-        if (n->var->t->linkage == L_STATIC) {
+        if (n->var->t->linkage == LINK_STATIC) {
             printf("static ");
-        } else if (n->var->t->linkage == L_EXTERN) {
+        } else if (n->var->t->linkage == LINK_EXTERN) {
             printf("extern ");
         }
         print_expr(n->var);
@@ -483,10 +483,10 @@ static void number_ins(IrFn *fn) {
 }
 
 static void print_fn(Global *g) {
-    number_bbs(g->fn);
-    number_ins(g->fn);
+    number_bbs(g->ir_fn);
+    number_ins(g->ir_fn);
     printf("%s:\n", g->label);
-    for (IrBB *bb = g->fn->entry; bb; bb = bb->next) {
+    for (IrBB *bb = g->ir_fn->entry; bb; bb = bb->next) {
         print_bb(bb);
     }
 }
@@ -505,7 +505,7 @@ static void print_global(Global *g) {
 void print_ir(Vec *globals) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->fn) {
+        if (g->ir_fn) {
             print_fn(g);
         } else {
             print_global(g);

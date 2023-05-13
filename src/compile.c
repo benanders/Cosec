@@ -57,7 +57,7 @@ static Global * new_global(char *label) {
     Global *g = malloc(sizeof(Global));
     g->label = label;
     g->val = NULL;
-    g->fn = NULL;
+    g->ir_fn = NULL;
     return g;
 }
 
@@ -1253,11 +1253,11 @@ static void compile_fn_args(Scope *s, AstNode *n) {
 
 static void compile_fn_def(Scope *s, AstNode *n) {
     Global *g = new_global(prepend_underscore(n->fn_name));
-    g->fn = new_fn();
+    g->ir_fn = new_fn();
     def_global(s, n->fn_name, g);
     Scope body;
     enter_scope(&body, s, SCOPE_BLOCK);
-    body.fn = g->fn;
+    body.fn = g->ir_fn;
     compile_fn_args(&body, n);
     compile_block(&body, n->body);
     if (!body.fn->last->last || body.fn->last->last->op != IR_RET) {

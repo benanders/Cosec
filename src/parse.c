@@ -359,7 +359,7 @@ static AstType * find_tag(Scope *s, char *tag) {
 
 static void def_symbol(Scope *s, AstNode *n) {
     AstNode *v;
-    if (n->t->linkage == L_EXTERN) { // extern needs type checking across scopes
+    if (n->t->linkage == LINK_EXTERN) { // extern needs type checking across scopes
         v = find_var(s, n->var_name);
         if (v && !are_equal(n->t, v->t)) goto err_type;
     }
@@ -371,12 +371,12 @@ static void def_symbol(Scope *s, AstNode *n) {
         // ALLOWED: [int a; extern int a;]
         // ALLOWED: [static int a; extern int a;]
         // ALLOWED: [extern int a; int a;]
-        if (n->t->linkage == L_STATIC && v->t->linkage == L_NONE)   goto err_static1;
-        if (n->t->linkage == L_NONE   && v->t->linkage == L_STATIC) goto err_static2;
-        if (n->t->linkage == L_EXTERN && v->t->linkage == L_STATIC) goto err_static2;
+        if (n->t->linkage == LINK_STATIC && v->t->linkage == LINK_NONE)   goto err_static1;
+        if (n->t->linkage == LINK_NONE && v->t->linkage == LINK_STATIC)   goto err_static2;
+        if (n->t->linkage == LINK_EXTERN && v->t->linkage == LINK_STATIC) goto err_static2;
     } else { // Block scope
         // ALLOWED: [extern int a; extern int a]
-        if (!(n->t->linkage == L_EXTERN && v->t->linkage == L_EXTERN)) goto err_redef;
+        if (!(n->t->linkage == LINK_EXTERN && v->t->linkage == LINK_EXTERN)) goto err_redef;
     }
     goto okay;
 err_redef:
@@ -394,13 +394,13 @@ okay:
 }
 
 static AstNode * def_var(Scope *s, Token *name, AstType *t) {
-    if (t->k == T_FN && s->k != SCOPE_FILE && t->linkage == L_STATIC) {
+    if (t->k == T_FN && s->k != SCOPE_FILE && t->linkage == LINK_STATIC) {
         error_at(name, "function declared in block scope cannot have 'static' storage class");
     }
-    if (t->k == T_FN && t->linkage == L_NONE) {
-        t->linkage = L_EXTERN; // Functions are 'extern' if unspecified
+    if (t->k == T_FN && t->linkage == LINK_NONE) {
+        t->linkage = LINK_EXTERN; // Functions are 'extern' if unspecified
     }
-    int is_global = s->k == SCOPE_FILE || t->linkage == L_STATIC || t->linkage == L_EXTERN;
+    int is_global = s->k == SCOPE_FILE || t->linkage == LINK_STATIC || t->linkage == LINK_EXTERN;
     AstNode *n = node(is_global ? N_GLOBAL : N_LOCAL, name);
     n->t = t;
     n->var_name = name->ident;
@@ -409,7 +409,7 @@ static AstNode * def_var(Scope *s, Token *name, AstType *t) {
 }
 
 static AstNode * def_typedef(Scope *s, Token *name, AstType *t) {
-    assert(t->linkage == L_NONE);
+    assert(t->linkage == LINK_NONE);
     AstNode *n = node(N_TYPEDEF, name);
     n->t = t;
     n->var_name = name->ident;
@@ -614,7 +614,7 @@ static void parse_aggr_fields(Scope *s, AstType *t) {
         Token *tk = peek_tk(s->pp);
         int sclass;
         AstType *base = parse_decl_specs(s, &sclass);
-        if (sclass != S_NONE) {
+        if (sclass != SC_NONE) {
             error_at(tk, "illegal storage class specifier in %s field",
                      t->k == T_STRUCT ? "struct" : "union");
         }
@@ -735,15 +735,15 @@ static AstType * parse_decl_specs(Scope *s, int *sclass) {
     while (1) {
         tk = next_tk(s->pp);
         switch (tk->k) {
-        case TK_TYPEDEF:  if (sc) { goto sc_err; } sc = S_TYPEDEF; break;
-        case TK_AUTO:     if (sc) { goto sc_err; } sc = S_AUTO; break;
-        case TK_STATIC:   if (sc) { goto sc_err; } sc = S_STATIC; break;
-        case TK_EXTERN:   if (sc) { goto sc_err; } sc = S_EXTERN; break;
-        case TK_REGISTER: if (sc) { goto sc_err; } sc = S_REGISTER; break;
-        case TK_INLINE:   if (fs) { goto fs_err; } fs = F_INLINE; break;
-        case TK_CONST:    tq |= T_CONST; break;
-        case TK_RESTRICT: tq |= T_RESTRICT; break;
-        case TK_VOLATILE: tq |= T_VOLATILE; break;
+        case TK_TYPEDEF:  if (sc) { goto sc_err; } sc = SC_TYPEDEF; break;
+        case TK_AUTO:     if (sc) { goto sc_err; } sc = SC_AUTO; break;
+        case TK_STATIC:   if (sc) { goto sc_err; } sc = SC_STATIC; break;
+        case TK_EXTERN:   if (sc) { goto sc_err; } sc = SC_EXTERN; break;
+        case TK_REGISTER: if (sc) { goto sc_err; } sc = SC_REGISTER; break;
+        case TK_INLINE:   if (fs) { goto fs_err; } fs = FS_INLINE; break;
+        case TK_CONST:    tq |= TQ_CONST; break;
+        case TK_RESTRICT: tq |= TQ_RESTRICT; break;
+        case TK_VOLATILE: tq |= TQ_VOLATILE; break;
         case TK_VOID:     if (kind) { goto t_err; } kind = tvoid; break;
         case TK_CHAR:     if (kind) { goto t_err; } kind = tchar; break;
         case TK_INT:      if (kind) { goto t_err; } kind = tint; break;
@@ -2253,7 +2253,7 @@ static AstNode * parse_init_list(Scope *s, AstType *t) {
 
 static AstNode * parse_decl_init(Scope *s, AstType *t) {
     Token *err = peek_tk(s->pp);
-    if (t->linkage == L_EXTERN || t->k == T_FN) {
+    if (t->linkage == LINK_EXTERN || t->k == T_FN) {
         error_at(err, "illegal initializer");
     }
     if (is_vla(t)) {
@@ -2272,7 +2272,7 @@ static AstNode * parse_decl_init(Scope *s, AstType *t) {
         set_arr_len(t, val->t->len);
     }
     val = conv_to(val, t);
-    if (t->linkage == L_STATIC || s->k == SCOPE_FILE) {
+    if (t->linkage == LINK_STATIC || s->k == SCOPE_FILE) {
         val = calc_const_expr(val);
     }
     return val;
@@ -2301,15 +2301,15 @@ static AstNode * parse_init_decl(Scope *s, AstType *base, int sclass) {
     Vec *param_names = vec_new();
     AstType *t = parse_named_declarator(s, base, &name, param_names);
     switch (sclass) {
-    case S_TYPEDEF: return def_typedef(s, name, t);
-    case S_EXTERN:  t->linkage = L_EXTERN; break;
-    case S_STATIC:  t->linkage = L_STATIC; break;
-    case S_AUTO: case S_REGISTER:
+    case SC_TYPEDEF: return def_typedef(s, name, t);
+    case SC_EXTERN: t->linkage = LINK_EXTERN; break;
+    case SC_STATIC: t->linkage = LINK_STATIC; break;
+    case SC_AUTO: case SC_REGISTER:
         if (s->k == SCOPE_FILE) {
             error_at(name, "illegal storage class specifier in file scope");
         }
         break;
-    case S_NONE: break;
+    case SC_NONE: break;
     }
     if (s->k == SCOPE_FILE && peek_tk_is(s->pp, '{')) {
         return parse_fn_def(s, t, name, param_names);

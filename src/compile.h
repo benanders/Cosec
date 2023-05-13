@@ -152,7 +152,8 @@ typedef struct {
 typedef struct Global {
     char *label;
     AstNode *val; // NULL if fn def; or one of N_IMM, N_FP, N_STR, N_INIT, N_KPTR
-    IrFn *fn;
+    IrFn *ir_fn;
+    struct AsmFn *asm_fn;
 } Global;
 
 Vec * compile(AstNode *n);
