@@ -50,39 +50,6 @@ Macro * new_macro(int k) {
     return m;
 }
 
-static void push_lexer(PP *pp, Lexer *l) {
-    l->parent = pp->l;
-    pp->l = l;
-}
-
-static void pop_lexer(PP *pp) {
-    pp->l = pp->l->parent;
-    assert(pp->l);
-}
-
-static Token * lex_next(PP *pp) {
-    Token *t = lex_tk(pp->l);
-    if (pp->l->parent && t->k == TK_EOF) {
-        pop_lexer(pp);
-        return lex_next(pp);
-    }
-    return t;
-}
-
-static Token * lex_peek(PP *pp) {
-    Token *t = lex_next(pp);
-    undo_tk(pp->l, t);
-    return t;
-}
-
-static Token * lex_expect(PP *pp, int k) {
-    Token *t = lex_next(pp);
-    if (t->k != k) {
-        error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));
-    }
-    return t;
-}
-
 
 // ---- Macro Definitions -----------------------------------------------------
 
@@ -102,10 +69,10 @@ static void check_no_concat_at_start_or_end(Vec *tks) {
 
 static Macro * parse_obj_macro(PP *pp) {
     Vec *body = vec_new();
-    Token *t = lex_next(pp);
+    Token *t = next_raw_tk(pp->l);
     while (t->k != TK_NEWLINE) {
         vec_push(body, t);
-        t = lex_next(pp);
+        t = next_raw_tk(pp->l);
     }
     check_no_concat_at_start_or_end(body);
     Macro *m = new_macro(MACRO_OBJ);
@@ -114,20 +81,20 @@ static Macro * parse_obj_macro(PP *pp) {
 }
 
 static Map * parse_params(PP *pp, int *is_vararg) {
-    lex_expect(pp, '(');
+    expect_raw_tk(pp->l, '(');
     Map *params = map_new();
     size_t num_params = 0;
-    Token *t = lex_peek(pp);
+    Token *t = peek_raw_tk(pp->l);
     *is_vararg = 0;
     while (t->k != ')' && t->k != TK_NEWLINE) {
-        t = lex_next(pp);
+        t = next_raw_tk(pp->l);
         char *name;
         if (t->k == TK_IDENT) {
             name = t->ident;
             t->k = TK_MACRO_PARAM;
             t->param_idx = num_params++;
-            if (lex_peek(pp)->k == TK_ELLIPSIS) {
-                lex_next(pp);
+            if (peek_raw_tk(pp->l)->k == TK_ELLIPSIS) {
+                next_raw_tk(pp->l);
                 *is_vararg = 1;
             }
         } else if (t->k == TK_ELLIPSIS) { // Vararg
@@ -139,19 +106,19 @@ static Map * parse_params(PP *pp, int *is_vararg) {
             error_at(t, "expected identifier, found %s", token2pretty(t));
         }
         map_put(params, name, t);
-        t = lex_next(pp); // Skip ','
+        t = next_raw_tk(pp->l); // Skip ','
         if (*is_vararg || t->k != ',') {
             break;
         }
     }
-    undo_tk(pp->l, t);
-    lex_expect(pp, ')');
+    undo_raw_tk(pp->l, t);
+    expect_raw_tk(pp->l, ')');
     return params;
 }
 
 static Vec * parse_body(PP *pp, Map *params) {
     Vec *body = vec_new();
-    Token *t = lex_next(pp);
+    Token *t = next_raw_tk(pp->l);
     while (t->k != TK_NEWLINE) {
         if (t->k == TK_IDENT) {
             Token *param = map_get(params, t->ident);
@@ -161,7 +128,7 @@ static Vec * parse_body(PP *pp, Map *params) {
             }
         }
         vec_push(body, t);
-        t = lex_next(pp);
+        t = next_raw_tk(pp->l);
     }
     check_no_concat_at_start_or_end(body);
     return body;
@@ -179,9 +146,9 @@ static Macro * parse_fn_macro(PP *pp) {
 }
 
 static void parse_define(PP *pp) {
-    Token *name = lex_expect(pp, TK_IDENT);
+    Token *name = expect_raw_tk(pp->l, TK_IDENT);
     Macro *m;
-    Token *t = lex_peek(pp);
+    Token *t = peek_raw_tk(pp->l);
     if (t->k == '(' && !t->has_preceding_space) {
         m = parse_fn_macro(pp);
     } else {
@@ -191,8 +158,8 @@ static void parse_define(PP *pp) {
 }
 
 static void parse_undef(PP *pp) {
-    Token *name = lex_expect(pp, TK_IDENT);
-    lex_expect(pp, TK_NEWLINE);
+    Token *name = expect_raw_tk(pp->l, TK_IDENT);
+    expect_raw_tk(pp->l, TK_NEWLINE);
     map_remove(pp->macros, name->ident);
 }
 
@@ -233,40 +200,49 @@ static char * parse_include_path(PP *pp, int *search_cwd) {
     }
 }
 
-static void include(PP *pp, char *dir, char *file, int include_once, Token *err) {
+static int include(PP *pp, char *dir, char *file, int include_once, Token *err) {
     char *path = full_path(concat_paths(dir, file));
     if (map_get(pp->include_once, path)) {
-        return; // Already included
+        return 1; // Already included
     }
     FILE *fp = fopen(path, "r");
     if (!fp) {
-        error_at(err, "can't find file '%s'", path);
+        return 0;
     }
     File *f = new_file(fp, file);
-    Lexer *l = new_lexer(f);
-    push_lexer(pp, l);
+    push_lexer(pp->l, f);
     if (include_once) {
         map_put(pp->include_once, path, (void *) 1);
     }
+    return 1;
 }
 
 static void parse_include(PP *pp, Token *t) {
     int is_import = strcmp(t->ident, "import") == 0;
     int search_cwd;
     char *file = parse_include_path(pp, &search_cwd);
-    lex_expect(pp, TK_NEWLINE);
+    expect_raw_tk(pp->l, TK_NEWLINE);
     if (file[0] == '/') { // Absolute path
-        include(pp, "/", file, is_import, t);
+        if (include(pp, "/", file, is_import, t)) {
+            goto found;
+        }
     } else { // Relative path
         if (search_cwd) {
             char *local_dir = pp->l->f->name ? get_dir(pp->l->f->name) : ".";
-            include(pp, local_dir, file, is_import, t);
+            if (include(pp, local_dir, file, is_import, t)) {
+                goto found;
+            }
         }
         for (size_t i = 0; i < vec_len(pp->include_paths); i++) {
             char *dir = vec_get(pp->include_paths, i);
-            include(pp, dir, file, is_import, t);
+            if (include(pp, dir, file, is_import, t)) {
+                goto found;
+            }
         }
     }
+    error_at(t, "can't find file '%s'", file);
+found:
+    return;
 }
 
 static void def_default_include_paths(PP *pp) {
@@ -282,17 +258,17 @@ static void def_default_include_paths(PP *pp) {
 
 static void skip_cond_incl(PP *pp) {
     int level = 0;
-    Token *t = lex_peek(pp);
+    Token *t = peek_raw_tk(pp->l);
     while (t->k != TK_EOF) {
-        Token *hash = t = lex_next(pp);
+        Token *hash = t = next_raw_tk(pp->l);
         if (!(t->k == '#' && t->col == 1)) continue; // Not a directive
-        t = lex_next(pp);
+        t = next_raw_tk(pp->l);
         if (t->k != TK_IDENT) continue;
         if (level == 0 && (strcmp(t->ident, "elif") == 0 ||
                 strcmp(t->ident, "else") == 0 ||
                 strcmp(t->ident, "endif") == 0)) {
-            undo_tk(pp->l, t);
-            undo_tk(pp->l, hash);
+            undo_raw_tk(pp->l, t);
+            undo_raw_tk(pp->l, hash);
             break;
         }
         if (strcmp(t->ident, "if") == 0 ||
@@ -307,10 +283,10 @@ static void skip_cond_incl(PP *pp) {
 }
 
 static Token * parse_defined(PP *pp) {
-    Token *t = lex_next(pp);
+    Token *t = next_raw_tk(pp->l);
     if (t->k == '(') {
-        t = lex_next(pp);
-        lex_expect(pp, ')');
+        t = next_raw_tk(pp->l);
+        expect_raw_tk(pp->l, ')');
     }
     if (t->k != TK_IDENT) {
         error_at(t, "expected identifier, found %s", token2pretty(t));
@@ -339,7 +315,7 @@ static int parse_cond(PP *pp) {
     Vec *tks = parse_cond_line(pp);
     Lexer *prev = pp->l;
     pp->l = new_lexer(NULL);
-    undo_tks(pp->l, tks);
+    undo_raw_tks(pp->l, tks);
     int64_t v = parse_const_int_expr(pp);
     pp->l = prev;
     return v != 0;
@@ -361,15 +337,15 @@ static void parse_if(PP *pp) {
 }
 
 static void parse_ifdef(PP *pp) {
-    Token *t = lex_expect(pp, TK_IDENT);
-    lex_expect(pp, TK_NEWLINE);
+    Token *t = expect_raw_tk(pp->l, TK_IDENT);
+    expect_raw_tk(pp->l, TK_NEWLINE);
     int is_true = map_get(pp->macros, t->ident) != NULL;
     start_if(pp, is_true);
 }
 
 static void parse_ifndef(PP *pp) {
-    Token *t = lex_expect(pp, TK_IDENT);
-    lex_expect(pp, TK_NEWLINE);
+    Token *t = expect_raw_tk(pp->l, TK_IDENT);
+    expect_raw_tk(pp->l, TK_NEWLINE);
     int is_true = map_get(pp->macros, t->ident) == NULL;
     start_if(pp, is_true);
 }
@@ -396,7 +372,7 @@ static void parse_else(PP *pp, Token *t) {
     }
     Cond *cond = vec_tail(pp->conds);
     cond->k = COND_ELSE;
-    lex_expect(pp, TK_NEWLINE);
+    expect_raw_tk(pp->l, TK_NEWLINE);
     if (cond->is_true) {
         skip_cond_incl(pp);
     }
@@ -407,7 +383,7 @@ static void parse_endif(PP *pp, Token *t) {
         error_at(t, "'#endif' directive without preceding '#if'");
     }
     vec_pop(pp->conds);
-    lex_expect(pp, TK_NEWLINE);
+    expect_raw_tk(pp->l, TK_NEWLINE);
 }
 
 
@@ -427,7 +403,7 @@ static void parse_line(PP *pp) {
     char *file = NULL;
     if (t->k == TK_STR) {
         file = str_ncopy(t->str, t->len); // TK_STR is not NULL terminated
-        t = lex_next(pp);
+        t = next_raw_tk(pp->l);
     }
     if (t->k != TK_NEWLINE) {
         error_at(t, "expected newline, found %s", token2pretty(t));
@@ -451,11 +427,11 @@ static void parse_error(PP *pp, Token *t) {
 static void parse_pragma_once(PP *pp) {
     char *path = full_path(pp->l->f->name);
     map_put(pp->include_once, path, (void *) 1);
-    lex_expect(pp, TK_NEWLINE);
+    expect_raw_tk(pp->l, TK_NEWLINE);
 }
 
 static void parse_pragma(PP *pp) {
-    Token *t = lex_expect(pp, TK_IDENT);
+    Token *t = expect_raw_tk(pp->l, TK_IDENT);
     if (strcmp(t->ident, "once") == 0) {
         parse_pragma_once(pp);
     } else {
@@ -572,7 +548,7 @@ static Vec * pre_expand_arg(PP *pp, Vec *arg) {
     // want the 'TK_EOF' when we're finished pre-expansion
     Lexer *prev = pp->l;
     pp->l = new_lexer(NULL);
-    undo_tks(pp->l, arg);
+    undo_raw_tks(pp->l, arg);
     Vec *expanded = vec_new();
     while (1) {
         Token *t = expand_next_ignore_newlines(pp);
@@ -644,9 +620,9 @@ static Vec * substitute(PP *pp, Macro *m, Vec *args, Set *hide_set) {
 }
 
 static Vec * parse_args(PP *pp, Macro *m) {
-    lex_expect(pp, '(');
+    expect_raw_tk(pp->l, '(');
     Vec *args = vec_new();
-    Token *t = lex_peek(pp);
+    Token *t = peek_raw_tk(pp->l);
     if (m->num_params == 1 && t->k == ')') {
         vec_push(args, vec_new());
         return args; // Empty single argument
@@ -655,7 +631,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
         Vec *arg = vec_new();
         int level = 0;
         while (1) {
-            t = lex_next(pp);
+            t = next_raw_tk(pp->l);
             if (t->k == TK_NEWLINE) continue;
             if (t->k == TK_EOF) break;
             if (t->k == '#' && t->col == 1) {
@@ -663,7 +639,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
                 continue;
             }
             if (t->k == ')' && level == 0) {
-                undo_tk(pp->l, t);
+                undo_raw_tk(pp->l, t);
                 break;
             }
             int in_vararg = (m->is_vararg && vec_len(args) == m->num_params - 1);
@@ -685,7 +661,7 @@ static Vec * parse_args(PP *pp, Macro *m) {
 }
 
 static Token * expand_next(PP *pp) {
-    Token *t = lex_next(pp);
+    Token *t = next_raw_tk(pp->l);
     if (t->k != TK_IDENT) {
         return t;
     }
@@ -699,27 +675,27 @@ static Token * expand_next(PP *pp) {
         set_put(&t->hide_set, t->ident);
         tks = substitute(pp, m, NULL, t->hide_set);
         copy_pos_info_to_tks(tks, t); // For error messages
-        undo_tks(pp->l, tks);
+        undo_raw_tks(pp->l, tks);
         break;
     case MACRO_FN:
-        if (lex_peek(pp)->k != '(') return t;
+        if (peek_raw_tk(pp->l)->k != '(') return t;
         Vec *args = parse_args(pp, m);
         if (vec_len(args) != m->num_params) {
             error_at(t, "incorrect number of arguments provided to function-"
                         "like macro invocation (have %zu, expected %zu)",
                         vec_len(args), m->num_params);
         }
-        Token *rparen = lex_expect(pp, ')');
+        Token *rparen = expect_raw_tk(pp->l, ')');
         set_intersection(&t->hide_set, rparen->hide_set);
         set_put(&t->hide_set, t->ident);
         tks = substitute(pp, m, args, t->hide_set);
         copy_pos_info_to_tks(tks, t); // For error messages
-        undo_tks(pp->l, tks);
+        undo_raw_tks(pp->l, tks);
         break;
     case MACRO_BUILT_IN:
         t = copy_tk(t);
         m->built_in(pp, t);
-        undo_tk(pp->l, t);
+        undo_raw_tk(pp->l, t);
         break;
     }
     return expand_next_ignore_newlines(pp);
@@ -728,7 +704,7 @@ static Token * expand_next(PP *pp) {
 static Token * expand_next_ignore_newlines(PP *pp) {
     Token *t = expand_next(pp);
     while (t->k == TK_NEWLINE) { // Ignore newlines
-        t = lex_next(pp);
+        t = next_raw_tk(pp->l);
         t->has_preceding_space = 1;
     }
     return t;
@@ -738,7 +714,7 @@ static Token * expand_next_ignore_newlines(PP *pp) {
 // ---- Tokens and Directives -------------------------------------------------
 
 static void parse_directive(PP *pp) {
-    Token *t = lex_next(pp);
+    Token *t = next_raw_tk(pp->l);
     if (t->k == TK_NEWLINE) return; // Empty directive
     if (t->k != TK_IDENT) goto err;
     if (strcmp(t->ident, "define") == 0)         parse_define(pp);
@@ -783,13 +759,13 @@ Token * next_tk_is(PP *pp, int k) {
     if (t->k == k) {
         return t;
     }
-    undo_tk(pp->l, t);
+    undo_raw_tk(pp->l, t);
     return NULL;
 }
 
 Token * peek_tk(PP *pp) {
     Token *t = next_tk(pp);
-    undo_tk(pp->l, t);
+    undo_raw_tk(pp->l, t);
     return t;
 }
 
@@ -801,7 +777,7 @@ Token * peek_tk_is(PP *pp, int k) {
 Token * peek2_tk(PP *pp) {
     Token *t = next_tk(pp);
     Token *t2 = peek_tk(pp);
-    undo_tk(pp->l, t);
+    undo_raw_tk(pp->l, t);
     return t2;
 }
 

@@ -126,16 +126,20 @@ typedef struct Lexer {
 } Lexer;
 
 Lexer * new_lexer(File *f);
+Token * next_raw_tk(Lexer *l);
+Token * peek_raw_tk(Lexer *l);
+Token * expect_raw_tk(Lexer *l, int tk);
+void undo_raw_tk(Lexer *l, Token *t);
+void undo_raw_tks(Lexer *l, Vec *tks);
+void push_lexer(Lexer *l, File *f);
+void pop_lexer(Lexer *l);
+
 Token * copy_tk(Token *t);
 
-Token * lex_tk(Lexer *l);
-void undo_tk(Lexer *l, Token *t);
-void undo_tks(Lexer *l, Vec *tks);
-
 // Special preprocessor functions
-char * lex_rest_of_line(Lexer *l); // For '#error' and '#warning'
-char * lex_include_path(Lexer *l, int *search_cwd); // For '#include' and '#import'
-Token * glue_tks(Lexer *l, Token *t1, Token *t2); // For '##' operator
+char * lex_rest_of_line(Lexer *l);                  // '#error' and '#warning'
+char * lex_include_path(Lexer *l, int *search_cwd); // '#include' and '#import'
+Token * glue_tks(Lexer *l, Token *t1, Token *t2);   // '##' operator
 
 // Token printing
 char * tk2str(int t);

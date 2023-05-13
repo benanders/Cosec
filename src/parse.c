@@ -770,7 +770,7 @@ static AstType * parse_decl_specs(Scope *s, int *sclass) {
     }
 done:
     (void) tq; // Unused
-    undo_tk(s->pp->l, tk);
+    undo_raw_tk(s->pp->l, tk);
     if (sclass) {
         *sclass = sc;
     }

@@ -14,6 +14,7 @@ add_executable(Cosec
         src/pp.c src/pp.h
         src/parse.c src/parse.h
         src/compile.c src/compile.h
+        src/assemble.c src/assemble.h
         src/error.c src/error.h
-        src/util.c src/util.h
-        src/debug.c src/debug.h)
+        src/debug.c src/debug.h
+        src/util.c src/util.h)

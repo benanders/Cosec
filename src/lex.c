@@ -20,6 +20,12 @@ Lexer * new_lexer(File *f) {
     return l;
 }
 
+static Lexer * copy_lexer(Lexer *l) {
+    Lexer *copy = malloc(sizeof(Lexer));
+    *copy = *l;
+    return copy;
+}
+
 static Token * new_tk(Lexer *l, int k) {
     Token *t = calloc(1, sizeof(Token));
     t->k = k;
@@ -295,7 +301,7 @@ static Token * lex_sym(Lexer *l) {
 
 // ---- Tokens ----------------------------------------------------------------
 
-static Token * lex_raw(Lexer *l) {
+static Token * lex_tk_raw(Lexer *l) {
     if (!l->f) {
         return EOF_TK;
     }
@@ -323,31 +329,66 @@ static Token * lex_raw(Lexer *l) {
     }
 }
 
-Token * lex_tk(Lexer *l) {
+static Token * lex_tk(Lexer *l) {
     Token *t;
     if (vec_len(l->buf) > 0) {
         t = vec_pop(l->buf);
     } else {
-        t = lex_raw(l);
+        t = lex_tk_raw(l);
         while (t->k == TK_SPACE) {
-            t = lex_raw(l);
+            t = lex_tk_raw(l);
             t->has_preceding_space = 1;
         }
     }
     return t;
 }
 
-void undo_tk(Lexer *l, Token *t) {
+Token * next_raw_tk(Lexer *l) {
+    Token *t = lex_tk(l);
+    if (l->parent && t->k == TK_EOF) {
+        pop_lexer(l);
+        return next_raw_tk(l);
+    }
+    return t;
+}
+
+void undo_raw_tk(Lexer *l, Token *t) {
     if (t->k == TK_EOF) {
         return;
     }
     vec_push(l->buf, t);
 }
 
-void undo_tks(Lexer *l, Vec *tks) {
+void undo_raw_tks(Lexer *l, Vec *tks) {
     for (size_t i = 0; i < vec_len(tks); i++) {
-        undo_tk(l, vec_get(tks, vec_len(tks) - i - 1));
+        undo_raw_tk(l, vec_get(tks, vec_len(tks) - i - 1));
     }
+}
+
+Token * peek_raw_tk(Lexer *l) {
+    Token *t = next_raw_tk(l);
+    undo_raw_tk(l, t);
+    return t;
+}
+
+Token * expect_raw_tk(Lexer *l, int k) {
+    Token *t = next_raw_tk(l);
+    if (t->k != k) {
+        error_at(t, "expected %s, found %s", tk2pretty(k), token2pretty(t));
+    }
+    return t;
+}
+
+void push_lexer(Lexer *l, File *f) {
+    Lexer *parent = copy_lexer(l);
+    l->parent = parent;
+    l->f = f;
+    l->buf = vec_new();
+}
+
+void pop_lexer(Lexer *l) {
+    assert(l->parent);
+    *l = *l->parent;
 }
 
 
