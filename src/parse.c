@@ -2081,6 +2081,7 @@ static AstNode * parse_fn_def(Scope *s, AstType *t, Token *name, Vec *param_name
     fn->param_names = param_names;
     Scope fn_scope;
     enter_scope(&fn_scope, s, SCOPE_BLOCK);
+    fn_scope.fn = fn;
     fn->body = parse_block(&fn_scope);
     return fn;
 }

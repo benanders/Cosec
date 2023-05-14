@@ -161,15 +161,14 @@ static AsmOpr * opr_xmm(int reg) {
     return opr;
 }
 
-static AsmOpr * opr_deref(char *label, int bytes) {
+static AsmOpr * opr_deref(char *label) {
     AsmOpr *opr = opr_new(OPR_DEREF);
     opr->label = label;
-    opr->bytes = bytes;
     return opr;
 }
 
 // 'mem->bytes' MUST be set by the calling function if memory is to be accessed
-static AsmOpr * opr_mem_from_ptr(Assembler *a, IrIns *ptr) {
+static AsmOpr * opr_mem_from_ptr(Assembler *a, IrIns *ptr, IrType *to_load) {
     assert(ptr->t->k == IRT_PTR);
     AsmOpr *l = discharge(a, ptr);
     assert(l->k == OPR_GPR);
@@ -178,10 +177,14 @@ static AsmOpr * opr_mem_from_ptr(Assembler *a, IrIns *ptr) {
     mem->base = l->reg;
     mem->base_size = R64;
     mem->scale = 1;
+    if (to_load) {
+        assert(to_load->size <= 8);
+        mem->bytes = to_load->size;
+    }
     return mem;
 }
 
-static AsmOpr * opr_mem_from_alloc(IrIns *alloc) {
+static AsmOpr * opr_mem_from_alloc(IrIns *alloc, IrType *to_load) {
     assert(alloc->op == IR_ALLOC);
     assert(alloc->t->k == IRT_PTR);
     AsmOpr *mem = opr_new(OPR_MEM); // [rbp - <stack slot>]
@@ -189,21 +192,32 @@ static AsmOpr * opr_mem_from_alloc(IrIns *alloc) {
     mem->base_size = R64;
     mem->scale = 1;
     mem->disp = -((int64_t) alloc->stack_slot);
+    if (to_load) {
+        assert(to_load->size <= 8);
+        mem->bytes = to_load->size;
+    }
     return mem;
 }
 
-static AsmOpr * opr_mem_from_global(IrIns *global) {
+static AsmOpr * opr_mem_from_global(IrIns *global, IrType *to_load) {
     assert(global->op == IR_GLOBAL);
     assert(global->t->k == IRT_PTR);
-    return opr_deref(global->g->label, 0);
+    AsmOpr *mem = opr_deref(global->g->label);
+    if (to_load) {
+        assert(to_load->size <= 8);
+        mem->bytes = to_load->size;
+    }
+    return mem;
 }
 
-static AsmOpr * load_ptr(Assembler *a, IrIns *to_load) {
-    assert(to_load->t->k == IRT_PTR);
-    switch (to_load->op) {
-        case IR_ALLOC:  return opr_mem_from_alloc(to_load);
-        case IR_GLOBAL: return opr_mem_from_global(to_load);
-        default:        return opr_mem_from_ptr(a, to_load);
+// 'to_load' is the type of the object pointed to by 'ptr'; gives us the number
+// of bytes to read from memory (or NULL if we don't care about setting 'bytes')
+static AsmOpr * load_ptr(Assembler *a, IrIns *ptr, IrType *to_load) {
+    assert(ptr->t->k == IRT_PTR);
+    switch (ptr->op) {
+        case IR_ALLOC:  return opr_mem_from_alloc(ptr, to_load);
+        case IR_GLOBAL: return opr_mem_from_global(ptr, to_load);
+        default:        return opr_mem_from_ptr(a, ptr, to_load);
     }
 }
 
@@ -239,9 +253,9 @@ static AsmOpr * discharge(Assembler *a, IrIns *ir) {
     switch (ir->op) {
         case IR_IMM:    emit(a, asm2(mov_op,  opr, opr_imm(ir->imm))); break;
         case IR_FP:     emit(a, asm2(mov_op,  opr, opr_fp(ir->t, ir->fp_idx))); break;
-        case IR_GLOBAL: emit(a, asm2(X64_LEA, opr, opr_deref(ir->g->label, 0))); break;
-        case IR_LOAD:   emit(a, asm2(mov_op,  opr, load_ptr(a, ir->l))); break;
-        case IR_ALLOC:  emit(a, asm2(X64_LEA, opr, opr_mem_from_alloc(ir))); break;
+        case IR_GLOBAL: emit(a, asm2(X64_LEA, opr, opr_deref(ir->g->label))); break;
+        case IR_LOAD:   emit(a, asm2(mov_op,  opr, load_ptr(a, ir->l, ir->t))); break;
+        case IR_ALLOC:  emit(a, asm2(X64_LEA, opr, opr_mem_from_alloc(ir, NULL))); break;
         // TODO: comparison operations
         default: UNREACHABLE();
     }
@@ -260,7 +274,7 @@ static AsmOpr * inline_mem(Assembler *a, IrIns *ir) {
         if (ir->vreg > 0) { // Already in a vreg
             return discharge(a, ir);
         }
-        return load_ptr(a, ir->l);
+        return load_ptr(a, ir->l, ir->t);
     } else if (ir->op == IR_FP) {
         return opr_fp(ir->t, ir->fp_idx);
     } else {
@@ -337,7 +351,7 @@ static void asm_load(Assembler *a, IrIns *ir) {
 }
 
 static void asm_store(Assembler *a, IrIns *ir) {
-    AsmOpr *l = load_ptr(a, ir->dst);
+    AsmOpr *l = load_ptr(a, ir->dst, ir->src->t);
     AsmOpr *r = inline_imm(a, ir->src);
     emit(a, asm2(mov_for(ir->src->t), l, r));
 }
@@ -475,16 +489,15 @@ static AsmFn * asm_fn(IrFn *ir_fn) {
     patch_stack_sizes(a);
     fn->num_gprs = a->next_gpr;
     fn->num_sse = a->next_sse;
+    fn->linkage = ir_fn->linkage;
     return fn;
 }
 
-Vec * assemble(Vec *global) {
-    Vec *fns = vec_new();
+void assemble(Vec *global) {
     for (size_t i = 0; i < vec_len(global); i++) {
         Global *g = vec_get(global, i);
         if (g->ir_fn) {
             g->asm_fn = asm_fn(g->ir_fn);
         }
     }
-    return fns;
 }

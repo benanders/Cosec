@@ -1254,6 +1254,7 @@ static void compile_fn_args(Scope *s, AstNode *n) {
 static void compile_fn_def(Scope *s, AstNode *n) {
     Global *g = new_global(prepend_underscore(n->fn_name));
     g->ir_fn = new_fn();
+    g->ir_fn->linkage = n->t->linkage;
     def_global(s, n->fn_name, g);
     Scope body;
     enter_scope(&body, s, SCOPE_BLOCK);

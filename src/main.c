@@ -4,6 +4,8 @@
 
 #include "parse.h"
 #include "compile.h"
+#include "assemble.h"
+#include "encode.h"
 #include "error.h"
 #include "debug.h"
 
@@ -46,12 +48,19 @@ static void pipeline(char *in, char *out) {
     }
     File *f = new_file(fp, in);
 
+    // Parser
     AstNode *ast = parse(f);
     print_ast(ast);
     printf("\n");
 
+    // Compiler
     Vec *globals = compile(ast);
     print_ir(globals);
+    printf("\n");
+
+    // Assembler
+    assemble(globals);
+    encode_nasm(stdout, globals);
 }
 
 int main(int argc, char *argv[]) {

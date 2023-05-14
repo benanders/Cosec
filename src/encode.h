@@ -4,6 +4,6 @@
 
 #include "assemble.h"
 
-void encode_nasm(FILE *out, Vec *fns, Vec *globals);
+void encode_nasm(FILE *out, Vec *globals);
 
 #endif

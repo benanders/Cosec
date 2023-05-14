@@ -147,6 +147,7 @@ typedef struct IrBB {
 
 typedef struct {
     IrBB *entry, *last;
+    int linkage;
 } IrFn;
 
 typedef struct Global {

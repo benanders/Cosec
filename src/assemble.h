@@ -165,11 +165,12 @@ typedef struct AsmBB {
 
 typedef struct AsmFn {
     AsmBB *entry, *last;
+    int linkage;
     Vec *f32s; // Per-function floating point constants
     Vec *f64s;
     int num_gprs, num_sse;
 } AsmFn;
 
-Vec * assemble(Vec *globals);
+void assemble(Vec *globals);
 
 #endif
