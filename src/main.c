@@ -42,11 +42,11 @@ static void print_help() {
 }
 
 static void pipeline(char *in, char *out) {
-    FILE *fp = fopen(in, "r");
-    if (!fp) {
+    FILE *f_in = fopen(in, "r");
+    if (!f_in) {
         error("can't read input file '%s'", in);
     }
-    File *f = new_file(fp, in);
+    File *f = new_file(f_in, in);
 
     // Parser
     AstNode *ast = parse(f);
@@ -61,6 +61,11 @@ static void pipeline(char *in, char *out) {
     // Assembler
     assemble(globals);
     encode_nasm(stdout, globals);
+    FILE *f_out = fopen(out, "w");
+    if (!f_out) {
+        error("can't open output file '%s'", out);
+    }
+    encode_nasm(f_out, globals);
 }
 
 int main(int argc, char *argv[]) {
@@ -88,5 +93,5 @@ int main(int argc, char *argv[]) {
         error("no input files");
     }
     pipeline(in, out);
-    return 1;
+    return 0;
 }

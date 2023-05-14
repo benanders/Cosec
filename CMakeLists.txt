@@ -19,3 +19,10 @@ add_executable(Cosec
         src/error.c src/error.h
         src/debug.c src/debug.h
         src/util.c src/util.h)
+
+include(FindPython3) # Python for testing
+enable_testing()
+add_test(NAME test_all COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/RunTests.py
+        $<TARGET_FILE:Cosec>
+        ${PROJECT_SOURCE_DIR}/tests)
