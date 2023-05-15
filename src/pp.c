@@ -200,7 +200,7 @@ static char * parse_include_path(PP *pp, int *search_cwd) {
     }
 }
 
-static int include(PP *pp, char *dir, char *file, int include_once, Token *err) {
+static int include(PP *pp, char *dir, char *file, int include_once) {
     char *path = full_path(concat_paths(dir, file));
     if (map_get(pp->include_once, path)) {
         return 1; // Already included
@@ -223,19 +223,19 @@ static void parse_include(PP *pp, Token *t) {
     char *file = parse_include_path(pp, &search_cwd);
     expect_raw_tk(pp->l, TK_NEWLINE);
     if (file[0] == '/') { // Absolute path
-        if (include(pp, "/", file, is_import, t)) {
+        if (include(pp, "/", file, is_import)) {
             goto found;
         }
     } else { // Relative path
         if (search_cwd) {
             char *local_dir = pp->l->f->name ? get_dir(pp->l->f->name) : ".";
-            if (include(pp, local_dir, file, is_import, t)) {
+            if (include(pp, local_dir, file, is_import)) {
                 goto found;
             }
         }
         for (size_t i = 0; i < vec_len(pp->include_paths); i++) {
             char *dir = vec_get(pp->include_paths, i);
-            if (include(pp, dir, file, is_import, t)) {
+            if (include(pp, dir, file, is_import)) {
                 goto found;
             }
         }

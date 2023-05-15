@@ -173,4 +173,7 @@ typedef struct AsmFn {
 
 void assemble(Vec *globals);
 
+// For register allocator to delete redundant 'mov's
+void delete_asm(AsmIns *ins);
+
 #endif
