@@ -8,6 +8,7 @@
 #include "encode.h"
 #include "error.h"
 #include "debug.h"
+#include "reg_alloc.h"
 
 // Compile the generated assembly with (on my macOS machine):
 //   nasm -f macho64 out.s
@@ -60,6 +61,10 @@ static void pipeline(char *in, char *out) {
 
     // Assembler
     assemble(globals);
+    encode_nasm(stdout, globals);
+
+    // Register allocator
+    reg_alloc(globals, 1);
     encode_nasm(stdout, globals);
     FILE *f_out = fopen(out, "w");
     if (!f_out) {

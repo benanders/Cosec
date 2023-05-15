@@ -421,7 +421,7 @@ static void print_irt(IrType *t) {
 }
 
 static void print_ins(IrIns *ins) {
-    printf("\t%.4d\t", ins->n);
+    printf("\t%.4zu\t", ins->n);
     print_irt(ins->t);
     printf("\t%s\t", IR_OP_NAMES[ins->op]);
     switch (ins->op) {
@@ -432,35 +432,35 @@ static void print_ins(IrIns *ins) {
     case IR_ALLOC:
         print_irt(ins->alloc_t);
         if (ins->count) {
-            printf("\t%.4d", ins->count->n);
+            printf("\t%.4zu", ins->count->n);
         }
         break;
-    case IR_STORE: printf("%.4d -> %.4d", ins->src->n, ins->dst->n); break;
-    case IR_COPY:  printf("%.4d -> %.4d (size %.4d)", ins->src->n,
+    case IR_STORE: printf("%.4zu -> %.4zu", ins->src->n, ins->dst->n); break;
+    case IR_COPY:  printf("%.4zu -> %.4zu (size %.4zu)", ins->src->n,
                           ins->dst->n, ins->len->n); break;
     case IR_PHI:
         for (size_t i = 0; i < vec_len(ins->preds); i++) {
             IrBB *pred = vec_get(ins->preds, i);
             IrIns *def = vec_get(ins->defs, i);
-            printf("[ " BB_PREFIX "%d -> %.4d ] ", pred->n, def->n);
+            printf("[ " BB_PREFIX "%zu -> %.4zu ] ", pred->n, def->n);
         }
         break;
-    case IR_BR: printf(BB_PREFIX "%d", ins->br ? ins->br->n : -1); break;
+    case IR_BR: printf(BB_PREFIX "%zu", ins->br ? ins->br->n : -1); break;
     case IR_CONDBR:
-        printf("%.4d\t", ins->cond->n);
-        printf(BB_PREFIX "%d\t", ins->true ? ins->true->n : -1);
-        printf(BB_PREFIX "%d", ins->false ? ins->false->n : -1);
+        printf("%.4zu\t", ins->cond->n);
+        printf(BB_PREFIX "%zu\t", ins->true ? ins->true->n : -1);
+        printf(BB_PREFIX "%zu", ins->false ? ins->false->n : -1);
         break;
     default:
-        if (ins->l) printf("%.4d", ins->l->n);
-        if (ins->r) printf("\t%.4d", ins->r->n);
+        if (ins->l) printf("%.4zu", ins->l->n);
+        if (ins->r) printf("\t%.4zu", ins->r->n);
         break;
     }
     printf("\n");
 }
 
 static void print_bb(IrBB *bb) {
-    printf(BB_PREFIX "%d:\n", bb->n);
+    printf(BB_PREFIX "%zu:\n", bb->n);
     for (IrIns *ins = bb->head; ins; ins = ins->next) {
         print_ins(ins);
     }

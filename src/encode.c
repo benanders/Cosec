@@ -112,7 +112,7 @@ static void encode_op(FILE *out, Global *g, AsmOpr *op) {
         }
         fprintf(out, "]");
         break;
-    case OPR_JMP:   fprintf(out, BB_PREFIX "%d", op->bb->n); break;
+    case OPR_JMP:   fprintf(out, BB_PREFIX "%zu", op->bb->n); break;
     case OPR_LABEL: fprintf(out, "%s", op->label); break;
     case OPR_DEREF:
         encode_mem_access(out, op);
@@ -135,7 +135,7 @@ static void encode_ins(FILE *out, Global *g, AsmIns *ins) {
 }
 
 static void encode_bb(FILE *out, Global *g, AsmBB *bb) {
-    fprintf(out, BB_PREFIX "%d:\n", bb->n);
+    fprintf(out, BB_PREFIX "%zu:\n", bb->n);
     for (AsmIns *ins = bb->head; ins; ins = ins->next) {
         fprintf(out, "\t");
         encode_ins(out, g, ins);

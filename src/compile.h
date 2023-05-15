@@ -136,13 +136,13 @@ typedef struct IrIns {
         struct IrIns *ret; // IR_RET
     };
     int vreg; // For assembler
-    int n;    // For printing
+    size_t n; // For printing
 } IrIns;
 
 typedef struct IrBB {
     struct IrBB *next, *prev;
     IrIns *head, *last;
-    int n; // For printing
+    size_t n; // For printing
 } IrBB;
 
 typedef struct {

@@ -148,13 +148,13 @@ typedef struct AsmIns {
     struct AsmBB *bb;
     int op;
     AsmOpr *l, *r;
-    int n; // For register allocator
+    size_t n; // For register allocator
 } AsmIns;
 
 typedef struct AsmBB {
     struct AsmBB *next, *prev;
     AsmIns *head, *last;
-    int n; // For printing
+    size_t n; // For printing
 
     // Control flow graph analysis
     Vec *pred, *succ;
