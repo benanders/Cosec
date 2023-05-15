@@ -323,6 +323,67 @@ void set_intersection(Set **dst, Set *src) {
 }
 
 
+// ---- Graph -----------------------------------------------------------------
+
+#define G(g, reg1, reg2) ((reg1) * (g)->size + (reg2))
+
+Graph * graph_new(int size) {
+    Graph *g = malloc(sizeof(Graph));
+    g->size = size;
+    g->matrix = calloc(size * size, sizeof(int));
+    g->num_edges = calloc(size, sizeof(int));
+    return g;
+}
+
+Graph * graph_copy(Graph *g) {
+    Graph *copy = graph_new(g->size);
+    memcpy(copy->matrix, g->matrix, g->size * g->size * sizeof(int));
+    memcpy(copy->num_edges, g->num_edges, g->size * sizeof(int));
+    return copy;
+}
+
+int has_node(Graph *g, int node) {
+    return has_edge(g, node, node);
+}
+
+void add_node(Graph *g, int node) {
+    add_edge(g, node, node);
+}
+
+int has_edge(Graph *g, int node1, int node2) {
+    return g->matrix[G(g, node1, node2)];
+}
+
+void add_edge(Graph *g, int node1, int node2) {
+    // Mirror matrix symmetrically about leading diagonal
+    g->num_edges[node1] += !has_edge(g, node1, node2);
+    g->matrix[G(g, node1, node2)] = 1;
+    g->num_edges[node2] += !has_edge(g, node2, node1);
+    g->matrix[G(g, node2, node1)] = 1;
+}
+
+int num_edges(Graph *g, int node) {
+    return g->num_edges[node];
+}
+
+void remove_node(Graph *g, int to_remove) {
+    for (int node = 0; node < g->size; node++) {
+        g->num_edges[node] -= has_edge(g, to_remove, node);
+        g->matrix[G(g, to_remove, node)] = 0;
+        g->matrix[G(g, node, to_remove)] = 0;
+    }
+    g->num_edges[to_remove] = 0;
+}
+
+void copy_edges(Graph *g, int from, int to) {
+    for (int node = 0; node < g->size; node++) {
+        if (has_edge(g, from, node)) {
+            add_edge(g, to, node);
+        }
+    }
+}
+
+
 // ---- String Manipulation ---------------------------------------------------
 
 char * str_copy(char *s) {

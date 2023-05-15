@@ -63,6 +63,23 @@ void set_put(Set **s, char *v);
 void set_union(Set **dst, Set *src);
 void set_intersection(Set **dst, Set *src);
 
+// Graph
+typedef struct {
+    int size;
+    int *matrix;    // Square matrix of edges
+    int *num_edges; // Number of edges for each node
+} Graph;
+
+Graph * graph_new(int size);
+Graph * graph_copy(Graph *g);
+int has_node(Graph *g, int node);
+void add_node(Graph *g, int node);
+int has_edge(Graph *g, int node1, int node2);
+void add_edge(Graph *g, int node1, int node2);
+int num_edges(Graph *g, int node);
+void remove_node(Graph *g, int to_remove);
+void copy_edges(Graph *g, int from, int to);
+
 // String manipulation
 char * str_copy(char *s);
 char * str_ncopy(char *s, size_t len);

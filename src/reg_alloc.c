@@ -254,7 +254,7 @@ static Vec ** live_ranges_for_fn(RegAlloc *a) {
 }
 
 
-// ---- Register Group Allocation ---------------------------------------------
+// ---- Interference and Coalescing Graphs ------------------------------------
 
 static void print_reg(RegAlloc *a, int reg) {
     if (a->reg_group == REG_GROUP_GPR) {
@@ -263,6 +263,81 @@ static void print_reg(RegAlloc *a, int reg) {
         encode_xmm(stdout, reg);
     }
 }
+
+// The interference graph tells us if two regs are live at the same time.
+// (reg1, reg2) is an edge in the graph if their live ranges intersect.
+static Graph * interference_graph(RegAlloc *a, Vec **live_ranges) {
+    // Intersect every pair of regs; iterate the upper half triangle of the
+    // matrix since it's symmetric about the leading diagonal
+    Graph *g = graph_new(a->num_regs);
+    for (int reg1 = 0; reg1 < a->num_regs; reg1++) {
+        Vec *range1 = live_ranges[reg1];
+        if (!vec_len(range1)) { // Reg not used
+            continue;
+        }
+        add_node(g, reg1);
+        for (int reg2 = 0; reg2 < reg1; reg2++) {
+            Vec *range2 = live_ranges[reg2];
+            if (!vec_len(range2)) {
+                continue;
+            }
+            if (reg1 < a->num_pregs && reg2 < a->num_pregs) {
+                continue; // Don't care about preg interference
+            }
+            add_node(g, reg2);
+            if (ranges_intersect(range1, range2)) {
+                add_edge(g, reg1, reg2);
+                if (a->debug) {
+                    print_reg(a, reg1);
+                    printf(" interferes with ");
+                    print_reg(a, reg2);
+                    printf("\n");
+                }
+            }
+        }
+    }
+    return g;
+}
+
+static int is_mov(RegAlloc *a, AsmIns *ins) {
+    if (a->reg_group == REG_GROUP_GPR) {
+        return ins->op >= X64_MOV && ins->op <= X64_MOVZX;
+    } else { // SSE
+        return ins->op >= X64_MOVSS && ins->op <= X64_MOVSD;
+    }
+}
+
+static int is_coalescing_candidate(RegAlloc *a, AsmIns *mov) {
+    if (a->reg_group == REG_GROUP_GPR) {
+        return (mov->l->k == OPR_GPR && mov->r->k == OPR_GPR) && // both regs?
+               (mov->l->reg >= LAST_GPR || mov->r->reg >= LAST_GPR); // at least one vreg?
+    } else {
+        return (mov->l->k == OPR_XMM && mov->r->k == OPR_XMM) && // both regs?
+               (mov->l->reg >= LAST_XMM || mov->r->reg >= LAST_XMM); // at least one vreg?
+    }
+}
+
+// The coalescing graph tells us if two regs are candidates for coalescing.
+// (reg1, reg2) is an edge in the graph if both regs are related by a move
+// and their live ranges don't otherwise intersect.
+static Graph * coalescing_graph(RegAlloc *a, Vec **live_ranges) {
+    Graph *g = graph_new(a->num_regs);
+    for (AsmBB *bb = a->fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->head; ins; ins = ins->next) {
+            if (is_mov(a, ins) && is_coalescing_candidate(a, ins) &&
+                    !ranges_intersect(live_ranges[ins->l->reg],
+                                      live_ranges[ins->r->reg])) {
+                add_node(g, ins->l->reg);
+                add_node(g, ins->r->reg);
+                add_edge(g, ins->l->reg, ins->r->reg);
+            }
+        }
+    }
+    return g;
+}
+
+
+// ---- Register Group Allocation ---------------------------------------------
 
 static void print_live_range(Vec *live_range) {
     for (int i = (int) vec_len(live_range) - 1; i >= 0; i--) { // Reverse order
@@ -292,8 +367,8 @@ static void alloc_reg_group(RegAlloc *a) {
     if (a->debug) {
         print_live_ranges(a, live_ranges);
     }
-//    Graph *ig = interference_graph(a, live_ranges);
-//    Graph *cg = coalescing_graph(a, live_ranges);
+    Graph *ig = interference_graph(a, live_ranges);
+    Graph *cg = coalescing_graph(a, live_ranges);
 //    int reg_map[a->num_regs]; // Maps vreg -> allocated preg
 //    memset(reg_map, 0, a->num_regs * sizeof(int));
 //    int coalesce_map[a->num_regs]; // Maps vreg -> coalesced vreg or preg
@@ -305,14 +380,6 @@ static void alloc_reg_group(RegAlloc *a) {
 
 // ---- Register Allocation ---------------------------------------------------
 
-//static int gpr_is_mov(AsmIns *ins) {
-//    return ins->op >= X64_MOV && ins->op <= X64_MOVZX;
-//}
-//
-//static int sse_is_mov(AsmIns *ins) {
-//    return ins->op >= X64_MOVSS && ins->op <= X64_MOVSD;
-//}
-//
 //static int gpr_is_redundant_mov(AsmIns *mov) {
 //    return mov->l->k == OPR_GPR && mov->r->k == OPR_GPR && // both regs?
 //           mov->l->reg == mov->r->reg && // same reg?
@@ -325,15 +392,6 @@ static void alloc_reg_group(RegAlloc *a) {
 //           mov->l->reg == mov->r->reg; // same reg?
 //}
 //
-//static int gpr_is_coalescing_candidate(AsmIns *mov) {
-//    return (mov->l->k == OPR_GPR && mov->r->k == OPR_GPR) && // both regs?
-//           (mov->l->reg >= LAST_GPR || mov->r->reg >= LAST_GPR); // at least one vreg?
-//}
-//
-//static int sse_is_coalescing_candidate(AsmIns *mov) {
-//    return (mov->l->k == OPR_XMM && mov->r->k == OPR_XMM) && // both regs?
-//           (mov->l->reg >= LAST_XMM || mov->r->reg >= LAST_XMM); // at least one vreg?
-//}
 
 static RegAlloc * new_reg_alloc(AsmFn *fn, int reg_group, int debug) {
     RegAlloc *a = malloc(sizeof(RegAlloc));
