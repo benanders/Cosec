@@ -369,15 +369,19 @@ static IrIns * to_cond(Scope *s, IrIns *cond) {
     return br;
 }
 
-static IrIns * emit_conv(Scope *s, IrIns *src, IrType *dt) {
+static IrIns * emit_conv(Scope *s, IrIns *src, AstType *ast_st, IrType *dt) {
     int op;
     IrType *st = src->t;
     if (is_int(st) && is_fp(dt)) {
         op = IR_I2FP;
     } else if (is_fp(st) && is_int(dt)) {
         op = IR_FP2I;
-    } else if (is_num(st) && is_num(dt)) {
-        op = dt->size < st->size ? IR_TRUNC : IR_EXT;
+    } else if (is_int(st) && is_int(dt)) {
+        if (dt->size == st->size) return src; // No conversion needed
+        op = dt->size < st->size ? IR_TRUNC : (ast_st->is_unsigned ? IR_ZEXT : IR_SEXT);
+    } else if (is_fp(st) && is_fp(dt)) {
+        if (dt->size == st->size) return src; // No conversion needed
+        op = dt->size < st->size ? IR_FTRUNC : IR_FEXT;
     } else if (is_int(st) && (dt->k == IRT_PTR || dt->k == IRT_ARR)) {
         op = IR_I2PTR;
     } else if ((st->k == IRT_PTR || st->k == IRT_ARR) && is_int(dt)) {
@@ -608,8 +612,8 @@ static IrIns * compile_ptr_sub(Scope *s, AstNode *n) { // <ptr> - <ptr>
     assert(n->r->t->k == T_PTR);
     IrIns *l = discharge(s, compile_expr(s, n->l));
     IrIns *r = discharge(s, compile_expr(s, n->r));
-    l = emit_conv(s, l, irt_conv(n->t)); // Convert to i64
-    r = emit_conv(s, r, irt_conv(n->t));
+    l = emit_conv(s, l, n->l->t, irt_conv(n->t)); // Convert to i64
+    r = emit_conv(s, r, n->r->t, irt_conv(n->t));
     IrIns *sub = emit(s, IR_SUB, irt_conv(n->t));
     sub->l = l;
     sub->r = r;
@@ -713,7 +717,7 @@ static IrIns * compile_arith_assign(Scope *s, AstNode *n, int op) {
     IrType *ir_target = irt_conv(target);
     // May need to emit a truncation, e.g. 'char a = 3; char *b = &a; *b += 1'
     if (binop->t->k != ir_target->k) {
-        emit_conv(s, binop, ir_target);
+        emit_conv(s, binop, n->l->t, ir_target);
     }
     emit_store(s, lvalue->src, binop, n->t);
     return binop; // Assignment evaluates to its right operand
@@ -831,7 +835,7 @@ static IrIns * compile_addr(Scope *s, AstNode *n) {
 
 static IrIns * compile_conv(Scope *s, AstNode *n) {
     IrIns *l = discharge(s, compile_expr(s, n->l));
-    return emit_conv(s, l, irt_conv(n->t));
+    return emit_conv(s, l, n->l->t, irt_conv(n->t));
 }
 
 static IrIns * compile_array_access(Scope *s, AstNode *n) {
@@ -927,7 +931,12 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
     case N_BIT_OR:    return compile_binop(s, n, IR_BIT_OR);
     case N_BIT_XOR:   return compile_binop(s, n, IR_BIT_XOR);
     case N_SHL:       return compile_binop(s, n, IR_SHL);
-    case N_SHR:       return compile_binop(s, n, IR_SHR);
+    case N_SHR:
+        if (n->t->is_unsigned) { // Unsigned integer right shift
+            return compile_binop(s, n, IR_SHR);
+        } else { // Signed integer right shift
+            return compile_binop(s, n, IR_SAR);
+        }
     case N_EQ:        return compile_binop(s, n, IR_EQ);
     case N_NEQ:       return compile_binop(s, n, IR_NEQ);
     case N_LT:        return compile_binop(s, n, IR_LT);
@@ -958,7 +967,12 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
     case N_A_BIT_OR:  return compile_arith_assign(s, n, IR_BIT_OR);
     case N_A_BIT_XOR: return compile_arith_assign(s, n, IR_BIT_XOR);
     case N_A_SHL:     return compile_arith_assign(s, n, IR_SHL);
-    case N_A_SHR:     return compile_arith_assign(s, n, IR_SHR);
+    case N_A_SHR:
+        if (n->t->is_unsigned) { // Unsigned integer right shift
+            return compile_arith_assign(s, n, IR_SHR);
+        } else { // Signed integer right shift
+            return compile_arith_assign(s, n, IR_SAR);
+        }
     case N_COMMA:     return compile_comma(s, n);
     case N_TERNARY:   return compile_ternary(s, n);
 

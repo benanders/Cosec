@@ -387,9 +387,10 @@ static char *IR_OP_NAMES[IR_LAST] = {
     "IMM", "FP", "GLOBAL",
     "FARG", "ALLOC", "LOAD", "STORE", "COPY", "ZERO", "IDX",
     "ADD", "SUB", "MUL", "SDIV", "UDIV", "FDIV", "SMOD", "UMOD",
-    "AND", "OR", "XOR", "SHL", "SHR",
+    "AND", "OR", "XOR", "SHL", "SAR", "SHR",
     "EQ", "NEQ", "LT", "LE", "GT", "GE",
-    "TRUNC", "EXT", "FP2I", "I2FP", "PTR2I", "I2PTR", "BITCAST",
+    "TRUNC", "SEXT", "ZEXT", "PTR2I", "I2PTR", "BITCAST",
+    "FTRUNC", "FEXT", "FP2I", "I2FP",
     "PHI", "BR", "CONDBR", "CALL", "CARG", "RET",
 };
 

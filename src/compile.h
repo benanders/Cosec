@@ -63,7 +63,8 @@ enum {
     IR_BIT_OR,
     IR_BIT_XOR,
     IR_SHL,
-    IR_SHR,
+    IR_SAR, // Arithmetic right shift for signed integers (fill with sign bit)
+    IR_SHR, // Logical right shift for unsigned integers (fill with zero)
 
     // Comparisons
     IR_EQ,
@@ -75,12 +76,16 @@ enum {
 
     // Conversions
     IR_TRUNC,
-    IR_EXT,
-    IR_FP2I,    // Floating point -> integer
-    IR_I2FP,    // Integer -> floating point
+    IR_SEXT,    // Sign extend, for signed integers
+    IR_ZEXT,    // Zero extend, for unsigned integers
     IR_PTR2I,   // Pointer -> integer
     IR_I2PTR,   // Integer -> pointer
     IR_BITCAST, // Pointer -> another pointer
+
+    IR_FTRUNC, // Floating point truncation
+    IR_FEXT,   // Floating point extension
+    IR_FP2I,   // Floating point -> integer
+    IR_I2FP,   // Integer -> floating point
 
     // Control flow
     IR_PHI,

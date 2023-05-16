@@ -291,30 +291,7 @@ static AsmOpr * inline_imm_mem(Assembler *a, IrIns *ir) {
 }
 
 
-// ---- Instructions ----------------------------------------------------------
-
-static int INT_OP[IR_LAST] = {
-    [IR_ADD] = X64_ADD,
-    [IR_SUB] = X64_SUB,
-    [IR_MUL] = X64_IMUL,
-    [IR_BIT_AND] = X64_AND,
-    [IR_BIT_OR] = X64_OR,
-    [IR_BIT_XOR] = X64_XOR,
-};
-
-static int F32_OP[IR_LAST] = {
-    [IR_ADD]  = X64_ADDSS,
-    [IR_SUB]  = X64_SUBSS,
-    [IR_MUL]  = X64_MULSS,
-    [IR_FDIV] = X64_DIVSS,
-};
-
-static int F64_OP[IR_LAST] = {
-    [IR_ADD]  = X64_ADDSD,
-    [IR_SUB]  = X64_SUBSD,
-    [IR_MUL]  = X64_MULSD,
-    [IR_FDIV] = X64_DIVSD,
-};
+// ---- Immediates, Constants, and Memory Operations --------------------------
 
 static void asm_fp(Assembler *a, IrIns *ir) {
     size_t idx;
@@ -355,6 +332,35 @@ static void asm_store(Assembler *a, IrIns *ir) {
     AsmOpr *r = inline_imm(a, ir->src);
     emit(a, asm2(mov_for(ir->src->t), l, r));
 }
+
+
+// ---- Arithmetic ------------------------------------------------------------
+
+static int INT_OP[IR_LAST] = {
+    [IR_ADD] = X64_ADD,
+    [IR_SUB] = X64_SUB,
+    [IR_MUL] = X64_IMUL,
+    [IR_BIT_AND] = X64_AND,
+    [IR_BIT_OR] = X64_OR,
+    [IR_BIT_XOR] = X64_XOR,
+    [IR_SHL] = X64_SHL,
+    [IR_SAR] = X64_SAR,
+    [IR_SHR] = X64_SHR,
+};
+
+static int F32_OP[IR_LAST] = {
+    [IR_ADD]  = X64_ADDSS,
+    [IR_SUB]  = X64_SUBSS,
+    [IR_MUL]  = X64_MULSS,
+    [IR_FDIV] = X64_DIVSS,
+};
+
+static int F64_OP[IR_LAST] = {
+    [IR_ADD]  = X64_ADDSD,
+    [IR_SUB]  = X64_SUBSD,
+    [IR_MUL]  = X64_MULSD,
+    [IR_FDIV] = X64_DIVSD,
+};
 
 static void asm_arith(Assembler *a, IrIns *ir) {
     AsmOpr *l = discharge(a, ir->l); // Left operand always a vreg
@@ -398,7 +404,7 @@ static void asm_div_mod(Assembler *a, IrIns *ir) {
     AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
     ir->vreg = dst->reg;
     AsmOpr *result;
-    if (is_signed) {
+    if (ir->op == IR_SDIV || ir->op == IR_UDIV) {
         result = opr_gpr_t(RAX, ir->t); // Quotient in rax
     } else { // IR_MOD
         result = opr_gpr_t(RDX, ir->t); // Remainder in rax
@@ -407,8 +413,77 @@ static void asm_div_mod(Assembler *a, IrIns *ir) {
 }
 
 static void asm_sh(Assembler *a, IrIns *ir) {
-    // TODO
+    AsmOpr *l = discharge(a, ir->l); // Left operand always a vreg
+
+    AsmOpr *r = inline_imm(a, ir->r); // Right either imm or vreg
+    if (r->k == OPR_GPR) { // If a vreg, shift count has to be in cl
+        emit(a, asm2(X64_MOV, opr_gpr(RCX, r->size), r));
+        r = opr_gpr(RCX, R8L);
+    }
+
+    AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
+    ir->vreg = dst->reg;
+    emit(a, asm2(X64_MOV, dst, l));
+
+    emit(a, asm2(INT_OP[ir->op], dst, r)); // shift operation
 }
+
+
+// ---- Conversions -----------------------------------------------------------
+
+static void asm_trunc(Assembler *a, IrIns *ir) {
+    // For conversions, we can't allocate the result to the same vreg as its
+    // operand, because the source operand might still be used after the
+    // conversion operation.
+    // We need to maintain SSA form over the assembly output, so emit a mov
+    // into a new vreg and let the coalescer deal with it.
+    AsmOpr *src = inline_imm_mem(a, ir->l);
+    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    ir->vreg = dst->reg;
+    // We can't (e.g.) do mov ax, qword [rbp-4]; we have to mov into a register
+    // the same size as the SOURCE, then use the truncated register (i.e., ax)
+    // in future instructions
+    emit(a, asm2(X64_MOV, opr_gpr_t(dst->reg, ir->l->t), src));
+}
+
+static void asm_ext(Assembler *a, IrIns *ir, int op) {
+    AsmOpr *src = inline_imm_mem(a, ir->l);
+    if (src->k == OPR_IMM) {
+        op = X64_MOV;
+    }
+    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    ir->vreg = dst->reg;
+    emit(a, asm2(op, dst, src));
+}
+
+static void asm_fp_trunc_ext(Assembler *a, IrIns *ir, int op) {
+    // See below for why we don't use cvtxx2xx with a memory operand:
+    // https://stackoverflow.com/questions/16597587/why-dont-gcc-and-clang-use-cvtss2sd-memory
+    AsmOpr *src = discharge(a, ir->l);
+    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    ir->vreg = dst->reg;
+    emit(a, asm2(op, dst, src));
+}
+
+static void asm_conv_fp_int(Assembler *a, IrIns *ir, int op) {
+    AsmOpr *src = discharge(a, ir->l);
+    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    ir->vreg = dst->reg;
+    emit(a, asm2(op, dst, src));
+}
+
+static void asm_fp_to_int(Assembler *a, IrIns *ir) {
+    int op = ir->l->t->k == IRT_F32 ? X64_CVTTSS2SI : X64_CVTTSD2SI;
+    asm_conv_fp_int(a, ir, op);
+}
+
+static void asm_int_to_fp(Assembler *a, IrIns *ir) {
+    int op = ir->t->k == IRT_F32 ? X64_CVTSI2SS : X64_CVTSI2SD;
+    asm_conv_fp_int(a, ir, op);
+}
+
+
+// ---- Control Flow ----------------------------------------------------------
 
 static void asm_postamble(Assembler *a);
 
@@ -428,6 +503,9 @@ static void asm_ret(Assembler *a, IrIns *ir) {
     asm_postamble(a);
     emit(a, asm0(X64_RET));
 }
+
+
+// ---- Functions, Basic Blocks, and Instructions -----------------------------
 
 static void asm_ins(Assembler *a, IrIns *ir) {
     switch (ir->op) {
@@ -451,11 +529,26 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     case IR_SDIV: case IR_UDIV: case IR_SMOD: case IR_UMOD:
         asm_div_mod(a, ir);
         break;
-    case IR_SHL: case IR_SHR: asm_sh(a, ir); break;
+    case IR_SHL: case IR_SAR: case IR_SHR:
+        asm_sh(a, ir);
+        break;
 
         // Comparisons
     case IR_EQ: case IR_NEQ: case IR_LT: case IR_LE: case IR_GT: case IR_GE:
         break; // Handled by CONDBR
+
+        // Conversions
+    case IR_TRUNC:   asm_trunc(a, ir); break;
+    case IR_SEXT:    asm_ext(a, ir, X64_MOVSX); break;
+    case IR_ZEXT:    asm_ext(a, ir, X64_MOVZX); break;
+    case IR_PTR2I:   asm_trunc(a, ir); break; // Pointers are always bigger
+    case IR_I2PTR:   asm_ext(a, ir, X64_MOVZX); break;
+    case IR_BITCAST: asm_ext(a, ir, X64_MOV); break;
+
+    case IR_FTRUNC: asm_fp_trunc_ext(a, ir, X64_CVTSD2SS); break;
+    case IR_FEXT:   asm_fp_trunc_ext(a, ir, X64_CVTSS2SD); break;
+    case IR_FP2I:   asm_fp_to_int(a, ir); break;
+    case IR_I2FP:   asm_int_to_fp(a, ir); break;
 
         // Control flow
     case IR_RET: asm_ret(a, ir); break;
@@ -468,9 +561,6 @@ static void asm_bb(Assembler *a, IrBB *ir_bb) {
         asm_ins(a, ins);
     }
 }
-
-
-// ---- Functions -------------------------------------------------------------
 
 static void asm_preamble(Assembler *a) {
     emit(a, asm1(X64_PUSH, opr_gpr(RBP, R64)));                            // push rbp
