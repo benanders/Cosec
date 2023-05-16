@@ -615,7 +615,7 @@ static IrIns * compile_ptr_sub(Scope *s, AstNode *n) { // <ptr> - <ptr>
     sub->r = r;
     IrIns *size = emit(s, IR_IMM, irt_conv(n->t));
     size->imm = n->l->t->ptr->size;
-    IrIns *div = emit(s, IR_DIV, irt_conv(n->t));
+    IrIns *div = emit(s, IR_UDIV, irt_conv(n->t));
     div->l = sub;
     div->r = size;
     return div;
@@ -908,9 +908,21 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
             return compile_ptr_arith(s, n);
         }
         return compile_binop(s, n, IR_SUB);
-    case N_MUL:       return compile_binop(s, n, IR_MUL);
-    case N_DIV:       return compile_binop(s, n, IR_DIV);
-    case N_MOD:       return compile_binop(s, n, IR_MOD);
+    case N_MUL: return compile_binop(s, n, IR_MUL);
+    case N_DIV:
+        if (n->t->k >= T_FLOAT && n->t->k <= T_LDOUBLE) {
+            return compile_binop(s, n, IR_FDIV);
+        } else if (n->t->is_unsigned) { // Unsigned integer division
+            return compile_binop(s, n, IR_UDIV);
+        } else { // Signed integer division
+            return compile_binop(s, n, IR_SDIV);
+        }
+    case N_MOD:
+        if (n->t->is_unsigned) { // Unsigned integer modulo
+            return compile_binop(s, n, IR_UMOD);
+        } else { // Signed integer modulo
+            return compile_binop(s, n, IR_SMOD);
+        }
     case N_BIT_AND:   return compile_binop(s, n, IR_BIT_AND);
     case N_BIT_OR:    return compile_binop(s, n, IR_BIT_OR);
     case N_BIT_XOR:   return compile_binop(s, n, IR_BIT_XOR);
@@ -928,8 +940,20 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
     case N_A_ADD:     return compile_arith_assign(s, n, IR_ADD);
     case N_A_SUB:     return compile_arith_assign(s, n, IR_SUB);
     case N_A_MUL:     return compile_arith_assign(s, n, IR_MUL);
-    case N_A_DIV:     return compile_arith_assign(s, n, IR_DIV);
-    case N_A_MOD:     return compile_arith_assign(s, n, IR_MOD);
+    case N_A_DIV:
+        if (n->t->k >= T_FLOAT && n->t->k <= T_LDOUBLE) {
+            return compile_arith_assign(s, n, IR_FDIV);
+        } else if (n->t->is_unsigned) { // Unsigned integer division
+            return compile_arith_assign(s, n, IR_UDIV);
+        } else { // Signed integer division
+            return compile_arith_assign(s, n, IR_SDIV);
+        }
+    case N_A_MOD:
+        if (n->t->is_unsigned) { // Unsigned integer modulo
+            return compile_arith_assign(s, n, IR_UMOD);
+        } else { // Signed integer modulo
+            return compile_arith_assign(s, n, IR_SMOD);
+        }
     case N_A_BIT_AND: return compile_arith_assign(s, n, IR_BIT_AND);
     case N_A_BIT_OR:  return compile_arith_assign(s, n, IR_BIT_OR);
     case N_A_BIT_XOR: return compile_arith_assign(s, n, IR_BIT_XOR);

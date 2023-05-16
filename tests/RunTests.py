@@ -14,36 +14,46 @@ def run_test(cosec_bin, path):
     re_search = re.search(r'\/\/ expect\: (\d+)', contents)
     if re_search is None:
         print("  Test '" + path + "': no '// expect: ' in file")
-        sys.exit(1)
+        return
     groups = re_search.groups()
     if len(groups) == 0:
         print("  Test '" + path + "': no matching regex '// expect: (\\d+)' in file")
-        sys.exit(1)
+        return
     expected_output = int(groups[0])
 
     # Compile
-    result = subprocess.run([cosec_bin, path, "-o", "out.s"])
+    result = subprocess.run([cosec_bin, path, "-o", "out.s"], capture_output=True, text=True)
     if result.returncode != 0:
         print("  Test '" + path + "': failed to compile")
-        sys.exit(1)
+        print("  Output:")
+        print(result.stdout + result.stderr)
+        return
 
     # Assemble
-    result = subprocess.run([nasm_bin] + nasm_args + ["-o", "out.o", "out.s"])
+    result = subprocess.run([nasm_bin] + nasm_args + ["-o", "out.o", "out.s"], capture_output=True, text=True)
     if result.returncode != 0:
         print("  Test '" + path + "': failed to assemble")
-        sys.exit(1)
+        print("  Output:")
+        print(result.stdout + result.stderr)
+        return
 
     # Link
-    result = subprocess.run([ld_bin] + ld_args + ["-o", "a.out", "out.o"])
+    result = subprocess.run([ld_bin] + ld_args + ["-o", "a.out", "out.o"], capture_output=True, text=True)
     if result.returncode != 0:
         print("  Test '" + path + "': failed to link")
-        sys.exit(1)
+        print("  Output:")
+        print(result.stdout + result.stderr)
+        return
 
     # Run
-    result = subprocess.run(["./a.out"])
+    result = subprocess.run(["./a.out"], capture_output=True, text=True)
     if result.returncode != expected_output:
         print("  Test '" + path + "': FAILED")
-        sys.exit(1)
+        print("  Expected return code: " + str(expected_output))
+        print("  Got return code: " + str(result.returncode))
+        if len(result.stdout) > 0:
+            print("  Output: ")
+            print(result.stdout + result.stderr)
     else:
         print("  Test '" + path + "': PASSED")
 

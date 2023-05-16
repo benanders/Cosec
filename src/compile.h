@@ -54,8 +54,11 @@ enum {
     IR_ADD,
     IR_SUB,
     IR_MUL,
-    IR_DIV,
-    IR_MOD,
+    IR_SDIV, // Signed division
+    IR_UDIV, // Unsigned division
+    IR_FDIV, // Floating point division
+    IR_SMOD, // Signed modulo
+    IR_UMOD, // Unsigned modulo
     IR_BIT_AND,
     IR_BIT_OR,
     IR_BIT_XOR,

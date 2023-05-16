@@ -95,7 +95,7 @@ static int ranges_intersect(Vec *a, Vec *b) {
     for (size_t i = 0; i < vec_len(a); i++) {
         Interval *aa = vec_get(a, i);
         for (size_t j = 0; j < vec_len(b); j++) {
-            Interval *bb = vec_get(b, i);
+            Interval *bb = vec_get(b, j);
             if (intervals_intersect(aa, bb)) {
                 return 1;
             }

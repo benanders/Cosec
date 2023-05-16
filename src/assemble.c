@@ -303,17 +303,17 @@ static int INT_OP[IR_LAST] = {
 };
 
 static int F32_OP[IR_LAST] = {
-    [IR_ADD] = X64_ADDSS,
-    [IR_SUB] = X64_SUBSS,
-    [IR_MUL] = X64_MULSS,
-    [IR_DIV] = X64_DIVSS,
+    [IR_ADD]  = X64_ADDSS,
+    [IR_SUB]  = X64_SUBSS,
+    [IR_MUL]  = X64_MULSS,
+    [IR_FDIV] = X64_DIVSS,
 };
 
 static int F64_OP[IR_LAST] = {
-    [IR_ADD] = X64_ADDSD,
-    [IR_SUB] = X64_SUBSD,
-    [IR_MUL] = X64_MULSD,
-    [IR_DIV] = X64_DIVSD,
+    [IR_ADD]  = X64_ADDSD,
+    [IR_SUB]  = X64_SUBSD,
+    [IR_MUL]  = X64_MULSD,
+    [IR_FDIV] = X64_DIVSD,
 };
 
 static void asm_fp(Assembler *a, IrIns *ir) {
@@ -375,7 +375,35 @@ static void asm_arith(Assembler *a, IrIns *ir) {
 }
 
 static void asm_div_mod(Assembler *a, IrIns *ir) {
-    // TODO
+    AsmOpr *dividend = discharge(a, ir->l); // Left operand always a vreg
+    AsmOpr *divisor = inline_mem(a, ir->r);
+
+    // Mov dividend into eax
+    emit(a, asm2(X64_MOV, opr_gpr(RAX, dividend->size), dividend));
+
+    // Sign extend eax into edx:eax
+    int ext_op;
+    switch (ir->t->size) {
+        case 4:  ext_op = X64_CDQ; break;
+        case 8:  ext_op = X64_CQO; break;
+        default: ext_op = X64_CWD; break;
+    }
+    emit(a, asm0(ext_op));
+
+    // div or idiv performs rdx:rax / <operand>
+    int is_signed = (ir->op == IR_SDIV || ir->op == IR_SMOD);
+    emit(a, asm1(is_signed ? X64_IDIV : X64_DIV, divisor));
+
+    // Mov result from rax (division) or rdx (modulo) into vreg
+    AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
+    ir->vreg = dst->reg;
+    AsmOpr *result;
+    if (is_signed) {
+        result = opr_gpr_t(RAX, ir->t); // Quotient in rax
+    } else { // IR_MOD
+        result = opr_gpr_t(RDX, ir->t); // Remainder in rax
+    }
+    emit(a, asm2(X64_MOV, dst, result));
 }
 
 static void asm_sh(Assembler *a, IrIns *ir) {
@@ -416,18 +444,13 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     case IR_IDX:   assert(0); // TODO
 
         // Arithmetic
-    case IR_ADD: case IR_SUB: case IR_MUL:
+    case IR_ADD: case IR_SUB: case IR_MUL: case IR_FDIV:
     case IR_BIT_AND: case IR_BIT_OR: case IR_BIT_XOR:
         asm_arith(a, ir);
         break;
-    case IR_DIV:
-        if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
-            asm_arith(a, ir);
-        } else {
-            asm_div_mod(a, ir);
-        }
+    case IR_SDIV: case IR_UDIV: case IR_SMOD: case IR_UMOD:
+        asm_div_mod(a, ir);
         break;
-    case IR_MOD: asm_div_mod(a, ir); break;
     case IR_SHL: case IR_SHR: asm_sh(a, ir); break;
 
         // Comparisons

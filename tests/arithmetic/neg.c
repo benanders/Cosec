@@ -1,4 +1,5 @@
 // expect: 3
 int main() {
-	return 3;
+	int a = -3;
+	return -a;
 }
