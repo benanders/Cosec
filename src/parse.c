@@ -376,7 +376,9 @@ static void def_symbol(Scope *s, AstNode *n) {
         if (n->t->linkage == LINK_EXTERN && v->t->linkage == LINK_STATIC) goto err_static2;
     } else { // Block scope
         // ALLOWED: [extern int a; extern int a]
-        if (!(n->t->linkage == LINK_EXTERN && v->t->linkage == LINK_EXTERN)) goto err_redef;
+        // ALLOWED: [typedef int a; typedef int a]
+        if (!((n->t->linkage == LINK_EXTERN && v->t->linkage == LINK_EXTERN) ||
+              (n->k == N_TYPEDEF && v->k == N_TYPEDEF))) goto err_redef;
     }
     goto okay;
 err_redef:
@@ -760,7 +762,7 @@ static AstType * parse_decl_specs(Scope *s, int *sclass) {
         case TK_ENUM:     if (t) { goto t_err; } t = parse_aggr(s, T_ENUM); break;
         case TK_IDENT:
             if (!find_typedef(s, tk->ident)) goto done;
-            if (t) goto t_err;
+            if (t || kind || size || sign) goto done;
             t = find_typedef(s, tk->ident);
             break;
         default: goto done;
