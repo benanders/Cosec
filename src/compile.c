@@ -327,7 +327,7 @@ static IrIns * discharge(Scope *s, IrIns *br) {
     }
     if (vec_len(br->true_chain) == 1 && vec_len(br->false_chain) == 1) {
         IrIns *cond = br->cond;
-        if (((BrChain *) vec_get(br->false_chain, 0))->bb == &br->false) {
+        if (*((BrChain *) vec_get(br->false_chain, 0))->bb == br->false) {
             cond->op = INVERT_COND[cond->op]; // Negate
         }
         delete_ir(br);
