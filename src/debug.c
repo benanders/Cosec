@@ -283,7 +283,7 @@ static void print_node(AstNode *n, int indent) {
                     continue;
                 } else {
                     printf("\n");
-                    print_nodes(n->els, indent + 1);
+                    print_nodes(n->els->body, indent + 1);
                 }
             }
             break;
@@ -444,7 +444,7 @@ static void print_ins(IrIns *ins) {
                           ins->dst->n, ins->len->n); break;
     case IR_PHI:
         for (size_t i = 0; i < vec_len(ins->preds); i++) {
-            IrBB *pred = vec_get(ins->preds, i);
+            BB *pred = vec_get(ins->preds, i);
             IrIns *def = vec_get(ins->defs, i);
             printf("[ " BB_PREFIX "%zu -> %.4zu ] ", pred->n, def->n);
         }
@@ -463,34 +463,34 @@ static void print_ins(IrIns *ins) {
     printf("\n");
 }
 
-static void print_bb(IrBB *bb) {
+static void print_bb(BB *bb) {
     printf(BB_PREFIX "%zu:\n", bb->n);
-    for (IrIns *ins = bb->head; ins; ins = ins->next) {
+    for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
         print_ins(ins);
     }
 }
 
-static void number_bbs(IrFn *fn) {
+static void number_bbs(Fn *fn) {
     int i = 0;
-    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
         bb->n = i++;
     }
 }
 
-static void number_ins(IrFn *fn) {
+static void number_ins(Fn *fn) {
     int i = 0;
-    for (IrBB *bb = fn->entry; bb; bb = bb->next) {
-        for (IrIns *ins = bb->head; ins; ins = ins->next) {
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
             ins->n = i++;
         }
     }
 }
 
 static void print_fn(Global *g) {
-    number_bbs(g->ir_fn);
-    number_ins(g->ir_fn);
+    number_bbs(g->fn);
+    number_ins(g->fn);
     printf("%s:\n", g->label);
-    for (IrBB *bb = g->ir_fn->entry; bb; bb = bb->next) {
+    for (BB *bb = g->fn->entry; bb; bb = bb->next) {
         print_bb(bb);
     }
 }
@@ -509,7 +509,7 @@ static void print_global(Global *g) {
 void print_ir(Vec *globals) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->ir_fn) {
+        if (g->fn) {
             print_fn(g);
         } else {
             print_global(g);

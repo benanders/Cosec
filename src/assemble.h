@@ -139,41 +139,23 @@ typedef struct {
                 char *label; // OPR_LABEL, OPR_DEREF
             };
         };
-        IrBB *bb; // OPR_BB
+        struct BB *bb; // OPR_BB
     };
 } AsmOpr;
 
 typedef struct AsmIns {
     struct AsmIns *next, *prev;
-    struct AsmBB *bb;
+    struct BB *bb;
     int op;
     AsmOpr *l, *r;
-    size_t n; // For register allocator
+
+    // For register allocator
+    size_t n;
 } AsmIns;
-
-typedef struct AsmBB {
-    struct AsmBB *next, *prev;
-    AsmIns *head, *last;
-    size_t n; // For printing
-
-    // Control flow graph analysis
-    Vec *pred, *succ;
-
-    // Liveness analysis
-    int *live_in; // All regs live-in at the start of the BB
-} AsmBB;
-
-typedef struct AsmFn {
-    AsmBB *entry, *last;
-    int linkage;
-    Vec *f32s; // Per-function floating point constants
-    Vec *f64s;
-    int num_gprs, num_sse;
-} AsmFn;
 
 void assemble(Vec *globals);
 
-// For register allocator to delete redundant 'mov's
+// For register allocator to remove redundant 'mov's
 void delete_asm(AsmIns *ins);
 
 #endif

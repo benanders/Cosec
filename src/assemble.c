@@ -7,54 +7,22 @@
 #define STACK_ALIGN 16
 
 typedef struct { // Per-function assembler
-    AsmFn *fn;
+    Fn *fn;
+    BB *bb;
     int next_gpr, next_sse;
     size_t next_stack;
     Vec *patch_with_stack_size; // of 'AsmIns *'
 } Assembler;
 
-
-// ---- Assembler, Functions, and Basic Blocks --------------------------------
-
-static Assembler * new_asm(AsmFn *fn) {
+static Assembler * new_asm(Fn *fn) {
     Assembler *a = malloc(sizeof(Assembler));
     a->fn = fn;
+    a->bb = fn->entry;
     a->next_gpr = LAST_GPR;
     a->next_sse = LAST_XMM;
     a->next_stack = 0;
     a->patch_with_stack_size = vec_new();
     return a;
-}
-
-static AsmBB * new_bb() {
-    AsmBB *bb = malloc(sizeof(AsmBB));
-    bb->next = bb->prev = NULL;
-    bb->head = bb->last = NULL;
-    bb->n = 0;
-    bb->pred = bb->succ = NULL;
-    bb->live_in = NULL;
-    return bb;
-}
-
-static AsmFn * new_fn() {
-    AsmFn *fn = malloc(sizeof(AsmFn));
-    fn->entry = fn->last = new_bb();
-    fn->f32s = vec_new();
-    fn->f64s = vec_new();
-    return fn;
-}
-
-static AsmBB * emit_bb(Assembler *a) {
-    assert(a->fn);
-    AsmBB *bb = new_bb();
-    bb->prev = a->fn->last;
-    if (a->fn->last) {
-        a->fn->last->next = bb;
-    } else {
-        a->fn->entry = bb;
-    }
-    a->fn->last = bb;
-    return bb;
 }
 
 
@@ -83,33 +51,33 @@ static AsmIns * asm2(int op, AsmOpr *l, AsmOpr *r) {
     return ins;
 }
 
-static AsmIns * emit_to_bb(AsmBB *bb, AsmIns *ins) {
+static AsmIns * emit_to_bb(BB *bb, AsmIns *ins) {
     ins->bb = bb;
-    ins->prev = bb->last;
-    if (bb->last) {
-        bb->last->next = ins;
+    ins->prev = bb->asm_last;
+    if (bb->asm_last) {
+        bb->asm_last->next = ins;
     } else {
-        bb->head = ins;
+        bb->asm_head = ins;
     }
-    bb->last = ins;
+    bb->asm_last = ins;
     return ins;
 }
 
 static AsmIns * emit(Assembler *a, AsmIns *ins) {
-    return emit_to_bb(a->fn->last, ins);
+    return emit_to_bb(a->bb, ins);
 }
 
 void delete_asm(AsmIns *ins) {
     if (ins->prev) {
         ins->prev->next = ins->next;
     } else { // Head of linked list
-        ins->bb->head = ins->next;
+        ins->bb->asm_head = ins->next;
     }
     if (ins->next) {
         ins->next->prev = ins->prev;
     }
-    if (ins->bb->last == ins) {
-        ins->bb->last = ins->prev;
+    if (ins->bb->asm_last == ins) {
+        ins->bb->asm_last = ins->prev;
     }
 }
 
@@ -161,7 +129,7 @@ static AsmOpr * opr_xmm(int reg) {
     return opr;
 }
 
-static AsmOpr * opr_bb(IrBB *bb) {
+static AsmOpr * opr_bb(BB *bb) {
     AsmOpr *opr = opr_new(OPR_BB);
     opr->bb = bb;
     return opr;
@@ -541,11 +509,13 @@ static void asm_condbr(Assembler *a, IrIns *ir) {
     // The true case or false case MUST be the next basic block
     assert(ir->true == ir->bb->next || ir->false == ir->bb->next);
     asm_cmp(a, ir->cond);
-    int op = JMP_OP[ir->op];
+    int op = JMP_OP[ir->cond->op];
+    assert(op != 0);
     if (ir->true == ir->bb->next) { // True case falls through
         op = INVERT_JMP[op]; // Invert condition
+        assert(op != 0);
     }
-    IrBB *target = (ir->true == ir->bb->next) ? ir->false : ir->true;
+    BB *target = (ir->true == ir->bb->next) ? ir->false : ir->true;
     emit(a, asm1(op, opr_bb(target)));
 }
 
@@ -625,8 +595,8 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     }
 }
 
-static void asm_bb(Assembler *a, IrBB *ir_bb) {
-    for (IrIns *ins = ir_bb->head; ins; ins = ins->next) {
+static void asm_bb(Assembler *a, BB *ir_bb) {
+    for (IrIns *ins = ir_bb->ir_head; ins; ins = ins->next) {
         asm_ins(a, ins);
     }
 }
@@ -660,26 +630,23 @@ static void patch_stack_sizes(Assembler *a) {
     }
 }
 
-static AsmFn * asm_fn(IrFn *ir_fn) {
-    AsmFn *fn = new_fn();
+static void asm_fn(Fn *fn) {
     Assembler *a = new_asm(fn);
     asm_preamble(a);
-    for (IrBB *ir_bb = ir_fn->entry; ir_bb; ir_bb = ir_bb->next) {
-        emit_bb(a);
-        asm_bb(a, ir_bb);
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        a->bb = bb;
+        asm_bb(a, bb);
     }
     patch_stack_sizes(a);
     fn->num_gprs = a->next_gpr;
     fn->num_sse = a->next_sse;
-    fn->linkage = ir_fn->linkage;
-    return fn;
 }
 
 void assemble(Vec *global) {
     for (size_t i = 0; i < vec_len(global); i++) {
         Global *g = vec_get(global, i);
-        if (g->ir_fn) {
-            g->asm_fn = asm_fn(g->ir_fn);
+        if (g->fn) {
+            asm_fn(g->fn);
         }
     }
 }

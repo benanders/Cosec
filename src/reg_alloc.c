@@ -27,14 +27,14 @@ enum {
 };
 
 typedef struct RegAlloc { // Allocator for a register group (GPR or SSE)
-    AsmFn *fn;
+    Fn *fn;
     int group;
     int num_regs; // pregs + vregs
     int num_pregs;
     int debug;
 } RegAlloc;
 
-static RegAlloc * new_reg_alloc(AsmFn *fn, int reg_group, int debug) {
+static RegAlloc * new_reg_alloc(Fn *fn, int reg_group, int debug) {
     RegAlloc *a = malloc(sizeof(RegAlloc));
     a->fn = fn;
     a->group = reg_group;
@@ -52,20 +52,16 @@ static RegAlloc * new_reg_alloc(AsmFn *fn, int reg_group, int debug) {
 
 // ---- Control Flow Graph Analysis -------------------------------------------
 
-static void add_pair(AsmBB *before, AsmBB *after) {
+static void add_pair(BB *before, BB *after) {
     vec_push(before->succ, after);
     vec_push(after->pred, before);
 }
 
 // Populates predecessor and successor basic blocks for each basic block in the
 // function
-static void cfg_analysis(AsmFn *fn) {
-    for (AsmBB *bb = fn->entry; bb; bb = bb->next) { // Allocate pred and succ
-        bb->pred = vec_new();
-        bb->succ = vec_new();
-    }
-    for (AsmBB *bb = fn->entry; bb; bb = bb->next) {
-        AsmIns *last = bb->last;
+static void cfg_analysis(Fn *fn) {
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        AsmIns *last = bb->asm_last;
         if (last->op >= X64_JE && last->op <= X64_JAE) {
             add_pair(bb, last->bb);
         }
@@ -189,13 +185,13 @@ static void mark_live(RegAlloc *a, AsmIns *ins, int *live) {
     }
 }
 
-static int live_ranges_for_bb(RegAlloc *a, AsmBB *bb, Vec **live_ranges) {
+static int live_ranges_for_bb(RegAlloc *a, BB *bb, Vec **live_ranges) {
     // Tracks which regs are live at the current program point
     int *live = calloc(a->num_regs, sizeof(int));
 
     // Live-out is union of live-in over all successors
     for (size_t i = 0; i < vec_len(bb->succ); i++) {
-        AsmBB *succ = vec_get(bb->succ, i);
+        BB *succ = vec_get(bb->succ, i);
         for (int reg = 0; reg < a->num_regs; reg++) {
             live[reg] |= succ->live_in[reg];
         }
@@ -205,12 +201,12 @@ static int live_ranges_for_bb(RegAlloc *a, AsmBB *bb, Vec **live_ranges) {
     // instruction in the BB
     for (int reg = 0; reg < a->num_regs; reg++) {
         if (live[reg]) {
-            mark_idx_live(live_ranges[reg], bb->last->n + 1);
+            mark_idx_live(live_ranges[reg], bb->asm_last->n + 1);
         }
     }
 
     // Instructions in reverse
-    for (AsmIns *ins = bb->last; ins; ins = ins->prev) {
+    for (AsmIns *ins = bb->asm_last; ins; ins = ins->prev) {
         mark_live(a, ins, live);
 
         // Copy everything that's live here into 'live_ranges'
@@ -247,20 +243,20 @@ static Vec ** live_ranges_for_fn(RegAlloc *a) {
     for (int reg = 0; reg < a->num_regs; reg++) { // Alloc live ranges
         live_ranges[reg] = vec_new();
     }
-    for (AsmBB *bb = a->fn->entry; bb; bb = bb->next) { // Alloc live-in for BBs
+    for (BB *bb = a->fn->entry; bb; bb = bb->next) { // Alloc live-in for BBs
         bb->live_in = calloc(a->num_regs, sizeof(int));
     }
 
     Vec *worklist = vec_new(); // of 'AsmBB *'
-    for (AsmBB *bb = a->fn->entry; bb; bb = bb->next) { // Add all BBs
+    for (BB *bb = a->fn->entry; bb; bb = bb->next) { // Add all BBs
         vec_push(worklist, bb);
     }
 
     while (vec_len(worklist) > 0) {
-        AsmBB *bb = vec_pop(worklist); // Pop BBs in reverse order
+        BB *bb = vec_pop(worklist); // Pop BBs in reverse order
         if (live_ranges_for_bb(a, bb, live_ranges)) { // live-in changed?
             for (size_t i = 0; i < vec_len(bb->pred); i++) { // Add predecessors
-                AsmBB *pred = vec_get(bb->pred, i);
+                BB *pred = vec_get(bb->pred, i);
                 vec_push(worklist, pred);
             }
         }
@@ -351,8 +347,8 @@ static int is_coalescing_candidate(RegAlloc *a, AsmIns *ins) {
 // and their live ranges don't otherwise intersect.
 static Graph * coalescing_graph(RegAlloc *a, Vec **live_ranges) {
     Graph *g = graph_new(a->num_regs);
-    for (AsmBB *bb = a->fn->entry; bb; bb = bb->next) {
-        for (AsmIns *ins = bb->head; ins; ins = ins->next) {
+    for (BB *bb = a->fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
             if (is_coalescing_candidate(a, ins) &&
                     !ranges_intersect(live_ranges[ins->l->reg],
                                       live_ranges[ins->r->reg])) {
@@ -633,8 +629,8 @@ static int is_redundant_mov(RegAlloc *a, AsmIns *ins) {
 
 static void replace_vregs(RegAlloc *a, int *reg_map, int *coalesce_map) {
     // Run through the code and replace each vreg with its allocated preg
-    for (AsmBB *bb = a->fn->entry; bb; bb = bb->next) {
-        for (AsmIns *ins = bb->head; ins; ins = ins->next) {
+    for (BB *bb = a->fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
             replace_vregs_in_op(a, ins->l, reg_map, coalesce_map);
             replace_vregs_in_op(a, ins->r, reg_map, coalesce_map);
             if (is_redundant_mov(a, ins)) {
@@ -665,17 +661,17 @@ static void alloc_reg_group(RegAlloc *a) {
     replace_vregs(a, reg_map, coalesce_map);
 }
 
-static void number_ins(AsmFn *fn) {
+static void number_ins(Fn *fn) {
     size_t i = 0;
-    for (AsmBB *bb = fn->entry; bb; bb = bb->next) {
-        for (AsmIns *ins = bb->head; ins; ins = ins->next) {
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
+        for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
             ins->n = i++;
         }
         i++; // Extra program point at END of a BB for vregs that are live-out
     }
 }
 
-static void alloc_fn(AsmFn *fn, int debug) {
+static void alloc_fn(Fn *fn, int debug) {
     number_ins(fn);
     cfg_analysis(fn);
     RegAlloc *gpr = new_reg_alloc(fn, REG_GROUP_GPR, debug);
@@ -687,9 +683,9 @@ static void alloc_fn(AsmFn *fn, int debug) {
 void reg_alloc(Vec *globals, int debug) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->asm_fn) {
+        if (g->fn) {
             if (debug) printf("Register allocation for '%s':\n", g->label);
-            alloc_fn(g->asm_fn, debug);
+            alloc_fn(g->fn, debug);
             if (debug) printf("\n");
         }
     }

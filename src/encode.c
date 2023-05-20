@@ -134,43 +134,42 @@ static void encode_ins(FILE *out, Global *g, AsmIns *ins) {
     fprintf(out, "\n");
 }
 
-static void encode_bb(FILE *out, Global *g, AsmBB *bb) {
+static void encode_bb(FILE *out, Global *g, BB *bb) {
     fprintf(out, BB_PREFIX "%zu:\n", bb->n);
-    for (AsmIns *ins = bb->head; ins; ins = ins->next) {
+    for (AsmIns *ins = bb->asm_head; ins; ins = ins->next) {
         fprintf(out, "\t");
         encode_ins(out, g, ins);
     }
 }
 
 static void encode_fps(FILE *out, Global *g) {
-    for (size_t i = 0; i < vec_len(g->asm_fn->f32s); i++) {
-        uint32_t *fp = vec_get(g->asm_fn->f32s, i);
+    for (size_t i = 0; i < vec_len(g->fn->f32s); i++) {
+        uint32_t *fp = vec_get(g->fn->f32s, i);
         fprintf(out, "%s." F32_PREFIX "%zu: ", g->label, i);
         fprintf(out, "dd 0x%" PRIx32 " ; float %g\n", *fp, *((float *) fp));
     }
-    for (size_t i = 0; i < vec_len(g->asm_fn->f64s); i++) {
-        uint64_t *fp = vec_get(g->asm_fn->f64s, i);
+    for (size_t i = 0; i < vec_len(g->fn->f64s); i++) {
+        uint64_t *fp = vec_get(g->fn->f64s, i);
         fprintf(out, "%s." F64_PREFIX "%zu: ", g->label, i);
         fprintf(out, "dq 0x%" PRIx64 " ; double %g\n", *fp, *((double *) fp));
     }
 }
 
-static void number_bbs(AsmFn *fn) {
-    int i = 0;
-    for (AsmBB *bb = fn->entry; bb; bb = bb->next) {
+static void number_bbs(Fn *fn) {
+    size_t i = 0;
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
         bb->n = i++;
     }
 }
 
 static void encode_fn(FILE *out, Global *g) {
-    AsmFn *fn = g->asm_fn;
-    number_bbs(fn);
-    if (fn->linkage == LINK_EXTERN) {
+    number_bbs(g->fn);
+    if (g->fn->linkage == LINK_EXTERN) {
         fprintf(out, "global %s\n", g->label);
     }
     encode_fps(out, g);
     fprintf(out, "%s:\n", g->label);
-    for (AsmBB *bb = fn->entry; bb; bb = bb->next) {
+    for (BB *bb = g->fn->entry; bb; bb = bb->next) {
         encode_bb(out, g, bb);
     }
     fprintf(out, "\n");
@@ -180,7 +179,7 @@ static void encode_fns(FILE *out, Vec *globals) {
     int written_header = 0;
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (!g->asm_fn) {
+        if (!g->fn) {
             continue; // Not a function definition
         }
         if (!written_header) {

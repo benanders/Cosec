@@ -97,13 +97,13 @@ enum {
 };
 
 typedef struct {
-    struct IrBB **bb;
+    struct BB **bb;
     struct IrIns *ins; // Needed to generate PHIs
 } BrChain;
 
 typedef struct IrIns {
     struct IrIns *next, *prev;
-    struct IrBB *bb;
+    struct BB *bb;
     int op;
     IrType *t;
     union {
@@ -128,13 +128,13 @@ typedef struct IrIns {
 
         // Control flow
         struct { // IR_PHI
-            Vec *preds; // of 'IrBB *'; predecessors
+            Vec *preds; // of 'BB *'; predecessors
             Vec *defs;  // of 'IrIns *'; definitions, one for each predecessor
         };
-        struct IrBB *br; // IR_BR
+        struct BB *br; // IR_BR
         struct { // IR_CONDBR
             struct IrIns *cond;
-            struct IrBB *true, *false;
+            struct BB *true, *false;
             Vec *true_chain, *false_chain; // of 'BrChain *'
         };
         struct IrIns *fn;  // IR_CALL
@@ -145,22 +145,30 @@ typedef struct IrIns {
     size_t n; // For printing
 } IrIns;
 
-typedef struct IrBB {
-    struct IrBB *next, *prev;
-    IrIns *head, *last;
+typedef struct BB {
+    struct BB *next, *prev;
+    IrIns *ir_head, *ir_last;
+    struct AsmIns *asm_head, *asm_last;
     size_t n; // For printing
-} IrBB;
+
+    // For assembler
+    Vec *pred, *succ; // Control flow graph analysis
+    int *live_in;     // Liveness analysis (all regs live-in at the BB's start)
+} BB;
 
 typedef struct {
-    IrBB *entry, *last;
+    BB *entry, *last;
     int linkage;
-} IrFn;
+
+    // For assembler
+    Vec *f32s, *f64s; // Per-function floating point constants
+    int num_gprs, num_sse;
+} Fn;
 
 typedef struct Global {
     char *label;
     AstNode *val; // NULL if fn def; or N_IMM, N_FP, N_STR, N_INIT, N_KPTR
-    IrFn *ir_fn;
-    struct AsmFn *asm_fn;
+    Fn *fn;
 } Global;
 
 Vec * compile(AstNode *n);
