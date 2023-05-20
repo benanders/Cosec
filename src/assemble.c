@@ -161,6 +161,12 @@ static AsmOpr * opr_xmm(int reg) {
     return opr;
 }
 
+static AsmOpr * opr_bb(IrBB *bb) {
+    AsmOpr *opr = opr_new(OPR_BB);
+    opr->bb = bb;
+    return opr;
+}
+
 static AsmOpr * opr_deref(char *label) {
     AsmOpr *opr = opr_new(OPR_DEREF);
     opr->label = label;
@@ -237,29 +243,43 @@ static int mov_for(IrType *t) {
     }
 }
 
-// Emit assembly to put the result of an instruction into a vreg and returns
-// the vreg as an operand
+
+// ---- Operand Discharge and Inlining ----------------------------------------
+
+static int SET_OP[IR_LAST] = {
+    [IR_EQ] = X64_SETE, [IR_NEQ] = X64_SETNE,
+    [IR_SLT] = X64_SETL, [IR_SLE] = X64_SETLE, [IR_SGT] = X64_SETG, [IR_SGE] = X64_SETGE,
+    [IR_ULT] = X64_SETB, [IR_ULE] = X64_SETBE, [IR_UGT] = X64_SETA, [IR_UGE] = X64_SETAE,
+    [IR_FLT] = X64_SETB, [IR_FLE] = X64_SETBE, [IR_FGT] = X64_SETA, [IR_FGE] = X64_SETAE,
+};
+
+static void asm_cmp(Assembler *a, IrIns *ir);
+
+// Emit assembly to put the result of an instruction into a vreg
 static AsmOpr * discharge(Assembler *a, IrIns *ir) {
-    if (ir->vreg > 0) { // Already in a vreg
-        if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
-            return opr_xmm(ir->vreg);
-        } else {
-            return opr_gpr_t(ir->vreg, ir->t);
-        }
+    if (ir->vreg != R_NONE) { // Already in a vreg
+        return (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) ?
+            opr_xmm(ir->vreg) : opr_gpr_t(ir->vreg, ir->t);
     }
-    int mov_op = mov_for(ir->t);
-    AsmOpr *opr = next_vreg(a, ir->t);
-    ir->vreg = opr->reg;
+    AsmOpr *dst = next_vreg(a, ir->t);
+    ir->vreg = dst->reg;
     switch (ir->op) {
-        case IR_IMM:    emit(a, asm2(mov_op,  opr, opr_imm(ir->imm))); break;
-        case IR_FP:     emit(a, asm2(mov_op,  opr, opr_fp(ir->t, ir->fp_idx))); break;
-        case IR_GLOBAL: emit(a, asm2(X64_LEA, opr, opr_deref(ir->g->label))); break;
-        case IR_LOAD:   emit(a, asm2(mov_op,  opr, load_ptr(a, ir->l, ir->t))); break;
-        case IR_ALLOC:  emit(a, asm2(X64_LEA, opr, opr_mem_from_alloc(ir, NULL))); break;
-        // TODO: comparison operations
-        default: UNREACHABLE();
+    case IR_IMM:    emit(a, asm2(mov_for(ir->t), dst, opr_imm(ir->imm))); break;
+    case IR_FP:     emit(a, asm2(mov_for(ir->t), dst, opr_fp(ir->t, ir->fp_idx))); break;
+    case IR_GLOBAL: emit(a, asm2(X64_LEA, dst, opr_deref(ir->g->label))); break;
+    case IR_LOAD:   emit(a, asm2(mov_for(ir->t), dst, load_ptr(a, ir->l, ir->t))); break;
+    case IR_ALLOC:  emit(a, asm2(X64_LEA, dst, opr_mem_from_alloc(ir, NULL))); break;
+    case IR_EQ:  case IR_NEQ:
+    case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
+    case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
+    case IR_FLT: case IR_FLE: case IR_FGT: case IR_FGE:
+        asm_cmp(a, ir);
+        emit(a, asm1(SET_OP[ir->op], opr_gpr(dst->reg, R8L))); // Set low 8 bits
+        emit(a, asm2(X64_AND, dst, opr_imm(1))); // Clear rest of vreg
+        break;
+    default: UNREACHABLE();
     }
-    return opr;
+    return dst;
 }
 
 static AsmOpr * inline_imm(Assembler *a, IrIns *ir) {
@@ -485,6 +505,50 @@ static void asm_int_to_fp(Assembler *a, IrIns *ir) {
 
 // ---- Control Flow ----------------------------------------------------------
 
+static int JMP_OP[IR_LAST] = {
+    [IR_EQ] = X64_JE,  [IR_NEQ] = X64_JNE,
+    [IR_SLT] = X64_JL, [IR_SLE] = X64_JLE, [IR_SGT] = X64_JG, [IR_SGE] = X64_JGE,
+    [IR_ULT] = X64_JB, [IR_ULE] = X64_JBE, [IR_UGT] = X64_JA, [IR_UGE] = X64_JAE,
+    [IR_FLT] = X64_JB, [IR_FLE] = X64_JBE, [IR_FGT] = X64_JA, [IR_FGE] = X64_JAE,
+};
+
+static int INVERT_JMP[X64_LAST] = {
+    [X64_JE] = X64_JNE, [X64_JNE] = X64_JE,
+    [X64_JL] = X64_JGE, [X64_JLE] = X64_JG, [X64_JG] = X64_JLE, [X64_JGE] = X64_JL,
+    [X64_JB] = X64_JAE, [X64_JBE] = X64_JA, [X64_JA] = X64_JBE, [X64_JAE] = X64_JB,
+};
+
+static void asm_br(Assembler *a, IrIns *ir) {
+    if (ir->br == ir->bb->next) {
+        return; // Don't emit anything for a branch to next BB
+    }
+    emit(a, asm1(X64_JMP, opr_bb(ir->br)));
+}
+
+static void asm_cmp(Assembler *a, IrIns *ir) { // 'ir' is comparison instruction
+    AsmOpr *l = discharge(a, ir->l);
+    AsmOpr *r = inline_imm_mem(a, ir->r);
+    int op;
+    switch (ir->l->t->k) {
+        case IRT_F32: op = X64_UCOMISS; break;
+        case IRT_F64: op = X64_UCOMISD; break;
+        default:      op = X64_CMP; break;
+    }
+    emit(a, asm2(op, l, r));
+}
+
+static void asm_condbr(Assembler *a, IrIns *ir) {
+    // The true case or false case MUST be the next basic block
+    assert(ir->true == ir->bb->next || ir->false == ir->bb->next);
+    asm_cmp(a, ir->cond);
+    int op = JMP_OP[ir->op];
+    if (ir->true == ir->bb->next) { // True case falls through
+        op = INVERT_JMP[op]; // Invert condition
+    }
+    IrBB *target = (ir->true == ir->bb->next) ? ir->false : ir->true;
+    emit(a, asm1(op, opr_bb(target)));
+}
+
 static void asm_postamble(Assembler *a);
 
 static void asm_ret(Assembler *a, IrIns *ir) {
@@ -534,7 +598,7 @@ static void asm_ins(Assembler *a, IrIns *ir) {
         break;
 
         // Comparisons
-    case IR_EQ: case IR_NEQ: 
+    case IR_EQ:  case IR_NEQ:
     case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
     case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
     case IR_FLT: case IR_FLE: case IR_FGT: case IR_FGE:
@@ -554,7 +618,9 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     case IR_I2FP:   asm_int_to_fp(a, ir); break;
 
         // Control flow
-    case IR_RET: asm_ret(a, ir); break;
+    case IR_BR:     asm_br(a, ir); break;
+    case IR_CONDBR: asm_condbr(a, ir); break;
+    case IR_RET:    asm_ret(a, ir); break;
     default: assert(0); // TODO
     }
 }

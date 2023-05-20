@@ -116,8 +116,8 @@ enum { // Operand types
     OPR_GPR,   // General purpose register
     OPR_XMM,   // Floating point SSE register
     OPR_MEM,   // Memory access: [base + idx * scale + disp]
-    OPR_JMP,   // Jump to BB label
-    OPR_LABEL, // Label
+    OPR_BB,    // Label for a BB
+    OPR_LABEL, // Arbitrary label
     OPR_DEREF, // Value at a label: [label]
 };
 
@@ -139,7 +139,7 @@ typedef struct {
                 char *label; // OPR_LABEL, OPR_DEREF
             };
         };
-        IrBB *bb; // OPR_JMP
+        IrBB *bb; // OPR_BB
     };
 } AsmOpr;
 

@@ -78,7 +78,6 @@ static IrIns * new_ins(int op, IrType *t) {
     IrIns *ins = calloc(1, sizeof(IrIns));
     ins->op = op;
     ins->t = t;
-    ins->vreg = -1;
     return ins;
 }
 

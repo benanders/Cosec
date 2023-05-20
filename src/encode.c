@@ -112,7 +112,7 @@ static void encode_op(FILE *out, Global *g, AsmOpr *opr) {
         }
         fprintf(out, "]");
         break;
-    case OPR_JMP:   fprintf(out, BB_PREFIX "%zu", opr->bb->n); break;
+    case OPR_BB:    fprintf(out, BB_PREFIX "%zu", opr->bb->n); break;
     case OPR_LABEL: fprintf(out, "%s", opr->label); break;
     case OPR_DEREF:
         encode_mem_access(out, opr->bytes);

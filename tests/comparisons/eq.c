@@ -1,4 +1,4 @@
-// expect: 1
+// expect: 0
 int main() {
 	int a = 3;
 	int b = 4;
