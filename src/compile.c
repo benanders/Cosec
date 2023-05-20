@@ -274,7 +274,9 @@ static Global * find_global(Scope *s, char *name) {
 
 static int INVERT_COND[IR_LAST] = {
     [IR_EQ] = IR_NEQ, [IR_NEQ] = IR_EQ,
-    [IR_LT] = IR_GE, [IR_LE] = IR_GT, [IR_GT] = IR_LE, [IR_GE] = IR_LT,
+    [IR_SLT] = IR_SGE, [IR_SLE] = IR_SGT, [IR_SGT] = IR_SLE, [IR_SGE] = IR_SLT,
+    [IR_ULT] = IR_UGE, [IR_ULE] = IR_UGT, [IR_UGT] = IR_ULE, [IR_UGE] = IR_ULT,
+    [IR_FLT] = IR_FGE, [IR_FLE] = IR_FGT, [IR_FGT] = IR_FLE, [IR_FGE] = IR_FLT,
 };
 
 static IrIns * compile_expr(Scope *s, AstNode *n);
@@ -350,7 +352,7 @@ static IrIns * to_cond(Scope *s, IrIns *cond) {
         return cond; // Already a condition
     }
     cond = discharge(s, cond);
-    if (cond->op < IR_EQ || cond->op > IR_GE) { // Not a comparison
+    if (cond->op < IR_EQ || cond->op > IR_FGE) { // Not a comparison
         IrIns *zero = emit(s, IR_IMM, cond->t);
         zero->imm = 0;
         IrIns *cmp = emit(s, IR_NEQ, irt_new(IRT_I32));
@@ -910,7 +912,7 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
         return compile_binop(s, n, IR_SUB);
     case N_MUL: return compile_binop(s, n, IR_MUL);
     case N_DIV:
-        if (n->t->k >= T_FLOAT && n->t->k <= T_LDOUBLE) {
+        if (n->t->k >= T_FLOAT && n->t->k <= T_LDOUBLE) { // FP division
             return compile_binop(s, n, IR_FDIV);
         } else if (n->t->is_unsigned) { // Unsigned integer division
             return compile_binop(s, n, IR_UDIV);
@@ -935,10 +937,38 @@ static IrIns * compile_expr(Scope *s, AstNode *n) {
         }
     case N_EQ:        return compile_binop(s, n, IR_EQ);
     case N_NEQ:       return compile_binop(s, n, IR_NEQ);
-    case N_LT:        return compile_binop(s, n, IR_LT);
-    case N_LE:        return compile_binop(s, n, IR_LE);
-    case N_GT:        return compile_binop(s, n, IR_GT);
-    case N_GE:        return compile_binop(s, n, IR_GE);
+    case N_LT:
+        if (n->l->t->k >= T_FLOAT && n->l->t->k <= T_LDOUBLE) { // FP comparison
+            return compile_binop(s, n, IR_FLT);
+        } else if (n->l->t->is_unsigned) { // Unsigned integer comparison
+            return compile_binop(s, n, IR_ULT);
+        } else { // Signed integer comparison
+            return compile_binop(s, n, IR_SLT);
+        }
+    case N_LE:
+        if (n->l->t->k >= T_FLOAT && n->l->t->k <= T_LDOUBLE) { // FP comparison
+            return compile_binop(s, n, IR_FLE);
+        } else if (n->l->t->is_unsigned) { // Unsigned integer comparison
+            return compile_binop(s, n, IR_ULE);
+        } else { // Signed integer comparison
+            return compile_binop(s, n, IR_SLE);
+        }
+    case N_GT:
+        if (n->l->t->k >= T_FLOAT && n->l->t->k <= T_LDOUBLE) { // FP comparison
+            return compile_binop(s, n, IR_FGT);
+        } else if (n->l->t->is_unsigned) { // Unsigned integer comparison
+            return compile_binop(s, n, IR_UGT);
+        } else { // Signed integer comparison
+            return compile_binop(s, n, IR_SGT);
+        }
+    case N_GE:
+        if (n->l->t->k >= T_FLOAT && n->l->t->k <= T_LDOUBLE) { // FP comparison
+            return compile_binop(s, n, IR_FGE);
+        } else if (n->l->t->is_unsigned) { // Unsigned integer comparison
+            return compile_binop(s, n, IR_UGE);
+        } else { // Signed integer comparison
+            return compile_binop(s, n, IR_SGE);
+        }
     case N_LOG_AND:   return compile_and(s, n);
     case N_LOG_OR:    return compile_or(s, n);
     case N_ASSIGN:    return compile_assign(s, n);

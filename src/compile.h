@@ -63,21 +63,19 @@ enum {
     IR_BIT_OR,
     IR_BIT_XOR,
     IR_SHL,
-    IR_SAR, // Arithmetic right shift for signed integers (fill with sign bit)
-    IR_SHR, // Logical right shift for unsigned integers (fill with zero)
+    IR_SAR, // Arithmetic right shift (for signed ints, fill with sign bit)
+    IR_SHR, // Logical right shift (for unsigned ints, fill with zero)
 
     // Comparisons
-    IR_EQ,
-    IR_NEQ,
-    IR_LT,
-    IR_LE,
-    IR_GT,
-    IR_GE,
+    IR_EQ, IR_NEQ,
+    IR_SLT, IR_SLE, IR_SGT, IR_SGE, // Signed comparison (for signed ints)
+    IR_ULT, IR_ULE, IR_UGT, IR_UGE, // Unsigned comparison (for unsigned ints)
+    IR_FLT, IR_FLE, IR_FGT, IR_FGE, // Floating point comparison
 
     // Conversions
     IR_TRUNC,
-    IR_SEXT,    // Sign extend, for signed integers
-    IR_ZEXT,    // Zero extend, for unsigned integers
+    IR_SEXT,    // Sign extend (for signed ints)
+    IR_ZEXT,    // Zero extend (for unsigned ints)
     IR_PTR2I,   // Pointer -> integer
     IR_I2PTR,   // Integer -> pointer
     IR_BITCAST, // Pointer -> another pointer

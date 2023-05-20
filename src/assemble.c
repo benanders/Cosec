@@ -534,8 +534,11 @@ static void asm_ins(Assembler *a, IrIns *ir) {
         break;
 
         // Comparisons
-    case IR_EQ: case IR_NEQ: case IR_LT: case IR_LE: case IR_GT: case IR_GE:
-        break; // Handled by CONDBR
+    case IR_EQ: case IR_NEQ: 
+    case IR_SLT: case IR_SLE: case IR_SGT: case IR_SGE:
+    case IR_ULT: case IR_ULE: case IR_UGT: case IR_UGE:
+    case IR_FLT: case IR_FLE: case IR_FGT: case IR_FGE:
+        break; // Handled by CONDBR or 'discharge'
 
         // Conversions
     case IR_TRUNC:   asm_trunc(a, ir); break;
