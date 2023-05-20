@@ -584,7 +584,7 @@ static AstNode * parse_ch(Scope *s) {
     Token *tk = next_tk(s->pp);
     AstNode *n = node(N_IMM, tk);
     switch (tk->enc) {
-        case ENC_NONE: n->t = t_num(T_CHAR, 0); break;
+        case ENC_NONE:   n->t = t_num(T_CHAR, 0); break;
         case ENC_CHAR16: n->t = t_num(T_SHORT, 1); break;
         case ENC_CHAR32: case ENC_WCHAR: n->t = t_num(T_INT, 1); break;
     }
