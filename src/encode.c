@@ -58,9 +58,9 @@ static char *NASM_CONST[] = {
     [1] = "db", [2] = "dw", [4] = "dd", [8] = "dq",
 };
 
-static void encode_mem_access(FILE *out, AsmOpr *op) {
-    if (op->bytes > 0) {
-        fprintf(out, "%s ", NASM_MEM_PREFIX[op->bytes]);
+static void encode_mem_access(FILE *out, size_t bytes) {
+    if (bytes > 0) {
+        fprintf(out, "%s ", NASM_MEM_PREFIX[bytes]);
     }
 }
 
@@ -81,42 +81,42 @@ void encode_xmm(FILE *out, int reg) {
     }
 }
 
-static void encode_op(FILE *out, Global *g, AsmOpr *op) {
-    switch (op->k) {
-    case OPR_IMM: fprintf(out, "%llu", op->imm); break;
+static void encode_op(FILE *out, Global *g, AsmOpr *opr) {
+    switch (opr->k) {
+    case OPR_IMM: fprintf(out, "%" PRIi64, opr->imm); break;
     case OPR_F32:
-        encode_mem_access(out, op);
-        fprintf(out, "[rel %s." F32_PREFIX "%zu]", g->label, op->fp);
+        encode_mem_access(out, 4);
+        fprintf(out, "[rel %s." F32_PREFIX "%zu]", g->label, opr->fp);
         break;
     case OPR_F64:
-        encode_mem_access(out, op);
-        fprintf(out, "[rel %s." F64_PREFIX "%zu]", g->label, op->fp);
+        encode_mem_access(out, 8);
+        fprintf(out, "[rel %s." F64_PREFIX "%zu]", g->label, opr->fp);
         break;
-    case OPR_GPR: encode_gpr(out, op->reg, op->size); break;
-    case OPR_XMM: encode_xmm(out, op->reg); break;
+    case OPR_GPR: encode_gpr(out, opr->reg, opr->size); break;
+    case OPR_XMM: encode_xmm(out, opr->reg); break;
     case OPR_MEM:
-        encode_mem_access(out, op);
+        encode_mem_access(out, opr->bytes);
         fprintf(out, "[");
-        encode_gpr(out, op->base, op->base_size);
-        if (op->idx != R_NONE) {
+        encode_gpr(out, opr->base, opr->base_size);
+        if (opr->idx != R_NONE) {
             fprintf(out, " + ");
-            encode_gpr(out, op->idx, op->idx_size);
-            if (op->scale > 1) {
-                fprintf(out, "*%d", op->scale);
+            encode_gpr(out, opr->idx, opr->idx_size);
+            if (opr->scale > 1) {
+                fprintf(out, "*%d", opr->scale);
             }
         }
-        if (op->disp > 0) {
-            fprintf(out, " + %" PRIi64, op->disp);
-        } else if (op->disp < 0) {
-            fprintf(out, " - %" PRIi64, -op->disp);
+        if (opr->disp > 0) {
+            fprintf(out, " + %" PRIi64, opr->disp);
+        } else if (opr->disp < 0) {
+            fprintf(out, " - %" PRIi64, -opr->disp);
         }
         fprintf(out, "]");
         break;
-    case OPR_JMP:   fprintf(out, BB_PREFIX "%zu", op->bb->n); break;
-    case OPR_LABEL: fprintf(out, "%s", op->label); break;
+    case OPR_JMP:   fprintf(out, BB_PREFIX "%zu", opr->bb->n); break;
+    case OPR_LABEL: fprintf(out, "%s", opr->label); break;
     case OPR_DEREF:
-        encode_mem_access(out, op);
-        fprintf(out, "[%s]", op->label);
+        encode_mem_access(out, opr->bytes);
+        fprintf(out, "[%s]", opr->label);
         break;
     }
 }
@@ -146,12 +146,12 @@ static void encode_fps(FILE *out, Global *g) {
     for (size_t i = 0; i < vec_len(g->asm_fn->f32s); i++) {
         uint32_t *fp = vec_get(g->asm_fn->f32s, i);
         fprintf(out, "%s." F32_PREFIX "%zu: ", g->label, i);
-        fprintf(out, "dd 0x%x ; float %g\n", *fp, *((float *) fp));
+        fprintf(out, "dd 0x%" PRIx32 " ; float %g\n", *fp, *((float *) fp));
     }
     for (size_t i = 0; i < vec_len(g->asm_fn->f64s); i++) {
         uint64_t *fp = vec_get(g->asm_fn->f64s, i);
         fprintf(out, "%s." F64_PREFIX "%zu: ", g->label, i);
-        fprintf(out, "dq 0x%llx ; double %g", *fp, *((double *) fp));
+        fprintf(out, "dq 0x%" PRIx64 " ; double %g\n", *fp, *((double *) fp));
     }
 }
 
@@ -165,10 +165,10 @@ static void number_bbs(AsmFn *fn) {
 static void encode_fn(FILE *out, Global *g) {
     AsmFn *fn = g->asm_fn;
     number_bbs(fn);
-    encode_fps(out, g);
     if (fn->linkage == LINK_EXTERN) {
         fprintf(out, "global %s\n", g->label);
     }
+    encode_fps(out, g);
     fprintf(out, "%s:\n", g->label);
     for (AsmBB *bb = fn->entry; bb; bb = bb->next) {
         encode_bb(out, g, bb);

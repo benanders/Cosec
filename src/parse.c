@@ -1718,7 +1718,7 @@ static AstNode * eval_const_expr(AstNode *e, Token **err) {
         } else if (is_int(e->t) && l->k == N_IMM) { // int -> int
             n->k = N_IMM;
             uint64_t bits = e->t->size * 8; // Bits
-            uint64_t mask = bits >= 64 ? -1 : ((uint64_t) 1 << bits) - 1;
+            uint64_t mask = bits >= 64 ? (uint64_t) -1 : ((uint64_t) 1 << bits) - 1;
             n->imm = l->imm & mask; // Truncate
             if (!l->t->is_unsigned && (n->imm & ((int64_t) 1 << (bits - 1)))) {
                 n->imm |= ~(((int64_t) 1 << bits) - 1); // Sign extend

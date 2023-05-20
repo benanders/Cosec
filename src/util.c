@@ -399,7 +399,7 @@ char * str_ncopy(char *s, size_t len) {
 }
 
 char * prepend_underscore(char *s) {
-    char *out = malloc(sizeof(char) * (strlen(s) + 1));
+    char *out = malloc(sizeof(char) * (strlen(s) + 2));
     out[0] = '_';
     strcpy(&out[1], s);
     return out;

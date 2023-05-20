@@ -295,7 +295,7 @@ static AsmOpr * inline_imm_mem(Assembler *a, IrIns *ir) {
 
 static void asm_fp(Assembler *a, IrIns *ir) {
     size_t idx;
-    if (ir->t->k == T_FLOAT) {
+    if (ir->t->k == IRT_F32) {
         idx = vec_len(a->fn->f32s);
         float *fp = malloc(sizeof(float));
         *fp = (float) ir->fp;

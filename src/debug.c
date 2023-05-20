@@ -426,7 +426,7 @@ static void print_ins(IrIns *ins) {
     print_irt(ins->t);
     printf("\t%s\t", IR_OP_NAMES[ins->op]);
     switch (ins->op) {
-    case IR_IMM:    printf("+%llu", ins->imm); break;
+    case IR_IMM:    printf("+%" PRIi64, ins->imm); break;
     case IR_FP:     printf("+%g", ins->fp); break;
     case IR_GLOBAL: printf("%s", ins->g->label); break;
     case IR_FARG:   printf("%zu", ins->arg_num); break;
@@ -446,11 +446,11 @@ static void print_ins(IrIns *ins) {
             printf("[ " BB_PREFIX "%zu -> %.4zu ] ", pred->n, def->n);
         }
         break;
-    case IR_BR: printf(BB_PREFIX "%zu", ins->br ? ins->br->n : -1); break;
+    case IR_BR: printf(BB_PREFIX "%zu", ins->br ? ins->br->n : 0); break;
     case IR_CONDBR:
         printf("%.4zu\t", ins->cond->n);
-        printf(BB_PREFIX "%zu\t", ins->true ? ins->true->n : -1);
-        printf(BB_PREFIX "%zu", ins->false ? ins->false->n : -1);
+        printf(BB_PREFIX "%zu\t", ins->true ? ins->true->n : 0);
+        printf(BB_PREFIX "%zu", ins->false ? ins->false->n : 0);
         break;
     default:
         if (ins->l) printf("%.4zu", ins->l->n);

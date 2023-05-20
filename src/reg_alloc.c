@@ -28,19 +28,23 @@ enum {
 
 typedef struct RegAlloc { // Allocator for a register group (GPR or SSE)
     AsmFn *fn;
-    size_t num_ins;
-    int reg_group;
-    int num_regs /* pregs + vregs */, num_pregs;
+    int group;
+    int num_regs; // pregs + vregs
+    int num_pregs;
     int debug;
 } RegAlloc;
 
 static RegAlloc * new_reg_alloc(AsmFn *fn, int reg_group, int debug) {
     RegAlloc *a = malloc(sizeof(RegAlloc));
     a->fn = fn;
-    a->num_ins = fn->last->last->n + 1;
-    a->reg_group = reg_group;
-    a->num_regs = fn->num_gprs;
-    a->num_pregs = LAST_GPR;
+    a->group = reg_group;
+    if (reg_group == REG_GROUP_GPR) {
+        a->num_regs = fn->num_gprs;
+        a->num_pregs = LAST_GPR;
+    } else { // SSE
+        a->num_regs = fn->num_sse;
+        a->num_pregs = LAST_XMM;
+    }
     a->debug = debug;
     return a;
 }
@@ -154,7 +158,7 @@ static int CLOBBERS[X64_LAST][LAST_GPR] = {
 
 static void mark_opr_live(RegAlloc *a, AsmOpr *opr, int *live) {
     if (!opr) return;
-    if (a->reg_group == REG_GROUP_GPR) {
+    if (a->group == REG_GROUP_GPR) {
         if (opr->k == OPR_GPR) {
             live[opr->reg] = 1;
         } else if (opr->k == OPR_MEM) {
@@ -171,7 +175,7 @@ static void mark_opr_live(RegAlloc *a, AsmOpr *opr, int *live) {
 static void mark_live(RegAlloc *a, AsmIns *ins, int *live) {
     mark_opr_live(a, ins->l, live); // Mark regs used in ins args as live
     mark_opr_live(a, ins->r, live);
-    if (a->reg_group == REG_GROUP_GPR) {
+    if (a->group == REG_GROUP_GPR) {
         // Mark rsp, rbp live for every instruction
         live[RSP] = 1;
         live[RBP] = 1;
@@ -265,7 +269,7 @@ static Vec ** live_ranges_for_fn(RegAlloc *a) {
 }
 
 static void print_reg(RegAlloc *a, int reg) {
-    if (a->reg_group == REG_GROUP_GPR) {
+    if (a->group == REG_GROUP_GPR) {
         encode_gpr(stdout, reg, R64);
     } else {
         encode_xmm(stdout, reg);
@@ -331,7 +335,7 @@ static Graph * interference_graph(RegAlloc *a, Vec **live_ranges) {
 }
 
 static int is_coalescing_candidate(RegAlloc *a, AsmIns *ins) {
-    if (a->reg_group == REG_GROUP_GPR) {
+    if (a->group == REG_GROUP_GPR) {
         return ins->op >= X64_MOV && ins->op <= X64_MOVZX && // is mov?
                (ins->l->k == OPR_GPR && ins->r->k == OPR_GPR) && // both regs?
                (ins->l->reg >= LAST_GPR || ins->r->reg >= LAST_GPR); // at least one vreg?
@@ -596,19 +600,25 @@ static int map_vreg(RegAlloc *a, int reg, int *reg_map, int *coalesce_map) {
 
 static void replace_vregs_in_op(RegAlloc *a, AsmOpr *op, int *reg_map, int *coalesce_map) {
     if (!op) return;
-    switch (op->k) {
-    case OPR_GPR: case OPR_XMM:
-        op->reg = map_vreg(a, op->reg, reg_map, coalesce_map);
-        break;
-    case OPR_MEM:
-        op->base = map_vreg(a, op->base, reg_map, coalesce_map);
-        op->idx = map_vreg(a, op->idx, reg_map, coalesce_map);
-        break;
+    if (a->group == REG_GROUP_GPR) {
+        switch (op->k) {
+        case OPR_GPR:
+            op->reg = map_vreg(a, op->reg, reg_map, coalesce_map);
+            break;
+        case OPR_MEM:
+            op->base = map_vreg(a, op->base, reg_map, coalesce_map);
+            op->idx = map_vreg(a, op->idx, reg_map, coalesce_map);
+            break;
+        }
+    } else { // SSE
+        if (op->k == OPR_XMM) {
+            op->reg = map_vreg(a, op->reg, reg_map, coalesce_map);
+        }
     }
 }
 
 static int is_redundant_mov(RegAlloc *a, AsmIns *ins) {
-    if (a->reg_group == REG_GROUP_GPR) {
+    if (a->group == REG_GROUP_GPR) {
         return ins->op >= X64_MOV && ins->op <= X64_MOVZX && // is mov?
                ins->l->k == OPR_GPR && ins->r->k == OPR_GPR && // both regs?
                ins->l->reg == ins->r->reg && // same reg?

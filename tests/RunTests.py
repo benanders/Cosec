@@ -1,6 +1,10 @@
 
 import subprocess, sys, os, re
 
+GREEN = "\033[1m\033[92m"
+RED =   "\033[1m\033[91m"
+CLEAR = "\033[0m"
+
 nasm_bin = "nasm"
 nasm_args = ["-f", "macho64"]
 ld_bin = "ld"
@@ -13,52 +17,56 @@ def run_test(cosec_bin, path):
     # Find expected return code
     re_search = re.search(r'\/\/ expect\: (\d+)', contents)
     if re_search is None:
-        print("  Test '" + path + "': no '// expect: ' in file")
+        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print("\tNo '// expect: ' in file")
         return
     groups = re_search.groups()
     if len(groups) == 0:
-        print("  Test '" + path + "': no matching regex '// expect: (\\d+)' in file")
+        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print("\tNo matching regex '// expect: (\\d+)' in file")
         return
     expected_output = int(groups[0])
 
     # Compile
     result = subprocess.run([cosec_bin, path, "-o", "out.s"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("  Test '" + path + "': failed to compile")
-        print("  Output:")
+        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print("\tFailed to compile")
+        print("\tOutput:")
         print(result.stdout + result.stderr)
         return
 
     # Assemble
     result = subprocess.run([nasm_bin] + nasm_args + ["-o", "out.o", "out.s"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("  Test '" + path + "': failed to assemble")
-        print("  Output:")
+        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print("\tFailed to assemble")
+        print("\tOutput:")
         print(result.stdout + result.stderr)
         return
 
     # Link
     result = subprocess.run([ld_bin] + ld_args + ["-o", "a.out", "out.o"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("  Test '" + path + "': failed to link")
-        print("  Output:")
+        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print("\tFailed to link")
+        print("\tOutput:")
         print(result.stdout + result.stderr)
         return
 
     # Run
     result = subprocess.run(["./a.out"], capture_output=True, text=True)
     if result.returncode != expected_output:
-        print("  Test '" + path + "': FAILED")
-        print("  Expected return code: " + str(expected_output))
-        print("  Got return code: " + str(result.returncode))
+        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print("\tExpected return code: " + str(expected_output))
+        print("\tGot return code: " + str(result.returncode))
         if len(result.stdout) > 0:
-            print("  Output: ")
+            print("\tOutput: ")
             print(result.stdout + result.stderr)
     else:
-        print("  Test '" + path + "': PASSED")
+        print("Test '" + path + "': " + GREEN + "PASSED" + CLEAR)
 
 def run_tests(cosec_bin, test_dir):
-    printed_header = False
     files = os.listdir(test_dir)
     subdirs = []
     for file in files:
@@ -71,9 +79,6 @@ def run_tests(cosec_bin, test_dir):
         _, extension = os.path.splitext(path)
         if extension != ".c":
             continue # Not a .c test file
-        if not printed_header:
-            print("Testing '" + test_dir + "'")
-            printed_header = True
         run_test(cosec_bin, path)
 
     # Recursively run tests in subdirectories

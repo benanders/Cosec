@@ -217,10 +217,6 @@ static int is_fp(IrType *t) {
     return t->k >= IRT_F32 && t->k <= IRT_F64;
 }
 
-static int is_num(IrType *t) {
-    return t->k >= IRT_I8 && t->k <= IRT_F64;
-}
-
 
 // ---- Local and Global Variables --------------------------------------------
 
