@@ -552,29 +552,31 @@ static Token * concat_strs(Scope *s) {
 
 static AstNode * parse_str(Scope *s) {
     Token *tk = concat_strs(s);
-    AstNode *len = node(N_IMM, tk);
-    len->t = t_num(T_LLONG, 1);
+    AstType *elem = NULL;
     AstNode *n = node(N_STR, tk);
     n->enc = tk->enc;
     switch (tk->enc) {
     case ENC_NONE:
         n->len = tk->len;
         n->str = tk->str;
-        n->t = t_arr(t_num(T_CHAR, 0), len);
+        elem = t_num(T_CHAR, 0);
         break;
     case ENC_CHAR16:
         n->str16 = utf8_to_utf16(tk->str, tk->len, &n->len);
-        n->t = t_arr(t_num(T_SHORT, 1), len);
+        elem = t_num(T_SHORT, 1);
         break;
     case ENC_CHAR32: case ENC_WCHAR:
         n->str32 = utf8_to_utf32(tk->str, tk->len, &n->len);
-        n->t = t_arr(t_num(T_INT, 1), len);
+        elem = t_num(T_INT, 1);
         break;
     }
     if (!n->str) {
         error_at(tk, "invalid UTF-8 string");
     }
+    AstNode *len = node(N_IMM, tk);
+    len->t = t_num(T_LLONG, 1);
     len->imm = n->len;
+    n->t = t_arr(elem, len);
     return n;
 }
 
