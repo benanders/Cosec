@@ -68,6 +68,7 @@ def run_test(cosec_bin, path):
 
 def run_tests(cosec_bin, test_dir):
     files = os.listdir(test_dir)
+    files.sort()
     subdirs = []
     for file in files:
         path = os.path.join(test_dir, file)

@@ -1423,7 +1423,7 @@ static AstNode * emit_binop(int op, AstNode *l, AstNode *r, Token *tk) {
 }
 
 static AstNode * parse_binop(Scope *s, Token *op, AstNode *l) {
-    AstNode *r = parse_subexpr(s, BINOP_PREC[op->k] + IS_RASSOC[op->k]);
+    AstNode *r = parse_subexpr(s, BINOP_PREC[op->k] - IS_RASSOC[op->k]);
     AstNode *n;
     switch (op->k) {
     case '+':    expect_val(l); expect_val(r); return emit_binop(N_ADD, l, r, op);
@@ -1470,7 +1470,7 @@ static AstNode * parse_binop(Scope *s, Token *op, AstNode *l) {
         return n;
     case '?':
         expect_tk(s->pp, ':');
-        AstNode *els = parse_subexpr(s, PREC_TERNARY + IS_RASSOC['?']);
+        AstNode *els = parse_subexpr(s, PREC_TERNARY - IS_RASSOC['?']);
         AstNode *binop = emit_binop(N_TERNARY, r, els, op);
         n = node(N_TERNARY, op);
         n->t = binop->t;
