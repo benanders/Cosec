@@ -61,15 +61,13 @@ static void add_pair(BB *before, BB *after) {
 // function
 static void cfg_analysis(Fn *fn) {
     for (BB *bb = fn->entry; bb; bb = bb->next) {
-        AsmIns *last = bb->asm_last;
-        if (last->op >= X64_JE && last->op <= X64_JAE) {
-            add_pair(bb, last->bb);
-        }
-        if (last->op == X64_JMP) {
-            add_pair(bb, last->bb);
-        } else if (bb->next) {
-            add_pair(bb, bb->next);
-        }
+        IrIns *last = bb->ir_last;
+        if (last && last->op == IR_BR) { // Unconditional jump
+            add_pair(bb, last->br); // One successor
+        } else if (last && last->op == IR_CONDBR) { // Conditional jump
+            add_pair(bb, last->true); // Two successors
+            add_pair(bb, last->false);
+        } // Otherwise, no successors
     }
 }
 

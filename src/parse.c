@@ -1873,7 +1873,7 @@ static AstNode * parse_for(Scope *s) {
     AstNode *init = NULL;
     if (is_type(&loop, peek_tk(s->pp))) {
         init = parse_decl(&loop);
-    } else if (!peek_tk_is(s->pp, ';')) {
+    } else if (!next_tk_is(s->pp, ';')) {
         init = parse_expr(&loop);
         expect_tk(s->pp, ';');
     }

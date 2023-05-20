@@ -306,12 +306,12 @@ static void print_node(AstNode *n, int indent) {
         printf("\n");
         break;
     case N_FOR:
-        print_node(n->init, indent);
+        if (n->init) print_node(n->init, indent);
         print_indent(indent);
         printf("for ");
-        print_expr(n->cond);
+        if (n->cond) print_expr(n->cond);
         printf("; ");
-        print_expr(n->inc);
+        if (n->inc) print_expr(n->inc);
         printf("\n");
         print_nodes(n->body, indent + 1);
         break;

@@ -1116,7 +1116,7 @@ static void compile_if(Scope *s, AstNode *n) {
 static void compile_while(Scope *s, AstNode *n) {
     IrIns *before_br = emit(s, IR_BR, NULL);
     BB *cond_bb = emit_bb(s);
-    before_br->bb = cond_bb;
+    before_br->br = cond_bb;
     IrIns *cond = to_cond(s, compile_expr(s, n->cond));
 
     Scope loop;
@@ -1163,7 +1163,7 @@ static void compile_for(Scope *s, AstNode *n) {
     IrIns *cond = NULL;
     if (n->cond) {
         start_bb = emit_bb(s);
-        before_br->bb = start_bb;
+        before_br->br = start_bb;
         cond = to_cond(s, compile_expr(s, n->cond));
     }
 
@@ -1174,7 +1174,7 @@ static void compile_for(Scope *s, AstNode *n) {
         patch_branch_chain(cond->true_chain, body);
     } else {
         start_bb = body;
-        before_br->bb = body;
+        before_br->br = body;
     }
     compile_block(&loop, n->body);
     IrIns *end_br = emit(s, IR_BR, NULL);

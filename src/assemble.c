@@ -595,8 +595,8 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     }
 }
 
-static void asm_bb(Assembler *a, BB *ir_bb) {
-    for (IrIns *ins = ir_bb->ir_head; ins; ins = ins->next) {
+static void asm_bb(Assembler *a, BB *bb) {
+    for (IrIns *ins = bb->ir_head; ins; ins = ins->next) {
         asm_ins(a, ins);
     }
 }
