@@ -48,7 +48,7 @@ enum {
     IR_STORE,
     IR_COPY,
     IR_ZERO,
-    IR_IDX,   // Pointer addition (offset in bytes)
+    IR_PTRADD,   // Pointer addition (offset in bytes)
 
     // Arithmetic
     IR_ADD,

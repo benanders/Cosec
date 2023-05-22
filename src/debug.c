@@ -385,7 +385,7 @@ void print_ast(AstNode *n) {
 
 static char *IR_OP_NAMES[IR_LAST] = {
     "IMM", "FP", "GLOBAL",
-    "FARG", "ALLOC", "LOAD", "STORE", "COPY", "ZERO", "IDX",
+    "FARG", "ALLOC", "LOAD", "STORE", "COPY", "ZERO", "PTRADD",
     "ADD", "SUB", "MUL", "SDIV", "UDIV", "FDIV", "SMOD", "UMOD",
     "AND", "OR", "XOR", "SHL", "SAR", "SHR",
     "EQ", "NEQ", 

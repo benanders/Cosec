@@ -321,6 +321,38 @@ static void asm_store(Assembler *a, IrIns *ir) {
     emit(a, asm2(mov_for(ir->src->t), l, r));
 }
 
+static void asm_ptradd(Assembler *a, IrIns *ir) {
+    AsmOpr *l = discharge(a, ir->l);
+    AsmOpr *r = inline_imm(a, ir->r);
+    if (r->k == OPR_IMM && r->imm == 0) {
+        ir->vreg = l->reg;
+        return; // Doesn't modify the pointer
+    }
+
+    AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
+    ir->vreg = dst->reg;
+
+    // TODO: incorporate PTRADD, ADD/SUB, MUL, ALLOC (rbp) into LEA
+    // TODO: implement basic dead code elimination
+    AsmOpr *addr = opr_new(OPR_MEM);
+    addr->base = l->reg;
+    assert(l->size == R64); // Pointers are always 64-bit
+    addr->base_size = R64;
+    addr->scale = 1;
+    switch (r->k) {
+    case OPR_IMM:
+        addr->disp = (int64_t) r->imm;
+        break;
+    case OPR_GPR:
+        addr->idx = r->reg;
+        assert(r->size == R64); // Pointers are always 64-bit
+        addr->idx_size = R64;
+        break;
+    default: UNREACHABLE();
+    }
+    emit(a, asm2(X64_LEA, dst, addr));
+}
+
 
 // ---- Arithmetic ------------------------------------------------------------
 
@@ -549,11 +581,11 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     case IR_GLOBAL: break; // Always inlined
 
         // Memory access
-    case IR_FARG:  assert(0); // TODO
-    case IR_ALLOC: asm_alloc(a, ir); break;
-    case IR_LOAD:  asm_load(a, ir); break;
-    case IR_STORE: asm_store(a, ir); break;
-    case IR_IDX:   assert(0); // TODO
+    case IR_FARG:   assert(0); // TODO
+    case IR_ALLOC:  asm_alloc(a, ir); break;
+    case IR_LOAD:   asm_load(a, ir); break;
+    case IR_STORE:  asm_store(a, ir); break;
+    case IR_PTRADD: asm_ptradd(a, ir); break;
 
         // Arithmetic
     case IR_ADD: case IR_SUB: case IR_MUL: case IR_FDIV:
