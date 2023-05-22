@@ -135,6 +135,12 @@ static AsmOpr * opr_bb(BB *bb) {
     return opr;
 }
 
+static AsmOpr * opr_label(char *label) {
+    AsmOpr *opr = opr_new(OPR_LABEL);
+    opr->label = label;
+    return opr;
+}
+
 static AsmOpr * opr_deref(char *label) {
     AsmOpr *opr = opr_new(OPR_DEREF);
     opr->label = label;
@@ -259,7 +265,7 @@ static AsmOpr * inline_imm(Assembler *a, IrIns *ir) {
 
 static AsmOpr * inline_mem(Assembler *a, IrIns *ir) {
     if (ir->op == IR_LOAD) {
-        if (ir->vreg > 0) { // Already in a vreg
+        if (ir->vreg != R_NONE) { // Already in a vreg
             return discharge(a, ir);
         }
         return load_ptr(a, ir->l, ir->t);
@@ -273,6 +279,14 @@ static AsmOpr * inline_mem(Assembler *a, IrIns *ir) {
 static AsmOpr * inline_imm_mem(Assembler *a, IrIns *ir) {
     if (ir->op == IR_IMM) {
         return inline_imm(a, ir);
+    } else {
+        return inline_mem(a, ir);
+    }
+}
+
+static AsmOpr * inline_label_mem(Assembler *a, IrIns *ir) {
+    if (ir->op == IR_GLOBAL) {
+        return opr_label(ir->g->label);
     } else {
         return inline_mem(a, ir);
     }
@@ -563,6 +577,49 @@ static void asm_condbr(Assembler *a, IrIns *ir) {
     emit(a, asm1(op, opr_bb(target)));
 }
 
+static void asm_call(Assembler *a, IrIns *ir) {
+    // Count number of arguments
+    size_t nargs = 0;
+    for (IrIns *ins = ir->next; ins && ins->op == IR_CARG; ins = ins->next) {
+        nargs++;
+    }
+
+    // Discharge/inline arguments
+    size_t i = 0;
+    AsmOpr *args[nargs];
+    for (IrIns *ins = ir->next; ins && ins->op == IR_CARG; ins = ins->next) {
+        args[i++] = inline_imm_mem(a, ins->l);
+    }
+
+    // Move arguments into required registers
+    i = 0;
+    size_t gpr_idx = 0, sse_idx = 0;
+    for (IrIns *ins = ir->next; ins && ins->op == IR_CARG; ins = ins->next) {
+        // TODO: pass extra arguments on stack (beyond NUM_REG_FARGS)
+        AsmOpr *dst;
+        if (ins->t->k == IRT_F32 || ins->t->k == IRT_F64) {
+            dst = opr_xmm(SSE_FARGS[sse_idx++]);
+        } else {
+            dst = opr_gpr_t(GPR_FARGS[gpr_idx++], ins->t);
+        }
+        emit(a, asm2(mov_for(ir->t), dst, args[i++]));
+    }
+
+    // Emit call
+    emit(a, asm1(X64_CALL, inline_label_mem(a, ir->l)));
+
+    // Get return value
+    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    ir->vreg = dst->reg;
+    AsmOpr *ret;
+    if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
+        ret = opr_xmm(SSE_RET_REG);
+    } else {
+        ret = opr_gpr_t(GPR_RET_REG, ir->t);
+    }
+    emit(a, asm2(mov_for(ir->t), dst, ret));
+}
+
 static void asm_postamble(Assembler *a);
 
 static void asm_ret(Assembler *a, IrIns *ir) {
@@ -634,6 +691,8 @@ static void asm_ins(Assembler *a, IrIns *ir) {
         // Control flow
     case IR_BR:     asm_br(a, ir); break;
     case IR_CONDBR: asm_condbr(a, ir); break;
+    case IR_CALL:   asm_call(a, ir); break;
+    case IR_CARG:   break; // Handled by IR_CALL
     case IR_RET:    asm_ret(a, ir); break;
     default: assert(0); // TODO
     }
