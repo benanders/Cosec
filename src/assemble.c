@@ -281,6 +281,23 @@ static AsmOpr * inline_imm_mem(Assembler *a, IrIns *ir) {
 
 // ---- Immediates, Constants, and Memory Operations --------------------------
 
+#define NUM_REG_FARGS 6
+static int GPR_FARGS[] = { RDI, RSI, RDX, RCX, R8, R9, };
+static int SSE_FARGS[] = { XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, };
+
+static void asm_farg(Assembler *a, IrIns *ir) {
+    // TODO: stack arguments
+    AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
+    ir->vreg = dst->reg;
+    AsmOpr *src;
+    if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
+        src = opr_xmm(SSE_FARGS[ir->arg_idx]); // FP args indexed separately
+    } else {
+        src = opr_gpr_t(GPR_FARGS[ir->arg_idx], ir->t);
+    }
+    emit(a, asm2(mov_for(ir->t), dst, src));
+}
+
 static void asm_fp(Assembler *a, IrIns *ir) {
     size_t idx;
     if (ir->t->k == IRT_F32) {
@@ -297,17 +314,9 @@ static void asm_fp(Assembler *a, IrIns *ir) {
     ir->fp_idx = idx;
 }
 
-static size_t align_to(size_t val, size_t align) {
-    if (align > 0) {
-        return val % align == 0 ? val : val + align - (val % align);
-    } else {
-        return val;
-    }
-}
-
 static void asm_alloc(Assembler *a, IrIns *ir) {
     assert(ir->t->k == IRT_PTR);
-    a->next_stack = align_to(a->next_stack, ir->alloc_t->align) + ir->alloc_t->size;
+    a->next_stack += + pad(a->next_stack, ir->alloc_t->align) + ir->alloc_t->size;
     ir->stack_slot = a->next_stack;
 }
 
@@ -518,6 +527,9 @@ static int INVERT_JMP[X64_LAST] = {
     [X64_JB] = X64_JAE, [X64_JBE] = X64_JA, [X64_JA] = X64_JBE, [X64_JAE] = X64_JB,
 };
 
+#define GPR_RET_REG RAX
+#define SSE_RET_REG XMM0
+
 static void asm_br(Assembler *a, IrIns *ir) {
     if (ir->br == ir->bb->next) {
         return; // Don't emit anything for a branch to next BB
@@ -557,11 +569,11 @@ static void asm_ret(Assembler *a, IrIns *ir) {
     if (ir->ret) {
         AsmOpr *val = inline_imm_mem(a, ir->ret);
         if (ir->ret->t->k == IRT_F32 || ir->ret->t->k == IRT_F64) {
-            emit(a, asm2(mov_for(ir->ret->t), opr_xmm(XMM0), val));
+            emit(a, asm2(mov_for(ir->ret->t), opr_xmm(SSE_RET_REG), val));
         } else {
             // Zero the rest of eax using movsx if the function returns
             // something smaller than an int
-            AsmOpr *dst = opr_gpr(RAX, ir->ret->t->size == 8 ? R64 : R32);
+            AsmOpr *dst = opr_gpr(GPR_RET_REG, ir->ret->t->size == 8 ? R64 : R32);
             int mov_op = ir->ret->t->size < 4 ? X64_MOVSX : X64_MOV;
             emit(a, asm2(mov_op, dst, val));
         }
@@ -581,7 +593,7 @@ static void asm_ins(Assembler *a, IrIns *ir) {
     case IR_GLOBAL: break; // Always inlined
 
         // Memory access
-    case IR_FARG:   assert(0); // TODO
+    case IR_FARG:   asm_farg(a, ir); break;
     case IR_ALLOC:  asm_alloc(a, ir); break;
     case IR_LOAD:   asm_load(a, ir); break;
     case IR_STORE:  asm_store(a, ir); break;
@@ -647,7 +659,7 @@ static void asm_postamble(Assembler *a) {
 }
 
 static void patch_stack_sizes(Assembler *a) {
-    a->next_stack = align_to(a->next_stack, STACK_ALIGN);
+    a->next_stack += pad(a->next_stack, STACK_ALIGN);
     if (a->next_stack == 0) {
         for (size_t i = 0; i < vec_len(a->patch_with_stack_size); i++) {
             AsmIns *ins = vec_get(a->patch_with_stack_size, i);

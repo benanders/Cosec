@@ -580,6 +580,9 @@ char * full_path(char *path) {
 }
 
 size_t pad(size_t offset, size_t align) {
-    assert(align > 0);
-    return offset % align == 0 ? 0 : align - (offset % align);
+    if (align > 0) {
+        return offset % align == 0 ? 0 : align - (offset % align);
+    } else {
+        return 0;
+    }
 }

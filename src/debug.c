@@ -432,7 +432,7 @@ static void print_ins(IrIns *ins) {
     case IR_IMM:    printf("+%" PRIi64, ins->imm); break;
     case IR_FP:     printf("+%g", ins->fp); break;
     case IR_GLOBAL: printf("%s", ins->g->label); break;
-    case IR_FARG:   printf("%zu", ins->arg_num); break;
+    case IR_FARG:   printf("%zu", ins->arg_idx); break;
     case IR_ALLOC:
         print_irt(ins->alloc_t);
         if (ins->count) {

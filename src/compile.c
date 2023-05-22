@@ -1314,7 +1314,7 @@ static void compile_fn_args(Scope *s, AstNode *n) {
     for (size_t i = 0; i < vec_len(n->param_names); i++) { // Emit IR_FARGs
         AstType *t = vec_get(n->t->params, i);
         IrIns *ins = emit(s, IR_FARG, irt_conv(t));
-        ins->arg_num = i;
+        ins->arg_idx = i;
         fargs[i] = ins;
     }
     for (size_t i = 0; i < vec_len(n->param_names); i++) { // Emit IR_ALLOCs

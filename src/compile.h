@@ -113,7 +113,7 @@ typedef struct IrIns {
         struct Global *g; // IR_GLOBAL
 
         // Memory access
-        size_t arg_num; // IR_FARG
+        size_t arg_idx; // IR_FARG
         struct { // IR_ALLOC
             IrType *alloc_t;
             struct IrIns *count;
