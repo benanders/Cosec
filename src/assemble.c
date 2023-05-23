@@ -113,11 +113,11 @@ static AsmOpr * opr_gpr(int reg, int size) {
 
 static AsmOpr * opr_gpr_t(int reg, IrType *t) {
     int size;
-    switch (t->size) {
-        case 1: size = R8L; break;
-        case 2: size = R16; break;
-        case 4: size = R32; break;
-        case 8: size = R64; break;
+    switch (t->k) {
+        case IRT_I8:  size = R8L; break;
+        case IRT_I16: size = R16; break;
+        case IRT_I32: size = R32; break;
+        case IRT_I64: case IRT_PTR: case IRT_ARR: size = R64; break;
         default: UNREACHABLE();
     }
     return opr_gpr(reg, size);
@@ -197,6 +197,7 @@ static AsmOpr * load_ptr(Assembler *a, IrIns *ptr, IrType *to_load) {
     switch (ptr->op) {
         case IR_ALLOC:  return opr_mem_from_alloc(ptr, to_load);
         case IR_GLOBAL: return opr_mem_from_global(ptr, to_load);
+        // TODO: inline IR_PTRADD
         default:        return opr_mem_from_ptr(a, ptr, to_load);
     }
 }
@@ -231,7 +232,8 @@ static void asm_cmp(Assembler *a, IrIns *ir);
 
 // Emit assembly to put the result of an instruction into a vreg
 static AsmOpr * discharge(Assembler *a, IrIns *ir) {
-    if (ir->vreg != R_NONE) { // Already in a vreg
+    // Always re-materialise a LEA on discharging an IR_ALLOC
+    if (ir->op != IR_ALLOC && ir->vreg != R_NONE) { // Already in a vreg
         return (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) ?
             opr_xmm(ir->vreg) : opr_gpr_t(ir->vreg, ir->t);
     }
@@ -355,7 +357,7 @@ static void asm_ptradd(Assembler *a, IrIns *ir) {
     AsmOpr *dst = next_vreg(a, ir->t); // vreg for the result
     ir->vreg = dst->reg;
 
-    // TODO: incorporate PTRADD, ADD/SUB, MUL, ALLOC (rbp) into LEA
+    // TODO: incorporate PTRADD, ADD/SUB, MUL, SHL, ALLOC (rbp) into LEA
     // TODO: implement basic dead code elimination
     AsmOpr *addr = opr_new(OPR_MEM);
     addr->base = l->reg;
@@ -481,7 +483,7 @@ static void asm_trunc(Assembler *a, IrIns *ir) {
     // We need to maintain SSA form over the assembly output, so emit a mov
     // into a new vreg and let the coalescer deal with it.
     AsmOpr *src = inline_imm_mem(a, ir->l);
-    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    AsmOpr *dst = next_vreg(a, ir->t); // New vreg for the result
     ir->vreg = dst->reg;
     // We can't (e.g.) do mov ax, qword [rbp-4]; we have to mov into a register
     // the same size as the SOURCE, then use the truncated register (i.e., ax)
@@ -494,7 +496,7 @@ static void asm_ext(Assembler *a, IrIns *ir, int op) {
     if (src->k == OPR_IMM) {
         op = X64_MOV;
     }
-    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    AsmOpr *dst = next_vreg(a, ir->t); // New vreg for the result
     ir->vreg = dst->reg;
     emit(a, asm2(op, dst, src));
 }
@@ -503,14 +505,14 @@ static void asm_fp_trunc_ext(Assembler *a, IrIns *ir, int op) {
     // See below for why we don't use cvtxx2xx with a memory operand:
     // https://stackoverflow.com/questions/16597587/why-dont-gcc-and-clang-use-cvtss2sd-memory
     AsmOpr *src = discharge(a, ir->l);
-    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    AsmOpr *dst = next_vreg(a, ir->t); // New vreg for the result
     ir->vreg = dst->reg;
     emit(a, asm2(op, dst, src));
 }
 
 static void asm_conv_fp_int(Assembler *a, IrIns *ir, int op) {
     AsmOpr *src = discharge(a, ir->l);
-    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+    AsmOpr *dst = next_vreg(a, ir->t); // New vreg for the result
     ir->vreg = dst->reg;
     emit(a, asm2(op, dst, src));
 }
@@ -610,7 +612,7 @@ static void asm_call(Assembler *a, IrIns *ir) {
 
     // Get return value
     if (ir->t->k != IRT_VOID) {
-        AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+        AsmOpr *dst = next_vreg(a, ir->t); // New vreg for the result
         ir->vreg = dst->reg;
         AsmOpr *ret;
         if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
