@@ -53,9 +53,11 @@ static Scope * find_scope(Scope *s, int k) {
     return s;
 }
 
-static Global * new_global(char *label) {
+static Global * new_global(char *label, IrType *t, int linkage) {
     Global *g = malloc(sizeof(Global));
     g->label = label;
+    g->t = t;
+    g->linkage = linkage;
     g->val = NULL;
     g->fn = NULL;
     return g;
@@ -78,7 +80,6 @@ static BB * new_bb() {
 static Fn * new_fn() {
     Fn *fn = malloc(sizeof(Fn));
     fn->entry = fn->last = new_bb();
-    fn->linkage = LINK_NONE;
 
     // For assembler
     fn->f32s = vec_new();
@@ -180,7 +181,7 @@ static IrField * irt_field(IrType *t, size_t offset) {
 
 static IrType * irt_conv(AstType *t) {
     switch (t->k) {
-    case T_VOID:  UNREACHABLE();
+    case T_VOID:  return irt_new(IRT_VOID);
     case T_CHAR:  return irt_new(IRT_I8);
     case T_SHORT: return irt_new(IRT_I16);
     case T_INT: case T_LONG: return irt_new(IRT_I32);
@@ -241,7 +242,10 @@ static void def_local(Scope *s, char *name, IrIns *alloc) {
 static void def_global(Scope *s, char *name, Global *g) {
     for (size_t i = 0; i < vec_len(s->globals); i++) {
         Global *g2 = vec_get(s->globals, i);
-        assert(strcmp(g->label, g2->label) != 0); // No duplicate labels
+        if (!g2->val && !g2->fn) { // Not a forward declaration
+            continue;
+        }
+        assert(strcmp(g->label, g2->label) != 0); // No duplicate definitions
     }
     vec_push(s->globals, g);
     if (name) {
@@ -261,7 +265,7 @@ static char * next_global_label(Scope *s) {
 
 static Global * def_const_global(Scope *s, AstNode *n) {
     char *label = next_global_label(s);
-    Global *g = new_global(label);
+    Global *g = new_global(label, irt_conv(n->t), n->t->linkage);
     g->val = n;
     def_global(s, NULL, g);
     return g;
@@ -1318,19 +1322,19 @@ static void compile_fn_args(Scope *s, AstNode *n) {
         fargs[i] = ins;
     }
     for (size_t i = 0; i < vec_len(n->param_names); i++) { // Emit IR_ALLOCs
-        char *name = vec_get(n->param_names, i);
+        Token *name = vec_get(n->param_names, i);
         AstType *t = vec_get(n->t->params, i);
         IrIns *alloc = emit(s, IR_ALLOC, irt_new(IRT_PTR));
         alloc->alloc_t = irt_conv(t);
         emit_store(s, alloc, fargs[i], t);
-        def_local(s, name, alloc);
+        def_local(s, name->ident, alloc);
     }
 }
 
 static void compile_fn_def(Scope *s, AstNode *n) {
-    Global *g = new_global(prepend_underscore(n->fn_name));
+    char *label = prepend_underscore(n->fn_name);
+    Global *g = new_global(label, irt_conv(n->t), n->t->linkage);
     g->fn = new_fn();
-    g->fn->linkage = n->t->linkage;
     def_global(s, n->fn_name, g);
     Scope body;
     enter_scope(&body, s, SCOPE_BLOCK);
@@ -1344,9 +1348,9 @@ static void compile_fn_def(Scope *s, AstNode *n) {
 
 static void compile_global_decl(Scope *s, AstNode *n) {
     char *label = prepend_underscore(n->var->var_name);
-    Global *g = new_global(label);
+    Global *g = new_global(label, irt_conv(n->var->t), n->var->t->linkage);
     def_global(s, n->var->var_name, g);
-    g->val = n->val; // May be NULL
+    g->val = n->val; // May be NULL if just a declaration
 }
 
 static void compile_top_level(Scope *s, AstNode *n) {

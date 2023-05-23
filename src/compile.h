@@ -15,6 +15,7 @@ typedef struct {
 } IrField;
 
 enum {
+    IRT_VOID,
     IRT_I8,
     IRT_I16,
     IRT_I32,
@@ -158,7 +159,6 @@ typedef struct BB {
 
 typedef struct {
     BB *entry, *last;
-    int linkage;
 
     // For assembler
     Vec *f32s, *f64s; // Per-function floating point constants
@@ -167,6 +167,8 @@ typedef struct {
 
 typedef struct Global {
     char *label;
+    IrType *t;
+    int linkage;
     AstNode *val; // NULL if fn def; or N_IMM, N_FP, N_STR, N_INIT, N_KPTR
     Fn *fn;
 } Global;

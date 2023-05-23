@@ -19,12 +19,12 @@ typedef struct Scope {
     struct Scope *outer;
     int k;
     PP *pp;
-    Map *vars;  // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
-    Map *tags;  // of 'Type *'
-    AstNode *fn;   // NULL in file scope
+    Map *vars;   // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
+    Map *tags;   // of 'AstType *'
+    AstNode *fn; // NULL in file scope
 
     // For SCOPE_SWITCH
-    Vec *cases;   // of 'Node *' with k = N_CASE or N_DEFAULT
+    Vec *cases;      // of 'Node *' with k = N_CASE or N_DEFAULT
     AstType *cond_t; // Type of the condition
 } Scope;
 
@@ -2086,6 +2086,11 @@ static AstNode * parse_fn_def(Scope *s, AstType *t, Token *name, Vec *param_name
     Scope fn_scope;
     enter_scope(&fn_scope, s, SCOPE_BLOCK);
     fn_scope.fn = fn;
+    for (size_t i = 0; i < vec_len(param_names); i++) { // Def params as vars
+        Token *name = vec_get(param_names, i);
+        AstType *param_t = vec_get(t->params, i);
+        def_var(&fn_scope, name, param_t);
+    }
     fn->body = parse_block(&fn_scope);
     return fn;
 }

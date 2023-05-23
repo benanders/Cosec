@@ -602,22 +602,24 @@ static void asm_call(Assembler *a, IrIns *ir) {
         } else {
             dst = opr_gpr_t(GPR_FARGS[gpr_idx++], ins->t);
         }
-        emit(a, asm2(mov_for(ir->t), dst, args[i++]));
+        emit(a, asm2(mov_for(ins->t), dst, args[i++]));
     }
 
     // Emit call
     emit(a, asm1(X64_CALL, inline_label_mem(a, ir->l)));
 
     // Get return value
-    AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
-    ir->vreg = dst->reg;
-    AsmOpr *ret;
-    if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
-        ret = opr_xmm(SSE_RET_REG);
-    } else {
-        ret = opr_gpr_t(GPR_RET_REG, ir->t);
+    if (ir->t->k != IRT_VOID) {
+        AsmOpr *dst = next_vreg(a, ir->t); // new vreg for the result
+        ir->vreg = dst->reg;
+        AsmOpr *ret;
+        if (ir->t->k == IRT_F32 || ir->t->k == IRT_F64) {
+            ret = opr_xmm(SSE_RET_REG);
+        } else {
+            ret = opr_gpr_t(GPR_RET_REG, ir->t);
+        }
+        emit(a, asm2(mov_for(ir->t), dst, ret));
     }
-    emit(a, asm2(mov_for(ir->t), dst, ret));
 }
 
 static void asm_postamble(Assembler *a);

@@ -73,7 +73,7 @@ typedef struct AstType {
         };
         struct { // T_FN
             struct AstType *ret;
-            Vec *params; // of 'Type *'
+            Vec *params; // of 'AstType *'
             int is_vararg;
         };
         Vec *fields; // of 'Field *'; T_STRUCT, T_UNION

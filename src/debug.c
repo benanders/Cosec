@@ -486,22 +486,29 @@ static void number_ins(Fn *fn) {
     }
 }
 
-static void print_fn(Global *g) {
-    number_bbs(g->fn);
-    number_ins(g->fn);
-    printf("%s:\n", g->label);
-    for (BB *bb = g->fn->entry; bb; bb = bb->next) {
+static void print_fn(Fn *fn) {
+    number_bbs(fn);
+    number_ins(fn);
+    for (BB *bb = fn->entry; bb; bb = bb->next) {
         print_bb(bb);
     }
 }
 
 static void print_global(Global *g) {
-    print_type(g->val->t);
+    if (g->linkage == LINK_STATIC) {
+        printf("static ");
+    } else if (g->linkage == LINK_EXTERN) {
+        printf("extern ");
+    }
+    print_irt(g->t);
     printf(" %s", g->label);
-    if (g->val) {
+    if (g->val) { // Global variable
         printf(" = ");
         print_node(g->val, 0);
-    } else {
+    } else if (g->fn) { // Function definition
+        printf(":\n");
+        print_fn(g->fn);
+    } else { // Forward declaration
         printf("\n");
     }
 }
@@ -509,10 +516,6 @@ static void print_global(Global *g) {
 void print_ir(Vec *globals) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->fn) {
-            print_fn(g);
-        } else {
-            print_global(g);
-        }
+        print_global(g);
     }
 }

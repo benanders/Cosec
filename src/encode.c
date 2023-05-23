@@ -116,7 +116,7 @@ static void encode_op(FILE *out, Global *g, AsmOpr *opr) {
     case OPR_LABEL: fprintf(out, "%s", opr->label); break;
     case OPR_DEREF:
         encode_mem_access(out, opr->bytes);
-        fprintf(out, "[%s]", opr->label);
+        fprintf(out, "[rel %s]", opr->label);
         break;
     }
 }
@@ -163,10 +163,10 @@ static void number_bbs(Fn *fn) {
 }
 
 static void encode_fn(FILE *out, Global *g) {
-    number_bbs(g->fn);
-    if (g->fn->linkage == LINK_EXTERN) {
+    if (g->linkage == LINK_EXTERN) {
         fprintf(out, "global %s\n", g->label);
     }
+    number_bbs(g->fn);
     encode_fps(out, g);
     fprintf(out, "%s:\n", g->label);
     for (BB *bb = g->fn->entry; bb; bb = bb->next) {
@@ -191,8 +191,11 @@ static void encode_fns(FILE *out, Vec *globals) {
 }
 
 static void encode_global(FILE *out, Global *g) {
-    if (g->val->t->linkage != LINK_STATIC) {
+    if (g->linkage != LINK_STATIC) {
         fprintf(out, "global %s\n", g->label);
+    }
+    if (!g->val) {
+        return;
     }
     fprintf(out, "%s: ", g->label);
     AstNode *n = g->val;
