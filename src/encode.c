@@ -195,6 +195,10 @@ static void encode_global(FILE *out, Global *g) {
         fprintf(out, "global %s\n", g->label);
     }
     if (!g->val) {
+        if (g->linkage != LINK_EXTERN) {
+            // Initialize empty statics to zero
+            fprintf(out, "%s: times %zu db 0\n", g->label, g->t->size);
+        }
         return;
     }
     fprintf(out, "%s: ", g->label);
@@ -221,7 +225,7 @@ static void encode_globals(FILE *out, Vec *globals) {
     int written_header = 0;
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (!g->val) {
+        if (g->fn) {
             continue; // Function definition
         }
         if (!written_header) {

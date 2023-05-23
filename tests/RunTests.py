@@ -1,3 +1,6 @@
+# Usage:
+#   python3 RunTests.py <path to Cosec executable> <path to test directory>
+#   python3 ../tests/RunTests.py ./Cosec ../tests
 
 import subprocess, sys, os, re
 

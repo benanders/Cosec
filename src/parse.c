@@ -2087,9 +2087,9 @@ static AstNode * parse_fn_def(Scope *s, AstType *t, Token *name, Vec *param_name
     enter_scope(&fn_scope, s, SCOPE_BLOCK);
     fn_scope.fn = fn;
     for (size_t i = 0; i < vec_len(param_names); i++) { // Def params as vars
-        Token *name = vec_get(param_names, i);
+        Token *param_name = vec_get(param_names, i);
         AstType *param_t = vec_get(t->params, i);
-        def_var(&fn_scope, name, param_t);
+        def_var(&fn_scope, param_name, param_t);
     }
     fn->body = parse_block(&fn_scope);
     return fn;

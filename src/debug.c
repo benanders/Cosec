@@ -500,16 +500,16 @@ static void print_global(Global *g) {
     } else if (g->linkage == LINK_EXTERN) {
         printf("extern ");
     }
-    print_irt(g->t);
-    printf(" %s", g->label);
     if (g->val) { // Global variable
-        printf(" = ");
+        print_irt(g->t);
+        printf(" %s = ", g->label);
         print_node(g->val, 0);
     } else if (g->fn) { // Function definition
-        printf(":\n");
+        printf("%s:\n", g->label);
         print_fn(g->fn);
     } else { // Forward declaration
-        printf("\n");
+        print_irt(g->t);
+        printf(" %s\n", g->label);
     }
 }
 
