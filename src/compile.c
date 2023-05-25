@@ -750,16 +750,16 @@ static IrIns * compile_comma(Scope *s, AstNode *n) {
 }
 
 static IrIns * compile_ternary(Scope *s, AstNode *n) {
-    IrIns *cond = to_cond(s, compile_expr(s, n->cond));
+    IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
 
     BB *true_bb = emit_bb(s);
     patch_branch_chain(cond->true_chain, true_bb);
-    IrIns *true = discharge(s, compile_expr(s, n->body));
+    IrIns *true = discharge(s, compile_expr(s, n->if_body));
     IrIns *true_br = emit(s, IR_BR, NULL);
 
     BB *false_bb = emit_bb(s);
     patch_branch_chain(cond->false_chain, false_bb);
-    IrIns *false = discharge(s, compile_expr(s, n->els));
+    IrIns *false = discharge(s, compile_expr(s, n->if_else));
     IrIns *false_br = emit(s, IR_BR, NULL);
 
     BB *after = emit_bb(s);
@@ -1075,23 +1075,22 @@ static void compile_decl(Scope *s, AstNode *n) {
 
 static void compile_if(Scope *s, AstNode *n) {
     Vec *brs = vec_new();
-    while (n && n->cond) { // 'if' and 'else if's
-        IrIns *cond = to_cond(s, compile_expr(s, n->cond));
+    while (n && n->if_cond) { // 'if' and 'else if's
+        IrIns *cond = to_cond(s, compile_expr(s, n->if_cond));
         BB *body = emit_bb(s);
         patch_branch_chain(cond->true_chain, body);
-        compile_block(s, n->body);
+        compile_block(s, n->if_body);
 
         IrIns *end_br = emit(s, IR_BR, NULL);
         add_to_branch_chain(brs, &end_br->br, end_br);
 
         BB *after = emit_bb(s);
         patch_branch_chain(cond->false_chain, after);
-        n = n->els;
+        n = n->if_else;
     }
     if (n) { // else
-        assert(!n->cond);
-        assert(!n->els);
-        compile_block(s, n->body);
+        assert(!n->if_cond && !n->if_else);
+        compile_block(s, n->if_body);
         IrIns *end_br = emit(s, IR_BR, NULL);
         add_to_branch_chain(brs, &end_br->br, end_br);
         emit_bb(s);
@@ -1103,12 +1102,12 @@ static void compile_while(Scope *s, AstNode *n) {
     IrIns *before_br = emit(s, IR_BR, NULL);
     BB *cond_bb = emit_bb(s);
     before_br->br = cond_bb;
-    IrIns *cond = to_cond(s, compile_expr(s, n->cond));
+    IrIns *cond = to_cond(s, compile_expr(s, n->loop_cond));
 
     Scope loop = enter_scope(s, SCOPE_LOOP);
     BB *body_bb = emit_bb(s);
     patch_branch_chain(cond->true_chain, body_bb);
-    compile_block(&loop, n->body);
+    compile_block(&loop, n->loop_body);
     IrIns *end_br = emit(s, IR_BR, NULL);
     end_br->br = cond_bb;
 
@@ -1123,12 +1122,12 @@ static void compile_do_while(Scope *s, AstNode *n) {
     Scope loop = enter_scope(s, SCOPE_LOOP);
     BB *body_bb = emit_bb(s);
     before_br->br = body_bb;
-    compile_block(&loop, n->body);
+    compile_block(&loop, n->loop_body);
     IrIns *body_br = emit(s, IR_BR, NULL);
 
     BB *cond_bb = emit_bb(s);
     body_br->br = cond_bb;
-    IrIns *cond = to_cond(s, compile_expr(s, n->cond));
+    IrIns *cond = to_cond(s, compile_expr(s, n->loop_cond));
     patch_branch_chain(cond->true_chain, body_bb);
 
     BB *after_bb = emit_bb(s);
@@ -1138,17 +1137,17 @@ static void compile_do_while(Scope *s, AstNode *n) {
 }
 
 static void compile_for(Scope *s, AstNode *n) {
-    if (n->init) {
-        compile_stmt(s, n->init);
+    if (n->for_init) {
+        compile_stmt(s, n->for_init);
     }
 
     IrIns *before_br = emit(s, IR_BR, NULL);
     BB *start_bb = NULL;
     IrIns *cond = NULL;
-    if (n->cond) {
+    if (n->for_cond) {
         start_bb = emit_bb(s);
         before_br->br = start_bb;
-        cond = to_cond(s, compile_expr(s, n->cond));
+        cond = to_cond(s, compile_expr(s, n->for_cond));
     }
 
     Scope loop = enter_scope(s, SCOPE_LOOP);
@@ -1159,14 +1158,14 @@ static void compile_for(Scope *s, AstNode *n) {
         start_bb = body;
         before_br->br = body;
     }
-    compile_block(&loop, n->body);
+    compile_block(&loop, n->for_body);
     IrIns *end_br = emit(s, IR_BR, NULL);
 
     BB *continue_bb = NULL;
-    if (n->inc) {
+    if (n->for_inc) {
         BB *inc_bb = emit_bb(s);
         end_br->br = inc_bb;
-        compile_expr(s, n->inc);
+        compile_expr(s, n->for_inc);
         IrIns *inc_br = emit(s, IR_BR, NULL);
         inc_br->br = start_bb;
         continue_bb = inc_bb;
@@ -1184,10 +1183,10 @@ static void compile_for(Scope *s, AstNode *n) {
 }
 
 static void compile_switch(Scope *s, AstNode *n) {
-    IrIns *cond = discharge(s, compile_expr(s, n->cond));
+    IrIns *cond = discharge(s, compile_expr(s, n->switch_cond));
     for (size_t i = 0; i < vec_len(n->cases); i++) {
         AstNode *case_n = vec_get(n->cases, i);
-        IrIns *val = compile_expr(s, case_n->cond);
+        IrIns *val = compile_expr(s, case_n->case_cond);
         IrIns *cmp = emit(s, IR_EQ, irt_new(IRT_I32));
         cmp->l = cond;
         cmp->r = val;
@@ -1204,7 +1203,7 @@ static void compile_switch(Scope *s, AstNode *n) {
     }
 
     Scope switch_s = enter_scope(s, SCOPE_SWITCH);
-    compile_block(&switch_s, n->body);
+    compile_block(&switch_s, n->switch_body);
 
     IrIns *end_br = emit(s, IR_BR, NULL);
     BB *after = emit_bb(s);
@@ -1224,7 +1223,7 @@ static void compile_case_default(Scope *s, AstNode *n) {
     end_br->br = bb;
     assert(n->case_br);
     *n->case_br = bb;
-    compile_stmt(s, n->body);
+    compile_stmt(s, n->case_body);
 }
 
 static void compile_break(Scope *s) {
@@ -1245,7 +1244,7 @@ static void compile_goto(Scope *s, AstNode *n) {
     IrIns *br = emit(s, IR_BR, NULL);
     emit_bb(s);
     Goto *pair = malloc(sizeof(Goto));
-    pair->label = n->label;
+    pair->label = n->goto_label;
     pair->br = &br->br;
     pair->err = n->tk;
     vec_push(s->gotos, pair);
@@ -1259,7 +1258,7 @@ static void compile_label(Scope *s, AstNode *n) {
     BB *bb = emit_bb(s);
     end_br->br = bb;
     map_put(s->labels, n->label, bb);
-    compile_stmt(s, n->body);
+    compile_stmt(s, n->label_body);
 }
 
 static void compile_ret(Scope *s, AstNode *n) {
@@ -1350,7 +1349,7 @@ static void compile_fn_def(Scope *s, AstNode *n) {
     body.labels = map_new();
     body.gotos = vec_new();
     compile_fn_args(&body, n);
-    compile_block(&body, n->body);
+    compile_block(&body, n->fn_body);
     resolve_gotos(&body);
     ensure_ends_with_ret(&body);
 }

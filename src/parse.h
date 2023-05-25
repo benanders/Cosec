@@ -90,6 +90,7 @@ enum {
     N_FP,
     N_STR,
     N_INIT, // Array/struct/union initializer
+    N_INIT_ELEM,
     N_LOCAL,
     N_GLOBAL,
     N_KVAL, // Used by the constant expression parser
@@ -185,27 +186,62 @@ typedef struct AstNode {
             size_t len;
             int enc;
         };
-        Vec *elems;     // N_INIT (array/struct initializer); of 'AstNode *'
+        Vec *elems; // N_INIT; of 'AstNode *' with k = N_INIT_ELEM
+        struct {    // N_INIT_ELEM
+            uint64_t desg; // Byte offset into initializer
+            struct AstNode *elem;
+        };
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
-        struct { struct AstNode *g; /* N_GLOBAL */ int64_t offset; }; // N_KVAL, N_KPTR
+        struct {        // N_KVAL, N_KPTR
+            struct AstNode *g; // with k = N_GLOBAL
+            int64_t offset;
+        };
 
         // Operations
         struct { struct AstNode *l, *r; }; // Unary and binary operations
-        struct { struct AstNode *fn; Vec *args; /* of 'AstNode *' */ }; // N_CALL
-        struct { struct AstNode *obj; size_t field_idx; }; // N_FIELD
+        struct { // N_CALL
+            struct AstNode *fn;
+            Vec *args; // of 'AstNode *'
+        };
+        struct { // N_FIELD
+            struct AstNode *obj;
+            size_t field_idx;
+        };
 
         // Statements
-        struct { struct AstNode *var, *val; }; // N_DECL
-        struct {
-            struct AstNode *body, *cond; // N_WHILE, N_DO_WHILE, N_CASE
-            union {
-                struct { char *fn_name; Vec *param_names; /* of 'Token *' */ }; // N_FN_DEF
-                struct AstNode *els; // N_IF, N_TERNARY
-                struct { struct AstNode *init, *inc; }; // N_FOR
-                struct { Vec *cases; struct AstNode *default_n; }; // N_SWITCH
-                struct BB **case_br; // N_CASE, N_DEFAULT
-                char *label; // N_GOTO, N_LABEL
-            };
+        struct { // N_FN_DEF
+            char *fn_name;
+            Vec *param_names; // of 'Token *'
+            struct AstNode *fn_body;
+        };
+        struct { // N_DECL
+            struct AstNode *var; // with k = N_LOCAL, N_GLOBAL
+            struct AstNode *val;
+        };
+        struct { // N_IF, N_TERNARY
+            struct AstNode *if_cond, *if_body;
+            struct AstNode *if_else; // For else-ifs; with k = N_IF
+        };
+        struct { // N_WHILE, N_DO_WHILE
+            struct AstNode *loop_cond, *loop_body;
+        };
+        struct { // N_FOR
+            struct AstNode *for_init, *for_cond, *for_inc, *for_body;
+        };
+        struct { // N_SWITCH
+            struct AstNode *switch_cond, *switch_body;
+            Vec *cases; // of 'AstNode *' with k = N_CASE
+            struct AstNode *default_n; // with k = N_DEFAULT
+        };
+        struct { // N_CASE, N_DEFAULT
+            struct AstNode *case_cond; // NULL if k = N_DEFAULT
+            struct AstNode *case_body;
+            struct BB **case_br; // For the compiler
+        };
+        struct { char *goto_label; }; // N_GOTO
+        struct { // N_LABEL
+            char *label;
+            struct AstNode *label_body;
         };
         struct AstNode *ret; // N_RET
     };

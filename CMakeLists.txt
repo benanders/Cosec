@@ -19,7 +19,7 @@ add_executable(Cosec
         src/encode.c src/encode.h
         src/error.c src/error.h
         src/debug.c src/debug.h
-        src/util.c src/util.h src/validate.c src/validate.h)
+        src/util.c src/util.h)
 
 include(FindPython3)
 enable_testing()

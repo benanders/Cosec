@@ -1481,9 +1481,9 @@ static AstNode * parse_binop(Scope *s, Token *op, AstNode *l) {
         AstNode *binop = emit_binop(N_TERNARY, r, els, op);
         n = node(N_TERNARY, op);
         n->t = binop->t;
-        n->cond = l;
-        n->body = n->l;
-        n->els = n->r;
+        n->if_cond = l;
+        n->if_body = n->l;
+        n->if_else = n->r;
         return n;
     default: UNREACHABLE();
     }
@@ -1687,12 +1687,12 @@ static AstNode * eval_const_expr(AstNode *e, Token **err) {
 
         // Ternary operation
     case N_TERNARY:
-        cond = eval_const_expr(e->cond, err);
+        cond = eval_const_expr(e->if_cond, err);
         if (!cond) goto err;
         if (cond->k != N_IMM) goto err;
-        l = eval_const_expr(e->body, err);
+        l = eval_const_expr(e->if_body, err);
         if (!l) goto err;
-        r = eval_const_expr(e->els, err);
+        r = eval_const_expr(e->if_else, err);
         if (!r) goto err;
         *n = cond->imm ? *l : *r;
         break;
@@ -1827,15 +1827,15 @@ static AstNode * parse_if(Scope *s) {
         } else { // else
             AstNode *else_body = parse_stmt(s);
             els = node(N_IF, else_tk);
-            els->cond = NULL;
-            els->body = else_body;
-            els->els = NULL;
+            els->if_cond = NULL;
+            els->if_body = else_body;
+            els->if_else = NULL;
         }
     }
     AstNode *n = node(N_IF, if_tk);
-    n->cond = cond;
-    n->body = body;
-    n->els = els;
+    n->if_cond = cond;
+    n->if_body = body;
+    n->if_else = els;
     return n;
 }
 
@@ -1848,8 +1848,8 @@ static AstNode * parse_while(Scope *s) {
     enter_scope(&loop, s, SCOPE_LOOP);
     AstNode *body = parse_stmt(&loop);
     AstNode *n = node(N_WHILE, while_tk);
-    n->cond = cond;
-    n->body = body;
+    n->loop_cond = cond;
+    n->loop_body = body;
     return n;
 }
 
@@ -1864,8 +1864,8 @@ static AstNode * parse_do_while(Scope *s) {
     expect_tk(s->pp, ')');
     expect_tk(s->pp, ';');
     AstNode *n = node(N_DO_WHILE, do_tk);
-    n->cond = cond;
-    n->body = body;
+    n->loop_cond = cond;
+    n->loop_body = body;
     return n;
 }
 
@@ -1897,10 +1897,10 @@ static AstNode * parse_for(Scope *s) {
 
     AstNode *body = parse_stmt(&loop);
     AstNode *n = node(N_FOR, for_tk);
-    n->init = init;
-    n->cond = cond;
-    n->inc = inc;
-    n->body = body;
+    n->for_init = init;
+    n->for_cond = cond;
+    n->for_inc = inc;
+    n->for_body = body;
     return n;
 }
 
@@ -1916,8 +1916,8 @@ static AstNode * parse_switch(Scope *s) {
     switch_s.cond_t = cond->t;
     AstNode *body = parse_stmt(&switch_s);
     AstNode *n = node(N_SWITCH, switch_tk);
-    n->cond = cond;
-    n->body = body;
+    n->switch_cond = cond;
+    n->switch_body = body;
     n->cases = switch_s.cases;
     n->default_n = switch_s.default_n;
     return n;
@@ -1926,8 +1926,8 @@ static AstNode * parse_switch(Scope *s) {
 static void check_duplicate_cases(Scope *switch_s, int64_t cond, Token *err) {
     for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
         AstNode *n = vec_get(switch_s->cases, i);
-        assert(n->k == N_CASE && n->cond->k == N_IMM);
-        if (n->cond->imm == (uint64_t) cond) {
+        assert(n->k == N_CASE && n->case_cond->k == N_IMM);
+        if (n->case_cond->imm == (uint64_t) cond) {
             error_at(err, "duplicate case value '%ll'", cond);
         }
     }
@@ -1955,8 +1955,8 @@ static AstNode * parse_case(Scope *s) {
     imm->t = switch_s->cond_t;
     imm->imm = cond;
     AstNode *n = node(N_CASE, case_tk);
-    n->cond = imm;
-    n->body = body;
+    n->case_cond = imm;
+    n->case_body = body;
     vec_push(switch_s->cases, n);
     return n;
 }
@@ -1971,7 +1971,7 @@ static AstNode * parse_default(Scope *s) {
     expect_tk(s->pp, ':');
     AstNode *body = parse_stmt(s);
     AstNode *n = node(N_DEFAULT, default_tk);
-    n->body = body;
+    n->case_body = body;
     switch_s->default_n = n;
     return n;
 }
@@ -2001,7 +2001,7 @@ static AstNode * parse_goto(Scope *s) {
     Token *label = expect_tk(s->pp, TK_IDENT);
     expect_tk(s->pp, ';');
     AstNode *n = node(N_GOTO, goto_tk);
-    n->label = label->ident;
+    n->goto_label = label->ident;
     return n;
 }
 
@@ -2011,7 +2011,7 @@ static AstNode * parse_label(Scope *s) {
     AstNode *body = parse_stmt(s);
     AstNode *n = node(N_LABEL, label);
     n->label = label->ident;
-    n->body = body;
+    n->label_body = body;
     return n;
 }
 
@@ -2103,7 +2103,7 @@ static AstNode * parse_fn_def(Scope *s, AstType *t, Token *name, Vec *param_name
         AstType *param_t = vec_get(t->params, i);
         def_var(&fn_scope, param_name, param_t);
     }
-    fn->body = parse_block(&fn_scope);
+    fn->fn_body = parse_block(&fn_scope);
     return fn;
 }
 

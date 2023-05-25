@@ -10,7 +10,7 @@
 // ---- AST -------------------------------------------------------------------
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "init", "local", "global", "kval", "kptr",
+    "imm", "fp", "str", "init", "init elem", "local", "global", "kval", "kptr",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -190,11 +190,11 @@ static void print_expr(AstNode *n) {
     case N_TERNARY:
         print_type(n->t);
         printf(" ( ");
-        print_expr(n->cond);
+        print_expr(n->if_cond);
         printf(" ? ");
-        print_expr(n->body);
+        print_expr(n->if_body);
         printf(" : ");
-        print_expr(n->els);
+        print_expr(n->if_else);
         printf(" )");
         break;
     default:
@@ -234,7 +234,7 @@ static void print_fn_def(AstNode *n) {
         printf("...");
     }
     printf(")\n");
-    print_nodes(n->body, 1);
+    print_nodes(n->fn_body, 1);
 }
 
 static void print_indent(int indent) {
@@ -272,18 +272,18 @@ static void print_node(AstNode *n, int indent) {
         print_indent(indent);
         while (1) {
             printf("if ");
-            print_expr(n->cond);
+            print_expr(n->if_cond);
             printf("\n");
-            print_nodes(n->body, indent + 1);
-            if (n->els) {
+            print_nodes(n->if_body, indent + 1);
+            if (n->if_else) {
                 print_indent(indent);
                 printf("else ");
-                if (n->els->cond) { // else if
-                    n = n->els;
+                if (n->if_else->if_cond) { // else if
+                    n = n->if_else;
                     continue;
                 } else {
                     printf("\n");
-                    print_nodes(n->els->body, indent + 1);
+                    print_nodes(n->if_else->if_body, indent + 1);
                 }
             }
             break;
@@ -292,47 +292,47 @@ static void print_node(AstNode *n, int indent) {
     case N_WHILE:
         print_indent(indent);
         printf("while ");
-        print_expr(n->cond);
+        print_expr(n->loop_cond);
         printf("\n");
-        print_nodes(n->body, indent + 1);
+        print_nodes(n->loop_body, indent + 1);
         break;
     case N_DO_WHILE:
         print_indent(indent);
         printf("do\n");
-        print_nodes(n->body, indent + 1);
+        print_nodes(n->loop_body, indent + 1);
         print_indent(indent);
         printf("while ");
-        print_expr(n->cond);
+        print_expr(n->loop_cond);
         printf("\n");
         break;
     case N_FOR:
-        if (n->init) print_node(n->init, indent);
+        if (n->for_init) print_node(n->for_init, indent);
         print_indent(indent);
         printf("for ");
-        if (n->cond) print_expr(n->cond);
+        if (n->for_cond) print_expr(n->for_cond);
         printf("; ");
-        if (n->inc) print_expr(n->inc);
+        if (n->for_inc) print_expr(n->for_inc);
         printf("\n");
-        print_nodes(n->body, indent + 1);
+        print_nodes(n->for_body, indent + 1);
         break;
     case N_SWITCH:
         print_indent(indent);
         printf("switch ");
-        print_expr(n->cond);
+        print_expr(n->switch_cond);
         printf("\n");
-        print_nodes(n->body, indent + 1);
+        print_nodes(n->switch_body, indent + 1);
         break;
     case N_CASE:
         print_indent(indent - 1);
         printf("case ");
-        print_expr(n->cond);
+        print_expr(n->case_cond);
         printf(":\n");
-        print_node(n->body, indent);
+        print_node(n->case_body, indent);
         break;
     case N_DEFAULT:
         print_indent(indent - 1);
         printf("default:\n");
-        print_node(n->body, indent);
+        print_node(n->case_body, indent);
         break;
     case N_BREAK:
         print_indent(indent);
@@ -344,12 +344,12 @@ static void print_node(AstNode *n, int indent) {
         break;
     case N_GOTO:
         print_indent(indent);
-        printf("goto %s\n", n->label);
+        printf("goto %s\n", n->goto_label);
         break;
     case N_LABEL:
         print_indent(0);
         printf("%s:\n", n->label);
-        print_node(n->body, indent);
+        print_node(n->label_body, indent);
         break;
     case N_RET:
         print_indent(indent);

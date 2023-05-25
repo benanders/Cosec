@@ -12,7 +12,7 @@ My goals for the project are:
 
 Future features will include:
 
-* **Three levels of IR**: Cosec uses 3 levels of intermediate representation (IR) to compile C code, including a high-level abstract syntax tree (AST), intermediate-level static single assignment (SSA) form IR, and low-level assembly code IR.
+* **Three levels of IR**: Cosec uses 3 levels of intermediate representation (IR) to compile C code, including a high-level abstract syntax tree (AST), intermediate-level static single-assignment (SSA) form IR, and low-level assembly code IR.
 * **Complex optimisations**: the compiler performs optimisation and analysis passes on the SSA IR to try and generate more efficient assembly.
 * **Register allocation**: the compiler uses a complex graph-colouring algorithm for register allocation, including support for pre-coloured nodes, register coalescing, and spilling.
 * **Tests**: the compiler comes with a suite of (relatively basic) tests run using a simple Python wrapper.
@@ -21,13 +21,13 @@ Future features will include:
 ## Compiler Pipeline
 
 1. **Lexing** (`lex.c`): the C source code is read and converted into a sequence of tokens.
-2. **Preprocessing** (`cpp.c`): resolves things like `#include`s and `#define`s.
-3. **Parsing** (`parse.c`): an abstract syntax tree (AST) is constructed from the preprocessed tokens. Several validation steps occur in this process, such as ensuring the syntax is well-formed, variables are defined before use, type checking, etc.
+2. **Preprocessing** (`pp.c`): resolves things like macros, `#include`s, and `#define`s.
+3. **Parsing** (`parse.c`): builds an abstract syntax tree (AST) from the preprocessed tokens.
 4. **Compilation** (`compile.c`): the static single assignment (SSA) form IR is generated from a well-formed AST.
 5. **Optimisation and analysis**: various SSA IR analysis and optimisation passes are interleaved to try and generate more efficient assembly.
-6. **Assembling** (`asm.c`): the three-address SSA IR is lowered to the two-address target assembly language IR (only x86-64 is supported for now).
-7. **Register allocation** (`regalloc.c`): the assembler generates IR that uses an unlimited number of virtual registers; it's the job of the register allocator to assign physical registers to virtual ones.
-8. **Encoding** (`encode.c`): the final assembly code is written to an output file (only NASM assembly format is supported for now).
+6. **Assembling** (`assemble.c`): lowers the three-address SSA IR to the two-address target assembly language IR (only x86-64 is supported for now) using an unlimited number of virtual registers.
+7. **Register allocation** (`regalloc.c`): assigns physical registers to the virtual ones produced by the assembler.
+8. **Encoding** (`encode.c`): writes the final assembly code to an output file (only NASM assembly format is supported for now).
 
 
 ## Building and Usage
@@ -47,7 +47,7 @@ You can then compile a C file with:
 $ ./Cosec test.c
 ```
 
-This generates the output x86-64 assembly file `out.s` in NASM format. You can assemble and link this file with:
+This generates the output x86-64 assembly file `out.s` in NASM format. You can assemble and link this file (on macOS) with:
 
 ```bash
 $ nasm -f macho64 test.s
