@@ -185,13 +185,13 @@ typedef struct AstNode {
             size_t len;
             int enc;
         };
-        Vec *elems;     // N_INIT (array/struct initializer); of 'Node *'
+        Vec *elems;     // N_INIT (array/struct initializer); of 'AstNode *'
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
         struct { struct AstNode *g; /* N_GLOBAL */ int64_t offset; }; // N_KVAL, N_KPTR
 
         // Operations
         struct { struct AstNode *l, *r; }; // Unary and binary operations
-        struct { struct AstNode *fn; Vec *args; /* of 'Node *' */ }; // N_CALL
+        struct { struct AstNode *fn; Vec *args; /* of 'AstNode *' */ }; // N_CALL
         struct { struct AstNode *obj; size_t field_idx; }; // N_FIELD
 
         // Statements
@@ -202,7 +202,8 @@ typedef struct AstNode {
                 struct { char *fn_name; Vec *param_names; /* of 'Token *' */ }; // N_FN_DEF
                 struct AstNode *els; // N_IF, N_TERNARY
                 struct { struct AstNode *init, *inc; }; // N_FOR
-                Vec *cases;  // N_SWITCH
+                struct { Vec *cases; struct AstNode *default_n; }; // N_SWITCH
+                struct BB **case_jmp; // N_CASE, N_DEFAULT
                 char *label; // N_GOTO, N_LABEL
             };
         };

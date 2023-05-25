@@ -19,13 +19,14 @@ typedef struct Scope {
     struct Scope *outer;
     int k;
     PP *pp;
-    Map *vars;   // of 'Node *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
+    Map *vars;   // of 'AstNode *' with k = N_LOCAL, N_GLOBAL, or N_TYPEDEF
     Map *tags;   // of 'AstType *'
     AstNode *fn; // NULL in file scope
 
     // For SCOPE_SWITCH
-    Vec *cases;      // of 'Node *' with k = N_CASE or N_DEFAULT
-    AstType *cond_t; // Type of the condition
+    Vec *cases;         // of 'AstNode *' with k = N_CASE
+    AstNode *default_n; // with k = N_DEFAULT
+    AstType *cond_t;    // Type of the condition
 } Scope;
 
 static AstNode * node(int k, Token *tk) {
@@ -57,6 +58,8 @@ static void enter_scope(Scope *inner, Scope *outer, int k) {
     inner->outer = outer;
     if (k == SCOPE_SWITCH) {
         inner->cases = vec_new();
+        inner->default_n = NULL;
+        inner->cond_t = NULL;
     }
 }
 
@@ -1905,6 +1908,7 @@ static AstNode * parse_switch(Scope *s) {
     Token *switch_tk = expect_tk(s->pp, TK_SWITCH);
     expect_tk(s->pp, '(');
     AstNode *cond = parse_expr(s);
+    expect_int(cond);
     expect_tk(s->pp, ')');
 
     Scope switch_s;
@@ -1915,7 +1919,24 @@ static AstNode * parse_switch(Scope *s) {
     n->cond = cond;
     n->body = body;
     n->cases = switch_s.cases;
+    n->default_n = switch_s.default_n;
     return n;
+}
+
+static void check_duplicate_cases(Scope *switch_s, int64_t cond, Token *err) {
+    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
+        AstNode *n = vec_get(switch_s->cases, i);
+        assert(n->k == N_CASE && n->cond->k == N_IMM);
+        if (n->cond->imm == (uint64_t) cond) {
+            error_at(err, "duplicate case value '%ll'", cond);
+        }
+    }
+}
+
+static void check_duplicate_default(Scope *switch_s, Token *err) {
+    if (switch_s->default_n) {
+        error_at(err, "cannot have more than one 'default' in a switch");
+    }
 }
 
 static AstNode * parse_case(Scope *s) {
@@ -1925,13 +1946,9 @@ static AstNode * parse_case(Scope *s) {
         error_at(case_tk, "'case' not allowed here");
     }
     AstNode *cond_expr = conv_to(parse_expr(s), switch_s->cond_t);
+    expect_int(cond_expr);
     int64_t cond = calc_int_expr(cond_expr);
-    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
-        AstNode *c = vec_get(switch_s->cases, i);
-        if (c && c->imm == (uint64_t) cond) {
-            error_at(cond_expr->tk, "duplicate case value '%ll'", cond);
-        }
-    }
+    check_duplicate_cases(switch_s, cond, cond_expr->tk);
     expect_tk(s->pp, ':');
     AstNode *body = parse_stmt(s);
     AstNode *imm = node(N_IMM, cond_expr->tk);
@@ -1950,17 +1967,12 @@ static AstNode * parse_default(Scope *s) {
     if (!switch_s) {
         error_at(default_tk, "'default' not allowed here");
     }
-    for (size_t i = 0; i < vec_len(switch_s->cases); i++) {
-        AstNode *c = vec_get(switch_s->cases, i);
-        if (c->k == N_DEFAULT) {
-            error_at(default_tk, "cannot have more than one 'default' in a switch");
-        }
-    }
+    check_duplicate_default(switch_s, default_tk);
     expect_tk(s->pp, ':');
     AstNode *body = parse_stmt(s);
     AstNode *n = node(N_DEFAULT, default_tk);
     n->body = body;
-    vec_push(switch_s->cases, n);
+    switch_s->default_n = n;
     return n;
 }
 

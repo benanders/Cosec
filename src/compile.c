@@ -19,12 +19,9 @@ typedef struct Scope {
     int k;
     Vec *globals;
     Fn *fn;
-    Map *vars;   // Block: 'IrIns *' k = IR_ALLOC; file: 'Global *'
-    Vec *breaks; // SCOPE_LOOP and SCOPE_SWITCH 'break' jump list
-    union {
-        Vec *continues; // SCOPE_LOOP; 'continue' jump list
-        Vec *cases;     // SCOPE_SWITCH; list of 'IrBB *'
-    };
+    Map *vars;      // Block: 'IrIns *' k = IR_ALLOC; file: 'Global *'
+    Vec *breaks;    // SCOPE_LOOP and SCOPE_SWITCH 'break' jump list
+    Vec *continues; // SCOPE_LOOP; 'continue' jump list
 } Scope;
 
 
@@ -42,7 +39,6 @@ static void enter_scope(Scope *inner, Scope *outer, int k) {
         inner->continues = vec_new();
     } else if (k == SCOPE_SWITCH) {
         inner->breaks = vec_new();
-        inner->cases = vec_new();
     }
 }
 
@@ -869,7 +865,7 @@ static IrIns * compile_call(Scope *s, AstNode *n) {
         fn_t = fn_t->ptr;
     }
     assert(fn_t->k == T_FN);
-    IrIns *fn = compile_expr(s, n->fn);
+    IrIns *fn = discharge(s, compile_expr(s, n->fn));
     IrIns *args[vec_len(n->args)];
     for (size_t i = 0; i < vec_len(n->args); i++) {
         AstNode *arg = vec_get(n->args, i);
@@ -1179,64 +1175,55 @@ static void compile_for(Scope *s, AstNode *n) {
 }
 
 static void compile_switch(Scope *s, AstNode *n) {
-    IrIns *cond = compile_expr(s, n->cond);
-    Vec *brs = vec_new(); // of 'IrBB **'
-    BB **false_br;
+    IrIns *cond = discharge(s, compile_expr(s, n->cond));
     for (size_t i = 0; i < vec_len(n->cases); i++) {
         AstNode *case_n = vec_get(n->cases, i);
-        if (case_n->k == N_CASE) {
-            IrIns *val = compile_expr(s, case_n->cond);
-            IrIns *cmp = emit(s, IR_EQ, irt_new(IRT_I32));
-            cmp->l = cond;
-            cmp->r = val;
-            IrIns *br = emit(s, IR_CONDBR, NULL);
-            br->cond = cmp;
-            vec_push(brs, &br->true);
-            false_br = &br->false;
-            BB *next = emit_bb(s);
-            *false_br = next;
-        } else { // N_DEFAULT
-            vec_push(brs, NULL);
-        }
+        IrIns *val = compile_expr(s, case_n->cond);
+        IrIns *cmp = emit(s, IR_EQ, irt_new(IRT_I32));
+        cmp->l = cond;
+        cmp->r = val;
+        IrIns *br = emit(s, IR_CONDBR, NULL);
+        br->cond = cmp;
+        case_n->case_jmp = &br->true;
+        BB *next = emit_bb(s);
+        br->false = next;
+    }
+    IrIns *default_br = emit(s, IR_BR, NULL);
+    emit_bb(s);
+    if (n->default_n) { // If there's a default
+        n->default_n->case_jmp = &default_br->br;
     }
 
-    Scope swtch;
-    enter_scope(&swtch, s, SCOPE_SWITCH);
-    compile_block(&swtch, n->body);
+    Scope switch_s;
+    enter_scope(&switch_s, s, SCOPE_SWITCH);
+    compile_block(&switch_s, n->body);
 
     IrIns *end_br = emit(s, IR_BR, NULL);
     BB *after = emit_bb(s);
     end_br->br = after;
-    patch_branch_chain(swtch.breaks, after);
-    *false_br = after; // For if there's no default
-
-    assert(vec_len(brs) == vec_len(swtch.cases));
-    for (size_t i = 0; i < vec_len(brs); i++) { // Patch initial branches
-        BB **br = vec_get(brs, i);
-        BB *dst = vec_get(swtch.cases, i);
-        if (br) { // Case
-            *br = dst;
-        } else { // Default
-            *false_br = dst;
-        }
+    patch_branch_chain(switch_s.breaks, after);
+    if (!default_br->br) { // If there's no default
+        default_br->br = after;
     }
+    patch_branch_chain(switch_s.breaks, after);
 }
 
-static void compile_case(Scope *s, AstNode *n) {
-    Scope *swtch = find_scope(s, SCOPE_SWITCH);
-    assert(swtch); // Checked by parser
+static void compile_case_default(Scope *s, AstNode *n) {
+    Scope *switch_s = find_scope(s, SCOPE_SWITCH);
+    assert(switch_s); // Checked by parser
     IrIns *end_br = emit(s, IR_BR, NULL);
     BB *bb = emit_bb(s);
     end_br->br = bb;
+    assert(n->case_jmp);
+    *n->case_jmp = bb;
     compile_stmt(s, n->body);
-    vec_push(swtch->cases, bb);
 }
 
 static void compile_break(Scope *s) {
-    Scope *swtch_loop = find_scope(s, SCOPE_SWITCH | SCOPE_LOOP);
-    assert(swtch_loop); // Checked by the parser
+    Scope *switch_loop = find_scope(s, SCOPE_SWITCH | SCOPE_LOOP);
+    assert(switch_loop); // Checked by parser
     IrIns *br = emit(s, IR_BR, NULL);
-    add_to_branch_chain(swtch_loop->breaks, &br->br, br);
+    add_to_branch_chain(switch_loop->breaks, &br->br, br);
 }
 
 static void compile_continue(Scope *s) {
@@ -1264,7 +1251,8 @@ static void compile_stmt(Scope *s, AstNode *n) {
         case N_DO_WHILE: compile_do_while(s, n); break;
         case N_FOR:      compile_for(s, n); break;
         case N_SWITCH:   compile_switch(s, n); break;
-        case N_CASE: case N_DEFAULT: compile_case(s, n); break;
+        case N_CASE: case N_DEFAULT:
+            compile_case_default(s, n); break;
         case N_BREAK:    compile_break(s); break;
         case N_CONTINUE: compile_continue(s); break;
         case N_RET:      compile_ret(s, n); break;
