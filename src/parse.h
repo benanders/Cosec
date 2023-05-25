@@ -203,7 +203,7 @@ typedef struct AstNode {
                 struct AstNode *els; // N_IF, N_TERNARY
                 struct { struct AstNode *init, *inc; }; // N_FOR
                 struct { Vec *cases; struct AstNode *default_n; }; // N_SWITCH
-                struct BB **case_jmp; // N_CASE, N_DEFAULT
+                struct BB **case_br; // N_CASE, N_DEFAULT
                 char *label; // N_GOTO, N_LABEL
             };
         };

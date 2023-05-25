@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "compile.h"
+#include "error.h"
 
 #define GLOBAL_PREFIX "_G."
 
@@ -14,6 +15,12 @@ enum {
     SCOPE_SWITCH = 0b1000,
 };
 
+typedef struct {
+    char *label;
+    BB **br;
+    Token *err;
+} Goto;
+
 typedef struct Scope {
     struct Scope *outer;
     int k;
@@ -22,24 +29,29 @@ typedef struct Scope {
     Map *vars;      // Block: 'IrIns *' k = IR_ALLOC; file: 'Global *'
     Vec *breaks;    // SCOPE_LOOP and SCOPE_SWITCH 'break' jump list
     Vec *continues; // SCOPE_LOOP; 'continue' jump list
+    Map *labels; // of 'BB *'
+    Vec *gotos;  // of 'Goto *'
 } Scope;
 
 
 // ---- Scopes, Globals, Functions, Basic Blocks, and Instructions ------------
 
-static void enter_scope(Scope *inner, Scope *outer, int k) {
-    *inner = (Scope) {0};
-    inner->outer = outer;
-    inner->k = k;
-    inner->globals = outer->globals;
-    inner->fn = outer->fn;
-    inner->vars = map_new();
+static Scope enter_scope(Scope *outer, int k) {
+    Scope s = {0};
+    s.outer = outer;
+    s.k = k;
+    s.globals = outer->globals;
+    s.fn = outer->fn;
+    s.vars = map_new();
     if (k == SCOPE_LOOP) {
-        inner->breaks = vec_new();
-        inner->continues = vec_new();
+        s.breaks = vec_new();
+        s.continues = vec_new();
     } else if (k == SCOPE_SWITCH) {
-        inner->breaks = vec_new();
+        s.breaks = vec_new();
     }
+    s.labels = outer->labels;
+    s.gotos = outer->gotos;
+    return s;
 }
 
 static Scope * find_scope(Scope *s, int k) {
@@ -1093,8 +1105,7 @@ static void compile_while(Scope *s, AstNode *n) {
     before_br->br = cond_bb;
     IrIns *cond = to_cond(s, compile_expr(s, n->cond));
 
-    Scope loop;
-    enter_scope(&loop, s, SCOPE_LOOP);
+    Scope loop = enter_scope(s, SCOPE_LOOP);
     BB *body_bb = emit_bb(s);
     patch_branch_chain(cond->true_chain, body_bb);
     compile_block(&loop, n->body);
@@ -1109,8 +1120,7 @@ static void compile_while(Scope *s, AstNode *n) {
 
 static void compile_do_while(Scope *s, AstNode *n) {
     IrIns *before_br = emit(s, IR_BR, NULL);
-    Scope loop;
-    enter_scope(&loop, s, SCOPE_LOOP);
+    Scope loop = enter_scope(s, SCOPE_LOOP);
     BB *body_bb = emit_bb(s);
     before_br->br = body_bb;
     compile_block(&loop, n->body);
@@ -1141,8 +1151,7 @@ static void compile_for(Scope *s, AstNode *n) {
         cond = to_cond(s, compile_expr(s, n->cond));
     }
 
-    Scope loop;
-    enter_scope(&loop, s, SCOPE_LOOP);
+    Scope loop = enter_scope(s, SCOPE_LOOP);
     BB *body = emit_bb(s);
     if (cond) {
         patch_branch_chain(cond->true_chain, body);
@@ -1184,18 +1193,17 @@ static void compile_switch(Scope *s, AstNode *n) {
         cmp->r = val;
         IrIns *br = emit(s, IR_CONDBR, NULL);
         br->cond = cmp;
-        case_n->case_jmp = &br->true;
+        case_n->case_br = &br->true;
         BB *next = emit_bb(s);
         br->false = next;
     }
     IrIns *default_br = emit(s, IR_BR, NULL);
     emit_bb(s);
     if (n->default_n) { // If there's a default
-        n->default_n->case_jmp = &default_br->br;
+        n->default_n->case_br = &default_br->br;
     }
 
-    Scope switch_s;
-    enter_scope(&switch_s, s, SCOPE_SWITCH);
+    Scope switch_s = enter_scope(s, SCOPE_SWITCH);
     compile_block(&switch_s, n->body);
 
     IrIns *end_br = emit(s, IR_BR, NULL);
@@ -1214,8 +1222,8 @@ static void compile_case_default(Scope *s, AstNode *n) {
     IrIns *end_br = emit(s, IR_BR, NULL);
     BB *bb = emit_bb(s);
     end_br->br = bb;
-    assert(n->case_jmp);
-    *n->case_jmp = bb;
+    assert(n->case_br);
+    *n->case_br = bb;
     compile_stmt(s, n->body);
 }
 
@@ -1231,6 +1239,27 @@ static void compile_continue(Scope *s) {
     assert(loop); // Checked by the parser
     IrIns *br = emit(s, IR_BR, NULL);
     add_to_branch_chain(loop->continues, &br->br, br);
+}
+
+static void compile_goto(Scope *s, AstNode *n) {
+    IrIns *br = emit(s, IR_BR, NULL);
+    emit_bb(s);
+    Goto *pair = malloc(sizeof(Goto));
+    pair->label = n->label;
+    pair->br = &br->br;
+    pair->err = n->tk;
+    vec_push(s->gotos, pair);
+}
+
+static void compile_label(Scope *s, AstNode *n) {
+    if (map_get(s->labels, n->label)) {
+        error_at(n->tk, "redefinition of label '%s'", n->label);
+    }
+    IrIns *end_br = emit(s, IR_BR, NULL);
+    BB *bb = emit_bb(s);
+    end_br->br = bb;
+    map_put(s->labels, n->label, bb);
+    compile_stmt(s, n->body);
 }
 
 static void compile_ret(Scope *s, AstNode *n) {
@@ -1251,18 +1280,18 @@ static void compile_stmt(Scope *s, AstNode *n) {
         case N_DO_WHILE: compile_do_while(s, n); break;
         case N_FOR:      compile_for(s, n); break;
         case N_SWITCH:   compile_switch(s, n); break;
-        case N_CASE: case N_DEFAULT:
-            compile_case_default(s, n); break;
+        case N_CASE: case N_DEFAULT: compile_case_default(s, n); break;
         case N_BREAK:    compile_break(s); break;
         case N_CONTINUE: compile_continue(s); break;
+        case N_GOTO:     compile_goto(s, n); break;
+        case N_LABEL:    compile_label(s, n); break;
         case N_RET:      compile_ret(s, n); break;
         default:         discharge(s, compile_expr(s, n)); break;
     }
 }
 
 static void compile_block(Scope *s, AstNode *n) {
-    Scope block;
-    enter_scope(&block, s, SCOPE_BLOCK);
+    Scope block = enter_scope(s, SCOPE_BLOCK);
     while (n) {
         compile_stmt(&block, n);
         n = n->next;
@@ -1271,6 +1300,24 @@ static void compile_block(Scope *s, AstNode *n) {
 
 
 // ---- Globals ---------------------------------------------------------------
+
+static void ensure_ends_with_ret(Scope *s) {
+    if (!s->fn->last->ir_last || s->fn->last->ir_last->op != IR_RET) {
+        emit(s, IR_RET, NULL);
+    }
+}
+
+static void resolve_gotos(Scope *s) {
+    for (size_t i = 0; i < vec_len(s->gotos); i++) {
+        Goto *pair = vec_get(s->gotos, i);
+        BB *bb = map_get(s->labels, pair->label);
+        if (!bb) {
+            error_at(pair->err, "use of undeclared label '%s'", pair->label);
+        }
+        assert(pair->br);
+        *pair->br = bb;
+    }
+}
 
 static void compile_fn_args(Scope *s, AstNode *n) {
     if (n->t->is_vararg) {
@@ -1298,14 +1345,14 @@ static void compile_fn_def(Scope *s, AstNode *n) {
     Global *g = new_global(label, irt_conv(n->t), n->t->linkage);
     g->fn = new_fn();
     def_global(s, n->fn_name, g);
-    Scope body;
-    enter_scope(&body, s, SCOPE_BLOCK);
+    Scope body = enter_scope(s, SCOPE_BLOCK);
     body.fn = g->fn;
+    body.labels = map_new();
+    body.gotos = vec_new();
     compile_fn_args(&body, n);
     compile_block(&body, n->body);
-    if (!body.fn->last->ir_last || body.fn->last->ir_last->op != IR_RET) {
-        emit(&body, IR_RET, NULL);
-    }
+    resolve_gotos(&body);
+    ensure_ends_with_ret(&body);
 }
 
 static void compile_global_decl(Scope *s, AstNode *n) {
@@ -1325,13 +1372,13 @@ static void compile_top_level(Scope *s, AstNode *n) {
 }
 
 Vec * compile(AstNode *n) {
-    Scope top_level = {0};
-    top_level.k = SCOPE_FILE;
-    top_level.globals = vec_new();
-    top_level.vars = map_new();
+    Scope file = {0};
+    file.k = SCOPE_FILE;
+    file.globals = vec_new();
+    file.vars = map_new();
     while (n) {
-        compile_top_level(&top_level, n);
+        compile_top_level(&file, n);
         n = n->next;
     }
-    return top_level.globals;
+    return file.globals;
 }

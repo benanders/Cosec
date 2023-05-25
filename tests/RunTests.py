@@ -16,16 +16,17 @@ ld_args = ["-L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib", "-lS
 def run_test(cosec_bin, path):
     f = open(path, "r")
     contents = f.read()
+    print("Test '" + path + "': ", end="", flush=True)
 
     # Find expected return code
     re_search = re.search(r'\/\/ expect\: (\d+)', contents)
     if re_search is None:
-        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print(RED + "FAILED" + CLEAR)
         print("\tNo '// expect: ' in file")
         return
     groups = re_search.groups()
     if len(groups) == 0:
-        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print(RED + "FAILED" + CLEAR)
         print("\tNo matching regex '// expect: (\\d+)' in file")
         return
     expected_output = int(groups[0])
@@ -33,7 +34,7 @@ def run_test(cosec_bin, path):
     # Compile
     result = subprocess.run([cosec_bin, path, "-o", "out.s"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print(RED + "FAILED" + CLEAR)
         print("\tFailed to compile")
         print("\tOutput:")
         print(result.stdout + result.stderr)
@@ -42,7 +43,7 @@ def run_test(cosec_bin, path):
     # Assemble
     result = subprocess.run([nasm_bin] + nasm_args + ["-o", "out.o", "out.s"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print(RED + "FAILED" + CLEAR)
         print("\tFailed to assemble")
         print("\tOutput:")
         print(result.stdout + result.stderr)
@@ -51,7 +52,7 @@ def run_test(cosec_bin, path):
     # Link
     result = subprocess.run([ld_bin] + ld_args + ["-o", "a.out", "out.o"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print(RED + "FAILED" + CLEAR)
         print("\tFailed to link")
         print("\tOutput:")
         print(result.stdout + result.stderr)
@@ -60,14 +61,14 @@ def run_test(cosec_bin, path):
     # Run
     result = subprocess.run(["./a.out"], capture_output=True, text=True)
     if result.returncode != expected_output:
-        print("Test '" + path + "': " + RED + "FAILED" + CLEAR)
+        print(RED + "FAILED" + CLEAR)
         print("\tExpected return code: " + str(expected_output))
         print("\tGot return code: " + str(result.returncode))
         if len(result.stdout) > 0:
             print("\tOutput: ")
             print(result.stdout + result.stderr)
     else:
-        print("Test '" + path + "': " + GREEN + "PASSED" + CLEAR)
+        print(GREEN + "PASSED" + CLEAR)
 
 def run_tests(cosec_bin, test_dir):
     files = os.listdir(test_dir)
