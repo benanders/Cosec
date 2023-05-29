@@ -165,14 +165,34 @@ typedef struct {
     int num_gprs, num_sse;
 } Fn;
 
+typedef struct {
+    uint64_t offset;
+    struct Global *val; // with k = G_IMM, G_FP
+} InitElem;
+
+enum {
+    G_NONE,
+    G_IMM,
+    G_FP,
+    G_INIT,
+    G_PTR,
+    G_FN_DEF,
+};
+
 typedef struct Global {
+    int k;
     char *label;
     IrType *t;
     int linkage;
-    AstNode *val; // NULL if fn def; or N_IMM, N_FP, N_STR, N_INIT, N_KPTR
-    Fn *fn;
+    union {
+        uint64_t imm; // G_IMM
+        double fp;    // G_FP
+        Vec *elems;   // G_INIT; of 'InitElem *'
+        struct { struct Global *g; int64_t offset; }; // G_PTR
+        Fn *fn;       // G_FN
+    };
 } Global;
 
-Vec * compile(AstNode *n);
+Vec * compile(AstNode *n); // of 'Global *'
 
 #endif

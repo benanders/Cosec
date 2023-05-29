@@ -179,7 +179,7 @@ static void encode_fns(FILE *out, Vec *globals) {
     int written_header = 0;
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (!g->fn) {
+        if (g->k != G_FN_DEF) {
             continue; // Not a function definition
         }
         if (!written_header) {
@@ -190,34 +190,45 @@ static void encode_fns(FILE *out, Vec *globals) {
     }
 }
 
-static void encode_global(FILE *out, Global *g) {
-    if (g->linkage != LINK_STATIC) {
-        fprintf(out, "global %s\n", g->label);
-    }
-    if (!g->val) {
-        if (g->linkage != LINK_EXTERN) {
-            // Initialize empty statics to zero
-            fprintf(out, "%s: times %zu db 0\n", g->label, g->t->size);
+static void encode_global_val(FILE *out, Global *g) {
+    uint64_t offset = 0;
+    switch (g->k) {
+    case G_IMM:  fprintf(out, "%s %" PRIu64, NASM_CONST[g->t->size], g->imm); break;
+    case G_FP:   fprintf(out, "%s %lf", NASM_CONST[g->t->size], g->fp); break;
+    case G_INIT:
+        for (size_t i = 0; i < vec_len(g->elems); i++) {
+            InitElem *elem = vec_get(g->elems, i);
+            if (offset < elem->offset) {
+                fprintf(out, "times %" PRIu64 " db 0", elem->offset - offset);
+            }
+            encode_global_val(out, elem->val);
+            offset = elem->offset + elem->val->t->size;
         }
-        return;
-    }
-    fprintf(out, "%s: ", g->label);
-    AstNode *n = g->val;
-    switch (n->k) {
-    case N_IMM: fprintf(out, "%s %" PRIu64, NASM_CONST[n->t->size], n->imm); break;
-    case N_FP:  fprintf(out, "%s %lf", NASM_CONST[n->t->size], n->fp); break;
-    case N_STR: fprintf(out, "db `%s` 0", quote_str(n->str, n->len)); break; // TODO: encoding
-    case N_INIT: break; // TODO
-    case N_KPTR:
-        fprintf(out, "dq %s", n->g->label);
-        if (n->offset > 0) {
-            fprintf(out, " + %" PRIi64, n->offset);
+        if (offset < g->t->size) {
+            fprintf(out, "times %" PRIu64 " db 0", g->t->size - offset);
+        }
+        break;
+    case G_PTR:
+        fprintf(out, "dq %s", g->g->label);
+        if (g->offset > 0) {
+            fprintf(out, " + %" PRIi64, g->offset);
         } else {
-            fprintf(out, " - %" PRIi64, -n->offset);
+            fprintf(out, " - %" PRIi64, -g->offset);
         }
         break;
     default: UNREACHABLE();
     }
+}
+
+static void encode_global(FILE *out, Global *g) {
+    if (g->linkage != LINK_STATIC) {
+        fprintf(out, "global %s\n", g->label);
+    }
+    if (g->k == G_NONE) {
+        return;
+    }
+    fprintf(out, "%s: ", g->label);
+    encode_global_val(out, g);
     fprintf(out, "\n");
 }
 
@@ -225,7 +236,7 @@ static void encode_globals(FILE *out, Vec *globals) {
     int written_header = 0;
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->fn) {
+        if (g->k == G_FN_DEF) {
             continue; // Function definition
         }
         if (!written_header) {

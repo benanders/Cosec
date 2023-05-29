@@ -681,7 +681,7 @@ static void alloc_fn(Fn *fn, int debug) {
 void reg_alloc(Vec *globals, int debug) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        if (g->fn) {
+        if (g->k == G_FN_DEF) {
             if (debug) printf("Register allocation for '%s':\n", g->label);
             alloc_fn(g->fn, debug);
             if (debug) printf("\n");

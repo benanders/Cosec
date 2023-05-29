@@ -62,13 +62,19 @@ static Scope * find_scope(Scope *s, int k) {
 }
 
 static Global * new_global(char *label, IrType *t, int linkage) {
-    Global *g = malloc(sizeof(Global));
+    Global *g = calloc(1, sizeof(Global));
+    g->k = G_NONE;
     g->label = label;
     g->t = t;
     g->linkage = linkage;
-    g->val = NULL;
-    g->fn = NULL;
     return g;
+}
+
+static InitElem * new_init_elem(uint64_t offset, Global *val) {
+    InitElem *elem = malloc(sizeof(InitElem));
+    elem->offset = offset;
+    elem->val = val;
+    return elem;
 }
 
 static BB * new_bb() {
@@ -250,7 +256,7 @@ static void def_local(Scope *s, char *name, IrIns *alloc) {
 static void def_global(Scope *s, char *name, Global *g) {
     for (size_t i = 0; i < vec_len(s->globals); i++) {
         Global *g2 = vec_get(s->globals, i);
-        if (!g2->val && !g2->fn) { // Not a forward declaration
+        if (g2->k == G_NONE) { // Not a forward declaration
             continue;
         }
         assert(strcmp(g->label, g2->label) != 0); // No duplicate definitions
@@ -271,11 +277,13 @@ static char * next_global_label(Scope *s) {
     return label;
 }
 
+static void compile_global(Scope *s, AstNode *n, Global *g);
+
 static Global * def_const_global(Scope *s, AstNode *n) {
     char *label = next_global_label(s);
     Global *g = new_global(label, irt_conv(n->t), n->t->linkage);
-    g->val = n;
     def_global(s, NULL, g);
+    compile_global(s, n, g);
     return g;
 }
 
@@ -504,20 +512,12 @@ static void compile_init_elem(Scope *s, AstNode *n, AstType *t, IrIns *elem) {
     }
 }
 
-static int is_const_init(AstNode *n) {
-    assert(n->k == N_INIT);
-    for (size_t i = 0; i < vec_len(n->elems); i++) {
-        AstNode *e = vec_get(n->elems, i);
-        if (!(!e || e->k == N_IMM || e->k == N_FP || e->k == N_STR ||
-                e->k == N_KPTR || (e->k == N_INIT && is_const_init(e)))) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
 static IrIns * compile_const_init(Scope *s, AstNode *n) {
-    Global *g = def_const_global(s, n);
+    AstNode *const_init = try_calc_const_expr(n);
+    if (!const_init) {
+        return NULL;
+    }
+    Global *g = def_const_global(s, const_init);
     IrIns *src = emit(s, IR_GLOBAL, irt_new(IRT_PTR));
     src->g = g;
     IrIns *dst = emit(s, IR_ALLOC, irt_new(IRT_PTR));
@@ -533,8 +533,9 @@ static IrIns * compile_const_init(Scope *s, AstNode *n) {
 
 static IrIns * compile_init(Scope *s, AstNode *n) {
     assert(n->k == N_INIT);
-    if (is_const_init(n)) {
-        return compile_const_init(s, n);
+    IrIns *const_init = compile_const_init(s, n);
+    if (const_init) {
+        return const_init;
     }
     IrIns *alloc = emit(s, IR_ALLOC, irt_new(IRT_PTR));
     alloc->alloc_t = irt_conv(n->t);
@@ -1342,6 +1343,7 @@ static void compile_fn_args(Scope *s, AstNode *n) {
 static void compile_fn_def(Scope *s, AstNode *n) {
     char *label = prepend_underscore(n->fn_name);
     Global *g = new_global(label, irt_conv(n->t), n->t->linkage);
+    g->k = G_FN_DEF;
     g->fn = new_fn();
     def_global(s, n->fn_name, g);
     Scope body = enter_scope(s, SCOPE_BLOCK);
@@ -1354,11 +1356,114 @@ static void compile_fn_def(Scope *s, AstNode *n) {
     ensure_ends_with_ret(&body);
 }
 
+static void compile_const_init_elem(Scope *s, Vec *elems, AstNode *n, uint64_t offset);
+
+static void compile_const_arr_init(Scope *s, Vec *elems, AstNode *n, uint64_t offset) {
+    assert(n->k == N_INIT);
+    assert(n->t->k == T_ARR);
+    for (size_t i = 0; i < vec_len(n->elems); i++) {
+        AstNode *elem = vec_get(n->elems, i);
+        uint64_t elem_offset = offset + i * n->t->elem->size;
+        compile_const_init_elem(s, elems, elem, elem_offset);
+    }
+}
+
+static void compile_const_struct_init(Scope *s, Vec *elems, AstNode *n, uint64_t offset) {
+    assert(n->k == N_INIT);
+    assert(n->t->k == T_STRUCT);
+    for (size_t i = 0; i < vec_len(n->elems); i++) {
+        AstNode *elem = vec_get(n->elems, i);
+        Field *f = vec_get(n->t->fields, i);
+        uint64_t field_offset = offset + f->offset;
+        compile_const_init_elem(s, elems, elem, field_offset);
+    }
+}
+
+static void compile_const_init_elem(Scope *s, Vec *elems, AstNode *n, uint64_t offset) {
+    if (!n) return;
+    if (n->k == N_INIT) {
+        if (n->t->k == T_STRUCT) {
+            compile_const_struct_init(s, elems, n, offset);
+        } else { // T_ARR
+            assert(n->t->k == T_ARR);
+            compile_const_arr_init(s, elems, n, offset);
+        }
+    } else {
+        Global *v = new_global(NULL, irt_conv(n->t), n->t->linkage);
+        compile_global(s, n, v);
+        vec_push(elems, new_init_elem(offset, v));
+    }
+}
+
+static void compile_global(Scope *s, AstNode *n, Global *g) {
+    if (!n) return;
+    switch (n->k) {
+    case N_IMM: g->k = G_IMM; g->imm = n->imm; break;
+    case N_FP:  g->k = G_FP;  g->fp = n->fp;   break;
+    case N_STR:
+        g->k = G_INIT;
+        g->elems = vec_new();
+        assert(n->t->k == T_ARR);
+        for (size_t i = 0; i < n->len; i++) {
+            Global *v = new_global(NULL, irt_conv(n->t->elem), LINK_NONE);
+            v->k = G_IMM;
+            uint64_t size;
+            switch (n->enc) {
+                case ENC_NONE:   v->imm = (uint64_t) n->str[i]; size = 1; break;
+                case ENC_CHAR16: v->imm = n->str16[i]; size = 2; break;
+                case ENC_WCHAR:
+                case ENC_CHAR32: v->imm = n->str32[i]; size = 4; break;
+                default: UNREACHABLE();
+            }
+            vec_push(g->elems, new_init_elem(i * size, v));
+        }
+        break;
+    case N_INIT:
+        g->k = G_INIT;
+        g->elems = vec_new();
+        compile_const_init_elem(s, g->elems, n, 0);
+        break;
+    case N_KPTR:
+        g->k = G_PTR;
+        g->g = find_global(s, n->g->var_name);
+        g->offset = n->offset;
+        break;
+    default: UNREACHABLE();
+    }
+}
+
+static void compile_null_global(Global *g) {
+    switch (g->t->k) {
+    case IRT_I8 ... IRT_I64: case IRT_PTR:
+        g->k = G_IMM;
+        g->imm = 0;
+        break;
+    case IRT_F32: case IRT_F64:
+        g->k = G_FP;
+        g->imm = 0;
+        break;
+    case IRT_ARR: case IRT_STRUCT:
+        g->k = G_INIT;
+        g->elems = vec_new();
+        break;
+    default: UNREACHABLE();
+    }
+}
+
 static void compile_global_decl(Scope *s, AstNode *n) {
+    assert(n->var->k == N_GLOBAL);
     char *label = prepend_underscore(n->var->var_name);
     Global *g = new_global(label, irt_conv(n->var->t), n->var->t->linkage);
     def_global(s, n->var->var_name, g);
-    g->val = n->val; // May be NULL if just a declaration
+    if (n->var->t->k == T_VOID || n->var->t->k == T_FN ||
+            n->var->t->linkage == LINK_EXTERN) {
+        return; // Shouldn't have an initialization value -> not an object
+    }
+    if (n->val) {
+        compile_global(s, n->val, g);
+    } else {
+        compile_null_global(g);
+    }
 }
 
 static void compile_top_level(Scope *s, AstNode *n) {

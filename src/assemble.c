@@ -752,7 +752,7 @@ static void asm_fn(Fn *fn) {
 void assemble(Vec *global) {
     for (size_t i = 0; i < vec_len(global); i++) {
         Global *g = vec_get(global, i);
-        if (g->fn) {
+        if (g->k == G_FN_DEF) {
             asm_fn(g->fn);
         }
     }

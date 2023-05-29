@@ -90,7 +90,6 @@ enum {
     N_FP,
     N_STR,
     N_INIT, // Array/struct/union initializer
-    N_INIT_ELEM,
     N_LOCAL,
     N_GLOBAL,
     N_KVAL, // Used by the constant expression parser
@@ -186,11 +185,7 @@ typedef struct AstNode {
             size_t len;
             int enc;
         };
-        Vec *elems; // N_INIT; of 'AstNode *' with k = N_INIT_ELEM
-        struct {    // N_INIT_ELEM
-            uint64_t desg; // Byte offset into initializer
-            struct AstNode *elem;
-        };
+        Vec *elems;     // N_INIT; of 'AstNode *'
         char *var_name; // N_LOCAL, N_GLOBAL, N_TYPEDEF
         struct {        // N_KVAL, N_KPTR
             struct AstNode *g; // with k = N_GLOBAL
@@ -249,10 +244,13 @@ typedef struct AstNode {
 
 AstNode * parse(File *f);
 
-// Used by the compiler to handle VLAs separately
-int is_vla(AstType *t);
-
 // Used by the preprocessor for '#if' directives
 int64_t parse_const_int_expr(PP *pp);
+
+// Used by the compiler to handle VLAs separate to constant-sized arrays
+int is_vla(AstType *t);
+
+// Used by the compiler to check for constant array/struct initializers
+AstNode * try_calc_const_expr(AstNode *e);
 
 #endif

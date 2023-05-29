@@ -1781,6 +1781,15 @@ static AstNode * calc_const_expr(AstNode *e) {
     return n;
 }
 
+AstNode * try_calc_const_expr(AstNode *e) {
+    Token *err = NULL;
+    AstNode *n = eval_const_expr(e, &err);
+    if (!n || n->k == N_KVAL) {
+        return NULL;
+    }
+    return n;
+}
+
 static int64_t calc_int_expr(AstNode *e) {
     AstNode *n = calc_const_expr(e);
     if (n->k != N_IMM) {

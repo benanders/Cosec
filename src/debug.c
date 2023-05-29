@@ -10,7 +10,7 @@
 // ---- AST -------------------------------------------------------------------
 
 static char * AST_NAMES[N_LAST] = {
-    "imm", "fp", "str", "init", "init elem", "local", "global", "kval", "kptr",
+    "imm", "fp", "str", "init", "local", "global", "kval", "kptr",
     "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
     "==", "!=", "<", "<=", ">", ">=", "&&", "||",
     "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
@@ -486,11 +486,39 @@ static void number_ins(Fn *fn) {
     }
 }
 
-static void print_fn(Fn *fn) {
-    number_bbs(fn);
-    number_ins(fn);
-    for (BB *bb = fn->entry; bb; bb = bb->next) {
+static void print_fn(Global *g) {
+    printf("%s:\n", g->label);
+    number_bbs(g->fn);
+    number_ins(g->fn);
+    for (BB *bb = g->fn->entry; bb; bb = bb->next) {
         print_bb(bb);
+    }
+}
+
+static void print_global_val(Global *g) {
+    switch (g->k) {
+    case G_NONE: break; // Forward declaration
+    case G_IMM: printf("%" PRIu64, g->imm); break;
+    case G_FP:  printf("%g", g->fp); break;
+    case G_INIT:
+        printf("{ ");
+        for (size_t i = 0; i < vec_len(g->elems); i++) {
+            InitElem *elem = vec_get(g->elems, i);
+            printf("[%" PRIu64 "] = ", elem->offset);
+            print_global_val(elem->val);
+            printf(", ");
+        }
+        printf("}");
+        break;
+    case G_PTR:
+        printf("&%s", g->g->label);
+        if (g->offset > 0) {
+            printf(" + %" PRIu64, g->offset);
+        } else if (g->offset < 0) {
+            printf(" - %" PRIu64, -g->offset);
+        }
+        break;
+    default: UNREACHABLE();
     }
 }
 
@@ -500,22 +528,19 @@ static void print_global(Global *g) {
     } else if (g->linkage == LINK_EXTERN) {
         printf("extern ");
     }
-    if (g->val) { // Global variable
-        print_irt(g->t);
-        printf(" %s = ", g->label);
-        print_node(g->val, 0);
-    } else if (g->fn) { // Function definition
-        printf("%s:\n", g->label);
-        print_fn(g->fn);
-    } else { // Forward declaration
-        print_irt(g->t);
-        printf(" %s\n", g->label);
-    }
+    print_irt(g->t);
+    printf(" %s = ", g->label);
+    print_global_val(g);
+    printf("\n");
 }
 
 void print_ir(Vec *globals) {
     for (size_t i = 0; i < vec_len(globals); i++) {
         Global *g = vec_get(globals, i);
-        print_global(g);
+        if (g->k == G_FN_DEF) {
+            print_fn(g);
+        } else {
+            print_global(g);
+        }
     }
 }
